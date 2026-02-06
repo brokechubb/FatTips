@@ -43,6 +43,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      # Mount logs directory to host for persistence and easy access
+      - ./logs/bot:/app/apps/bot/logs
 
   api:
     build:
