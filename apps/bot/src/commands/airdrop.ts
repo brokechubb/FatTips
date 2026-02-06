@@ -28,40 +28,31 @@ export const data = new SlashCommandBuilder()
   .setDescription('Create a crypto airdrop for the community')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
   .setContexts([InteractionContextType.Guild]) // Airdrops are guild-only
-  .addSubcommand((subcommand) =>
-    subcommand
-      .setName('create')
-      .setDescription('Create a new airdrop')
-      .addStringOption((option) =>
-        option
-          .setName('amount')
-          .setDescription('Total amount to drop (e.g., $10, 1 SOL)')
-          .setRequired(true)
-      )
-      .addStringOption((option) =>
-        option.setName('duration').setDescription('Duration (e.g., 10m, 1h, 24h)').setRequired(true)
-      )
-      .addIntegerOption((option) =>
-        option.setName('max-winners').setDescription('Max number of winners (optional)')
-      )
-      .addStringOption((option) =>
-        option
-          .setName('token')
-          .setDescription('Token to drop (default: SOL)')
-          .addChoices(
-            { name: 'SOL', value: 'SOL' },
-            { name: 'USDC', value: 'USDC' },
-            { name: 'USDT', value: 'USDT' }
-          )
+  .addStringOption((option) =>
+    option
+      .setName('amount')
+      .setDescription('Total amount to drop (e.g., $10, 1 SOL)')
+      .setRequired(true)
+  )
+  .addStringOption((option) =>
+    option.setName('duration').setDescription('Duration (e.g., 10m, 1h, 24h)').setRequired(true)
+  )
+  .addIntegerOption((option) =>
+    option.setName('max-winners').setDescription('Max number of winners (optional)')
+  )
+  .addStringOption((option) =>
+    option
+      .setName('token')
+      .setDescription('Token to drop (default: SOL)')
+      .addChoices(
+        { name: 'SOL', value: 'SOL' },
+        { name: 'USDC', value: 'USDC' },
+        { name: 'USDT', value: 'USDT' }
       )
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  const subcommand = interaction.options.getSubcommand();
-
-  if (subcommand === 'create') {
-    await handleCreate(interaction);
-  }
+  await handleCreate(interaction);
 }
 
 async function handleCreate(interaction: ChatInputCommandInteraction) {

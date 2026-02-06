@@ -61,15 +61,27 @@ export class AirdropService {
         },
       });
 
-      // Update participant count
-      await prisma.airdrop.update({
+      // Update participant count and get updated airdrop
+      const updatedAirdrop = await prisma.airdrop.update({
         where: { id: airdropId },
         data: { participantCount: { increment: 1 } },
+        include: { participants: true, creator: true },
       });
 
       await interaction.editReply({
         content: '✅ You have successfully joined the airdrop! Good luck! 🍀',
       });
+
+      // Check if max participants reached
+      if (
+        updatedAirdrop.maxParticipants &&
+        updatedAirdrop.participantCount >= updatedAirdrop.maxParticipants
+      ) {
+        // Trigger settlement immediately
+        console.log(`Airdrop ${airdropId} reached max participants. Settling...`);
+        // Use setImmediate to not block the reply
+        setImmediate(() => this.settleAirdrop(updatedAirdrop, interaction.client));
+      }
     } catch (error) {
       console.error('Error claiming airdrop:', error);
       await interaction.editReply({ content: '❌ Failed to claim. Please try again.' });

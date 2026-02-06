@@ -46,6 +46,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           '*Alias:* `/withdraw` works the same as `/send`.',
       },
       {
+        name: '🪂 Airdrops',
+        value:
+          '`/airdrop amount:$10 duration:1h` - Create a pot for others to claim.\n' +
+          '`/airdrop amount:1 SOL duration:30m max-winners:5` - Limited winners drop.\n' +
+          '*Funds are distributed when time expires or max winners reached.*',
+      },
+      {
         name: '📜 History',
         value: '`/history` - View your last 5 transactions.',
       }
