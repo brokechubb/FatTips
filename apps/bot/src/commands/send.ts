@@ -296,6 +296,31 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
     }
 
+    // Check for rent exemption on new accounts (Solana Rule)
+    if (tokenSymbol === 'SOL' && amountToken < 0.001) {
+      try {
+        const recipientBalances = await balanceService.getBalances(recipientPubkey.toBase58());
+        if (recipientBalances.sol === 0) {
+          const minRent = 0.00089088;
+          if (amountToken < minRent) {
+            await interaction.editReply({
+              content:
+                `${interaction.user} ❌ Transaction rejected!\n\n` +
+                `The recipient wallet is new or empty.\n` +
+                `Solana requires a minimum of **${minRent} SOL** to activate a new wallet.\n` +
+                `You are trying to send **${formatTokenAmount(amountToken)} SOL**.` +
+                (parsedAmount.type === 'max'
+                  ? `\n\n*Since you are withdrawing "all", the amount was reduced to keep your own wallet active.*`
+                  : ''),
+            });
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('Error checking recipient balance', err);
+      }
+    }
+
     // --- TRANSACTION EXECUTION ---
 
     // 1. Get sender's keypair
