@@ -64,7 +64,6 @@ Send funds to any external Solana address directly from Discord.
 ```
 
 ### 3. Airdrops (Coming Soon)
-
 Create engaging community airdrops. Drop a pot of tokens in a channel, and users can click a button to claim their share. Perfect for community engagement and rewards.
 
 ### 4. Transaction History
@@ -79,11 +78,15 @@ Keep track of your spending and earnings.
 ```
 
 /balance # Check balance & address
+/wallet action:create # Create a new wallet
 /wallet action:export # Export seed phrase (DM)
 /wallet action:clear-dms # Delete bot DMs for privacy
 /help # List all commands
 
 ````
+
+### 6. User-Installed App 🆕
+FatTips supports **Discord User Apps**. You can install the bot to your personal account and use it in **ANY** server or DM, even if the bot hasn't been invited there. This makes your wallet truly portable across Discord.
 
 ---
 
