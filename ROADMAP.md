@@ -28,7 +28,7 @@ FatTips is a Discord bot that enables Solana-based tipping with support for SOL,
 - **Instant Tipping**: `/tip @user $5` converts USD to SOL automatically
 - **Airdrops**: Button-based claims with 90-day settlement window
 - **Multi-token Support**: SOL, USDC, USDT hardcoded
-- **Wallet Recovery**: Users receive seed phrases for full custody
+- **Wallet Recovery**: Users receive their Private Key for full custody
 - **Web Dashboard**: Leaderboards, user stats, transaction history
 
 ---
@@ -378,7 +378,7 @@ enum ParticipantStatus {
 **Deliverables:**
 
 - Bot can generate and store wallets
-- Seed phrases delivered via DM
+- Private Keys delivered via DM
 - Basic wallet commands working
 - Real-time balance fetching from mainnet
 
@@ -406,17 +406,28 @@ enum ParticipantStatus {
 - Transactions logged and queryable
 - Zero-friction onboarding (auto-wallet)
 
-### Phase 5: Airdrops (Week 6-7) 🚧 NEXT UP
+### Phase 5: Airdrops (Week 6-7) ✅ COMPLETED
 
 **Goal:** Complete airdrop system with button claims
 
-- [ ] Implement `/airdrop` command
-- [ ] Create embed with Claim button
-- [ ] Handle button interactions
-- [ ] Track participants in database
-- [ ] Integrate with smart contract
-- [ ] Implement settlement at expiry
-- [ ] Handle max participants limit
+- [x] Implement `/airdrop` command (simplified structure)
+- [x] Create embed with Claim button
+- [x] Handle button interactions (with tracking)
+- [x] Track participants in database
+- [x] Integrate with ephemeral wallets (Bot-Managed Escrow)
+- [x] Implement settlement at expiry
+- [x] Handle max participants limit (Instant Settlement)
+- [x] Precise timing for short drops
+- [x] Auto-refund logic for empty/expired drops
+
+**Deliverables:**
+
+- Airdrops can be created and claimed
+- Button-based claims working
+- Settlement automatic at expiry
+- Zero-risk funds management (Refunds)
+
+### Phase 6: 90-Day System (Week 7-8) 🚧 NEXT UP
 
 **Deliverables:**
 

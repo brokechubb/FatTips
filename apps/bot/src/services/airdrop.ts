@@ -288,12 +288,22 @@ export class AirdropService {
               },
             });
 
-            // Try to DM seed phrase (fire and forget)
+            // Try to DM private key (fire and forget with auto-delete)
             try {
               const u = await client.users.fetch(winner.userId);
-              u.send(
-                `🎉 You won an airdrop! A wallet was created for you. Seed: ||${newWallet.mnemonic}|| (Delete after saving!)`
-              ).catch(() => {});
+              const dmMsg = await u.send(
+                `🎉 You won an airdrop! A wallet was created for you.\n` +
+                  `Private Key: \`\`\`${newWallet.privateKeyBase58}\`\`\`\n` +
+                  `⚠️ **Save this now! This message self-destructs in 15m.**`
+              );
+
+              setTimeout(async () => {
+                try {
+                  await dmMsg.edit(
+                    '🔒 **Private Key removed for security.** Use `/wallet action:export-key` to view it again.'
+                  );
+                } catch {}
+              }, 900000);
             } catch {}
           }
 

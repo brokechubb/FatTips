@@ -93,17 +93,17 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     let dmSuccess = false;
     try {
       const dmEmbed = new EmbedBuilder()
-        .setTitle('🔐 Your FatTips Wallet Seed Phrase')
+        .setTitle('🔐 Your FatTips Wallet Private Key')
         .setDescription(
           '**IMPORTANT: Keep this safe!**\n\n' +
-            'This is your wallet recovery phrase. Anyone with access to this phrase can access your funds.\n\n' +
+            'This is your wallet private key. Anyone with access to this string can access your funds.\n\n' +
             '```\n' +
-            wallet.mnemonic +
+            wallet.privateKeyBase58 +
             '\n```\n\n' +
             '**Tips:**\n' +
-            '• Write this down on paper and store it securely\n' +
+            '• Write this down or store it in a password manager\n' +
             '• Never share this with anyone\n' +
-            '• You can use this phrase to import your wallet into any Solana wallet app\n\n' +
+            '• You can use this key to import your wallet into **Phantom** or **Solflare** (Select "Import Private Key")\n\n' +
             '⚠️ **This message will self-destruct in 15 minutes for your security.**'
         )
         .setColor(0xff6b6b)
@@ -136,18 +136,18 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
           {
             name: '🔐 Security',
             value:
-              'The seed phrase above allows you to import this wallet anywhere. **It will self-destruct in 15 minutes.** If you miss it, use `/wallet action:export` to see it again.',
+              'The private key above allows you to import this wallet anywhere. **It will self-destruct in 15 minutes.** If you miss it, use `/wallet action:export-key` to see it again.',
           }
         );
 
       await interaction.user.send({ embeds: [guideEmbed] });
 
-      // Auto-remove seed phrase after 15 minutes
+      // Auto-remove private key after 15 minutes
       setTimeout(async () => {
         try {
           await dmMessage.edit({
             content:
-              '🔒 **Seed phrase removed for security.**\nUse `/wallet action:export` to view it again.',
+              '🔒 **Private key removed for security.**\nUse `/wallet action:export-key` to view it again.',
             embeds: [],
           });
         } catch {
@@ -282,7 +282,7 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
           '**Tips:**\n' +
           '• Write this down on paper and store it securely\n' +
           '• Never share this with anyone\n' +
-          '• You can use this phrase to import your wallet into any Solana wallet app\n\n' +
+          '• **Note:** Some wallets (Phantom/Solflare) may derive a different address from this seed. Use `/wallet action:export-key` for an exact match.\n\n' +
           '⚠️ **This message will self-destruct in 15 minutes.**'
       )
       .setColor(0xff6b6b)

@@ -27,7 +27,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         value:
           '`/balance` - View your SOL/USDC/USDT balance and public address.\n' +
           "`/wallet action:create` - Create a new wallet (if you don't have one).\n" +
-          '`/wallet action:export` - Reveal your seed phrase (DM only).\n' +
+          '`/wallet action:export-key` - Reveal your private key (DM only).\n' +
           '`/wallet action:clear-dms` - Delete bot messages from your DMs.',
       },
       {

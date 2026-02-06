@@ -95,9 +95,10 @@ export class WalletService {
   /**
    * Create a new wallet with full encryption
    */
-  createEncryptedWallet(): WalletData & { mnemonic: string } {
+  createEncryptedWallet(): WalletData & { mnemonic: string; privateKeyBase58: string } {
     const { keypair, mnemonic } = this.generateWallet();
     const privateKey = keypair.secretKey;
+    const privateKeyBase58 = bs58.encode(privateKey);
 
     const { encrypted, salt } = this.encryptPrivateKey(Buffer.from(privateKey));
 
@@ -113,6 +114,7 @@ export class WalletService {
       encryptedMnemonic: encryptedMnemonic,
       mnemonicSalt: mnemonicSalt,
       mnemonic,
+      privateKeyBase58,
     };
   }
 

@@ -18,8 +18,8 @@ Unlike traditional tipping bots (like tip.cc) that operate as centralized banks 
 
 When you create a wallet with FatTips, the bot generates a standard Solana keypair.
 
-- **You get the seed phrase immediately** via a secure DM.
-- **You own the wallet.** You can import this seed phrase into Phantom, Solflare, or any other Solana wallet.
+- **You get the Private Key immediately** via a secure DM.
+- **You own the wallet.** You can import this key into Phantom, Solflare, or any other Solana wallet.
 - **We don't lock your funds.** You can withdraw everything at any time, with no approval process and no "minimum withdrawal" limits imposed by us (only network rent applies).
 
 FatTips acts as a convenient interface to interact with the Solana blockchain from Discord, but the underlying assets are always yours.
@@ -112,7 +112,7 @@ We are building FatTips to be the most robust social payment layer on Solana.
 We take security seriously because we are dealing with real value.
 
 - **AES-256-GCM Encryption:** All private keys are encrypted at rest using a master key derived securely.
-- **Ephemeral Responses:** Sensitive data (like seed phrases) is only ever sent via ephemeral messages or direct DMs.
+- **Ephemeral Responses:** Sensitive data (like private keys) is only ever sent via ephemeral messages or direct DMs.
 - **Open Source:** Our code is public. You can verify exactly how your keys are handled.
 
 ---

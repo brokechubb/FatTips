@@ -105,7 +105,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
 
     let isNewWallet = false;
-    let newWalletMnemonic = '';
+    let newWalletPrivateKey = '';
 
     if (!recipient) {
       // Auto-create wallet for recipient
@@ -123,7 +123,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           },
         });
         isNewWallet = true;
-        newWalletMnemonic = wallet.mnemonic;
+        newWalletPrivateKey = wallet.privateKeyBase58;
       } catch (error) {
         console.error('Error creating recipient wallet:', error);
         await interaction.editReply({
@@ -397,9 +397,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       if (isNewWallet) {
         dmContent +=
           `\n\n**🔐 A new wallet was created for you!**\n` +
-          `Here is your recovery phrase (seed). **Keep this safe and secret!**\n` +
-          `\`\`\`\n${newWalletMnemonic}\n\`\`\`\n` +
-          `You can use this phrase to import your wallet into Phantom or Solflare.\n\n` +
+          `Here is your **Private Key**. **Keep this safe and secret!**\n` +
+          `\`\`\`\n${newWalletPrivateKey}\n\`\`\`\n` +
+          `You can use this key to import your wallet into **Phantom** or **Solflare** (Select "Import Private Key").\n\n` +
           `⚠️ **This message will self-destruct in 15 minutes.**`;
 
         dmMessage = await recipientUser.send({ content: dmContent });
@@ -428,7 +428,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             {
               name: '🔐 Security',
               value:
-                'The seed phrase above allows you to import this wallet anywhere. **It will self-destruct in 15 minutes.** If you miss it, use `/wallet action:export` to see it again.',
+                'The private key above allows you to import this wallet anywhere. **It will self-destruct in 15 minutes.** If you miss it, use `/wallet action:export-key` to see it again.',
             }
           );
 
@@ -443,7 +443,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           try {
             await dmMessage.edit({
               content:
-                '🔒 **Seed phrase removed for security.**\nUse `/wallet action:export` to view it again.',
+                '🔒 **Private Key removed for security.**\nUse `/wallet action:export-key` to view it again.',
             });
           } catch {
             // Message might already be deleted or channel closed
