@@ -1,76 +1,133 @@
-# FatTips
+# FatTips 💸
 
-A Solana-based Discord tipping bot with airdrop functionality supporting SOL, USDC, and USDT.
+**The Non-Custodial Social Tipping Layer for Solana.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Solana](https://img.shields.io/badge/Solana-Mainnet-green)](https://solana.com)
+[![Discord](https://img.shields.io/badge/Discord-Bot-blue)](https://discord.com)
 
-## Features
+FatTips is a next-generation Discord tipping bot designed specifically for the Solana ecosystem. It enables instant, seamless tipping of SOL, USDC, and USDT directly within Discord conversations, while strictly adhering to a **non-custodial philosophy**.
 
-- **Instant Tipping**: Tip users with automatic USD-to-crypto conversion
-- **Airdrops**: Create time-limited airdrops with button-based claims
-- **Multi-Token Support**: SOL, USDC, USDT
-- **Wallet Recovery**: Users receive seed phrases for full custody
-- **Web Dashboard**: View leaderboards, stats, and transaction history
+---
 
-## Quick Start
+## 🚀 Why FatTips?
 
-### Prerequisites
+Unlike traditional tipping bots (like tip.cc) that operate as centralized banks holding your funds, **FatTips is different.** We believe that **not your keys, not your coins** should apply everywhere—even in a Discord chat.
 
-- Node.js 18+
-- pnpm 8+
-- PostgreSQL 14+
-- Docker (optional, for local database)
+### 🔑 True Non-Custodial Ownership
 
-### Installation
+When you create a wallet with FatTips, the bot generates a standard Solana keypair.
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/fattips.git
-cd fattips
+- **You get the seed phrase immediately** via a secure DM.
+- **You own the wallet.** You can import this seed phrase into Phantom, Solflare, or any other Solana wallet.
+- **We don't lock your funds.** You can withdraw everything at any time, with no approval process and no "minimum withdrawal" limits imposed by us (only network rent applies).
 
-# Install dependencies
-pnpm install
+FatTips acts as a convenient interface to interact with the Solana blockchain from Discord, but the underlying assets are always yours.
 
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your configuration
+### ⚡ Better Tipping Experience
 
-# Start development server
-pnpm dev
+We've streamlined the tipping experience to be fast, intuitive, and social.
+
+- **USD-Native Tipping:** Type `/tip @user $5` and we automatically calculate the equivalent SOL amount using real-time Jupiter prices. No need to do math.
+- **Automatic Conversions:** Tip in USD, receive in crypto.
+- **Multi-Token Support:** First-class support for SOL, USDC, and USDT.
+- **Zero Bot Fees:** We don't take a cut of your tips. You only pay standard Solana network fees (~$0.0004).
+
+---
+
+## 🛠️ Key Features
+
+### 1. Instant Tipping
+
+Send crypto as easily as sending a message.
+
+```
+/tip @friend $10        # Sends $10 worth of SOL
+/tip @friend 1 USDC     # Sends exactly 1 USDC
+/tip @friend all        # Sends your entire wallet balance
 ```
 
-## Documentation
+### 2. External Transfers
 
-- [Development Roadmap](./ROADMAP.md) - Complete project plan and phases
-- [API Documentation](./docs/API.md) - REST API reference
-- [Contributing Guidelines](./docs/CONTRIBUTING.md) - How to contribute
-- [Deployment Guide](./docs/DEPLOYMENT.md) - Production deployment
+Send funds to any external Solana address directly from Discord.
 
-## Architecture
+```
+/send address:9HMqa... $20
+```
 
-FatTips is a monorepo containing:
+### 3. Airdrops (Coming Soon)
 
-- **Bot** (`apps/bot/`) - Discord bot for user interactions
-- **API** (`apps/api/`) - REST API for integrations
-- **Web** (`apps/web/`) - Next.js dashboard
-- **Smart Contract** (`programs/airdrop/`) - Solana escrow program
+Create engaging community airdrops. Drop a pot of tokens in a channel, and users can click a button to claim their share. Perfect for community engagement and rewards.
 
-## Development
+### 4. Transaction History
 
-See the [Roadmap](./ROADMAP.md) for detailed development phases and tasks.
+Keep track of your spending and earnings with a transparent history log, complete with Solscan links for on-chain verification.
 
-## License
+```
+/history
+```
 
-MIT License - see [LICENSE](./LICENSE) file
+---
 
-## Support
+## 🗺️ Roadmap & Future Plans
 
-- Open an [issue](https://github.com/yourusername/fattips/issues) for bugs
-- Join our [Discord](https://discord.gg/yourserver) for discussion
+We are building FatTips to be the most robust social payment layer on Solana.
 
-## Acknowledgments
+- **Phase 1-4 (Completed):** Core bot, wallet generation, encryption, tipping, external transfers, and history.
+- **Phase 5 (In Progress):** **Airdrops System.** Create "first come, first served" or "random lottery" drops in channels.
+- **Phase 6:** **Settlement System.** Unclaimed tips and airdrops are automatically reclaimed or settled after 90 days to prevent dust accumulation.
+- **Phase 7:** **Web Dashboard.** Visual portfolio tracking, leaderboards, and detailed exportable transaction history for taxes.
+- **Phase 8:** **Mobile App Integration.** (Long term goal).
 
-- [Discord.js](https://discord.js.org/) - Discord API library
-- [Anchor Framework](https://www.anchor-lang.com/) - Solana smart contract framework
-- [Jupiter](https://jup.ag/) - Price oracle and DEX
-- [Helius](https://www.helius.xyz/) - Solana RPC provider
+---
+
+## 🔒 Security & Privacy
+
+We take security seriously because we are dealing with real value.
+
+- **AES-256-GCM Encryption:** All private keys are encrypted at rest using a master key derived securely.
+- **Ephemeral Responses:** Sensitive data (like seed phrases) is only ever sent via ephemeral messages or direct DMs.
+- **Open Source:** Our code is public. You can verify exactly how your keys are handled.
+
+---
+
+## 🚀 Getting Started
+
+### Installation (Self-Host)
+
+FatTips is open source and can be self-hosted.
+
+1. **Clone the repo**
+
+   ```bash
+   git clone https://github.com/brokechubb/FatTips.git
+   cd FatTips
+   ```
+
+2. **Install Dependencies**
+
+   ```bash
+   pnpm install
+   ```
+
+3. **Configure Environment**
+
+   ```bash
+   cp .env.example .env
+   # Fill in DISCORD_TOKEN, HELIUS_RPC_URL, and Encryption Key
+   ```
+
+4. **Run Database & Bot**
+   ```bash
+   docker-compose up -d postgres
+   pnpm db:migrate
+   pnpm dev
+   ```
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! Whether it's adding new features, fixing bugs, or improving documentation, please feel free to fork the repo and submit a PR.
+
+**License:** MIT
