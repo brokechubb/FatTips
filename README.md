@@ -58,16 +58,19 @@ Send funds to any external Solana address directly from Discord.
 /withdraw address:9HMqa... all   # Drains wallet completely (empties balance)
 ```
 
-/send address:9HMqa... $20
-/withdraw address:9HMqa... all # Drains wallet completely (closes account)
+### 3. Airdrops (New!)
+
+Create engaging community airdrops. Drop a pot of tokens in a channel, and users can click a button to claim their share. Funds are distributed automatically when the timer ends.
 
 ```
-
-### 3. Airdrops (Coming Soon)
-Create engaging community airdrops. Drop a pot of tokens in a channel, and users can click a button to claim their share. Perfect for community engagement and rewards.
+/airdrop create amount:$10 duration:1h
+/airdrop create amount:1 SOL duration:30m max-winners:5
+```
 
 ### 4. Transaction History
+
 Keep track of your spending and earnings.
+
 ```
 
 /history
@@ -75,6 +78,7 @@ Keep track of your spending and earnings.
 ```
 
 ### 5. Wallet Management
+
 ```
 
 /balance # Check balance & address
@@ -83,9 +87,10 @@ Keep track of your spending and earnings.
 /wallet action:clear-dms # Delete bot DMs for privacy
 /help # List all commands
 
-````
+```
 
 ### 6. User-Installed App 🆕
+
 FatTips supports **Discord User Apps**. You can install the bot to your personal account and use it in **ANY** server or DM, even if the bot hasn't been invited there. This makes your wallet truly portable across Discord.
 
 ---
@@ -123,6 +128,8 @@ FatTips is open source and can be self-hosted.
    ```bash
    git clone https://github.com/brokechubb/FatTips.git
    cd FatTips
+   ```
+
 ````
 
 2. **Install Dependencies**
@@ -152,3 +159,4 @@ FatTips is open source and can be self-hosted.
 We welcome contributions! Whether it's adding new features, fixing bugs, or improving documentation, please feel free to fork the repo and submit a PR.
 
 **License:** MIT
+````
