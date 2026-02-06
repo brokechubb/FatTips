@@ -63,8 +63,8 @@ Send funds to any external Solana address directly from Discord.
 Create engaging community airdrops. Drop a pot of tokens in a channel, and users can click a button to claim their share. Funds are distributed automatically when the timer ends.
 
 ```
-/airdrop create amount:$10 duration:1h
-/airdrop create amount:1 SOL duration:30m max-winners:5
+/airdrop amount:$10 duration:1h
+/airdrop amount:1 SOL duration:30m max-winners:5
 ```
 
 ### 4. Transaction History

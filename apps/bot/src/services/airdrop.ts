@@ -2,11 +2,17 @@ import { ButtonInteraction, EmbedBuilder } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
 
-const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
-const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
-const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
-
 export class AirdropService {
+  private transactionService: TransactionService;
+  private walletService: WalletService;
+  private balanceService: BalanceService;
+
+  constructor() {
+    this.transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
+    this.walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
+    this.balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
+  }
+
   /**
    * Handle user claiming an airdrop
    */
@@ -151,7 +157,10 @@ export class AirdropService {
       const winnerCount = participants.length;
 
       // 2. Distribute Funds
-      const walletKeypair = walletService.getKeypair(airdrop.encryptedPrivkey, airdrop.keySalt);
+      const walletKeypair = this.walletService.getKeypair(
+        airdrop.encryptedPrivkey,
+        airdrop.keySalt
+      );
       const tokenMint = airdrop.tokenMint;
 
       let tokenSymbol = 'SOL';
@@ -161,14 +170,16 @@ export class AirdropService {
       if (winnerCount === 0) {
         // No winners: Refund creator completely
         try {
-          const balances = await balanceService.getBalances(walletKeypair.publicKey.toBase58());
+          const balances = await this.balanceService.getBalances(
+            walletKeypair.publicKey.toBase58()
+          );
           const feeBuffer = 0.00001;
 
           // Refund Logic
           if (tokenMint === TOKEN_MINTS.SOL) {
             const amount = Math.max(0, balances.sol - feeBuffer);
             if (amount > 0) {
-              await transactionService.transfer(
+              await this.transactionService.transfer(
                 walletKeypair,
                 airdrop.creator.walletPubkey,
                 amount,
@@ -179,7 +190,7 @@ export class AirdropService {
             // Refund Token
             const tokenBal = tokenMint === TOKEN_MINTS.USDC ? balances.usdc : balances.usdt;
             if (tokenBal > 0) {
-              await transactionService.transfer(
+              await this.transactionService.transfer(
                 walletKeypair,
                 airdrop.creator.walletPubkey,
                 tokenBal,
@@ -189,7 +200,7 @@ export class AirdropService {
             // Refund SOL dust (gas money)
             const solAmount = Math.max(0, balances.sol - feeBuffer);
             if (solAmount > 0) {
-              await transactionService.transfer(
+              await this.transactionService.transfer(
                 walletKeypair,
                 airdrop.creator.walletPubkey,
                 solAmount,
@@ -239,7 +250,7 @@ export class AirdropService {
 
           if (!user) {
             // Create wallet for winner
-            const newWallet = walletService.createEncryptedWallet();
+            const newWallet = this.walletService.createEncryptedWallet();
             user = await prisma.user.create({
               data: {
                 discordId: winner.userId,
@@ -262,7 +273,7 @@ export class AirdropService {
           }
 
           // Transfer
-          const signature = await transactionService.transfer(
+          const signature = await this.transactionService.transfer(
             walletKeypair,
             user.walletPubkey,
             share,
