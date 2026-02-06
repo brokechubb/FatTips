@@ -49,7 +49,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         name: '🪂 Airdrops',
         value:
           '`/airdrop amount:$10 duration:1h` - Create a pot for others to claim.\n' +
-          '`/airdrop amount:1 SOL duration:30m max-winners:5` - Limited winners drop.\n' +
+          '`/airdrop amount:1 SOL duration:30m max-winners:5` - First-come-first-served drop.\n' +
           '*Funds are distributed when time expires or max winners reached.*',
       },
       {

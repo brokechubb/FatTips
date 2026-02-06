@@ -41,6 +41,11 @@ export class AirdropService {
         return;
       }
 
+      if (airdrop.maxParticipants && airdrop.participantCount >= airdrop.maxParticipants) {
+        await interaction.editReply({ content: '❌ This airdrop is already full!' });
+        return;
+      }
+
       // 2. Check if user already claimed
       const existing = await prisma.airdropParticipant.findUnique({
         where: {
@@ -56,7 +61,51 @@ export class AirdropService {
         return;
       }
 
-      // 3. Register Participant
+      // 3. Check if user has a wallet, create if not
+      let user = await prisma.user.findUnique({
+        where: { discordId: interaction.user.id },
+      });
+
+      if (!user) {
+        try {
+          const newWallet = this.walletService.createEncryptedWallet();
+          user = await prisma.user.create({
+            data: {
+              discordId: interaction.user.id,
+              walletPubkey: newWallet.publicKey,
+              encryptedPrivkey: newWallet.encryptedPrivateKey,
+              keySalt: newWallet.keySalt,
+              encryptedMnemonic: newWallet.encryptedMnemonic,
+              mnemonicSalt: newWallet.mnemonicSalt,
+              seedDelivered: false,
+            },
+          });
+
+          // Send DM with keys
+          const dmMsg = await interaction.user.send(
+            `🎉 **Welcome to FatTips!**\n\n` +
+              `You claimed an airdrop, so I created a secure Solana wallet for you.\n\n` +
+              `**Private Key:** \`\`\`${newWallet.privateKeyBase58}\`\`\`\n` +
+              `⚠️ **Save this key! This message self-destructs in 15m.**\n\n` +
+              `Use \`/balance\` to check your funds.`
+          );
+
+          // Auto-delete sensitive DM
+          setTimeout(async () => {
+            try {
+              await dmMsg.edit(
+                '🔒 **Private Key removed for security.** Use `/wallet action:export-key` to view it again.'
+              );
+            } catch {}
+          }, 900000);
+        } catch (walletError) {
+          console.error('Failed to auto-create wallet:', walletError);
+          await interaction.editReply({ content: '❌ Failed to create wallet. Please try again.' });
+          return;
+        }
+      }
+
+      // 4. Register Participant
       // We don't verify wallet existence here to reduce friction.
       // We'll create it during settlement if needed.
       await prisma.airdropParticipant.create({
@@ -251,16 +300,15 @@ export class AirdropService {
       }
 
       // Calculate share
-      // Simple logic: Equal split
-      // TODO: Handle maxWinners limit (Raffle)
-      // If maxWinners set and count > max, pick random winners.
-
+      // Logic: First-Come-First-Served if max winners set
       let winners = participants;
       if (airdrop.maxParticipants && winnerCount > airdrop.maxParticipants) {
-        // Shuffle and pick N
-        const shuffled = participants.sort(() => 0.5 - Math.random());
-        winners = shuffled.slice(0, airdrop.maxParticipants);
-        // Mark losers?
+        // Sort by claim time (FCFS)
+        winners = participants
+          .sort(
+            (a: any, b: any) => new Date(a.claimedAt).getTime() - new Date(b.claimedAt).getTime()
+          )
+          .slice(0, airdrop.maxParticipants);
       }
 
       const share = totalAmount / winners.length;
