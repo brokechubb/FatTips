@@ -130,8 +130,6 @@ FatTips is open source and can be self-hosted.
    cd FatTips
    ```
 
-````
-
 2. **Install Dependencies**
 
    ```bash
@@ -145,12 +143,26 @@ FatTips is open source and can be self-hosted.
    # Fill in DISCORD_TOKEN, HELIUS_RPC_URL, and Encryption Key
    ```
 
-4. **Run Database & Bot**
+4. **Run Database & Bot (Local Dev)**
    ```bash
    docker-compose up -d postgres
    pnpm db:migrate
    pnpm dev
    ```
+
+### Production Deployment (Docker)
+
+For production environments (e.g., VPS), use the provided Docker Compose configuration which creates isolated "Fat Images" for stability:
+
+```bash
+# Start all services (Bot, API, Database, Redis)
+docker compose up -d --build
+
+# View logs
+docker compose logs -f
+```
+
+See `AGENTS.md` for detailed production deployment guidelines.
 
 ---
 
@@ -159,4 +171,3 @@ FatTips is open source and can be self-hosted.
 We welcome contributions! Whether it's adding new features, fixing bugs, or improving documentation, please feel free to fork the repo and submit a PR.
 
 **License:** MIT
-````
