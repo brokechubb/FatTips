@@ -27,6 +27,9 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((subcommand) =>
     subcommand.setName('address').setDescription('Show your wallet address')
+  )
+  .addSubcommand((subcommand) =>
+    subcommand.setName('clear-dms').setDescription('Delete bot messages in your DM')
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -44,6 +47,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       break;
     case 'address':
       await handleAddress(interaction);
+      break;
+    case 'clear-dms':
+      await handleClearDms(interaction);
       break;
     default:
       await interaction.reply({
@@ -108,9 +114,15 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
       const dmMessage = await interaction.user.send({ embeds: [dmEmbed] });
 
-      // Auto-delete after 60 seconds
+      // Auto-delete after 60 seconds (with edit fallback)
       setTimeout(async () => {
         try {
+          // Try to overwrite content first (in case delete fails)
+          await dmMessage.edit({
+            content: '🔒 Seed phrase removed for security.',
+            embeds: [],
+          });
+          // Then delete
           await dmMessage.delete();
         } catch {
           // Message might already be deleted or channel closed
@@ -357,12 +369,16 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
 
     const dmMessage = await interaction.editReply({ embeds: [dmEmbed] });
 
-    // Auto-delete after 60 seconds
+    // Auto-delete after 60 seconds (with edit fallback)
     setTimeout(async () => {
       try {
+        await dmMessage.edit({
+          content: '🔒 Seed phrase removed for security.',
+          embeds: [],
+        });
         await dmMessage.delete();
       } catch {
-        // Message might already be deleted or channel closed
+        // Message might already be deleted
       }
     }, 60000);
   } catch (error) {
@@ -404,6 +420,56 @@ async function handleAddress(interaction: ChatInputCommandInteraction) {
     console.error('Error fetching address:', error);
     await interaction.editReply({
       content: 'Failed to fetch address. Please try again later.',
+    });
+  }
+}
+
+async function handleClearDms(interaction: ChatInputCommandInteraction) {
+  // Must be in DM to clear DMs
+  if (!(interaction.channel instanceof DMChannel)) {
+    await interaction.reply({
+      content: '❌ This command can only be used in DMs with the bot.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const channel = interaction.channel;
+
+    // Fetch last 100 messages (limit)
+    const messages = await channel.messages.fetch({ limit: 100 });
+
+    // Filter messages sent by the bot
+    const botMessages = messages.filter(
+      (msg) => msg.author.id === interaction.client.user.id && !msg.system
+    );
+
+    if (botMessages.size === 0) {
+      await interaction.editReply({ content: '✅ No bot messages found to clear.' });
+      return;
+    }
+
+    // Delete them
+    let deletedCount = 0;
+    for (const msg of botMessages.values()) {
+      try {
+        await msg.delete();
+        deletedCount++;
+      } catch {
+        // Ignore if already deleted or too old (though in DMs usually fine)
+      }
+    }
+
+    await interaction.editReply({
+      content: `✅ Cleared ${deletedCount} messages from our DM history.`,
+    });
+  } catch (error) {
+    console.error('Error clearing DMs:', error);
+    await interaction.editReply({
+      content: 'Failed to clear DMs. Please try again later.',
     });
   }
 }
