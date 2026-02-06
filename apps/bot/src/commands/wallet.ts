@@ -28,6 +28,7 @@ export const data = new SlashCommandBuilder()
       .addChoices(
         { name: 'Create Wallet', value: 'create' },
         { name: 'Export Seed Phrase', value: 'export' },
+        { name: 'Export Private Key', value: 'export-key' },
         { name: 'Clear DM History', value: 'clear-dms' }
       )
   );
@@ -41,6 +42,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       break;
     case 'export':
       await handleExport(interaction);
+      break;
+    case 'export-key':
+      await handleExportKey(interaction);
       break;
     case 'clear-dms':
       await handleClearDms(interaction);
@@ -273,6 +277,92 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
     console.error('Error exporting wallet:', error);
     await interaction.editReply({
       content: 'Failed to export wallet. Please try again later.',
+    });
+  }
+}
+
+async function handleExportKey(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    // Check if this is a DM (interaction.guild is null in DMs)
+    if (interaction.guild) {
+      await interaction.editReply({
+        content:
+          '⚠️ For security, you can only export your private key in DMs. Please check your DMs!',
+      });
+
+      // Try to initiate DM
+      try {
+        const dmEmbed = new EmbedBuilder()
+          .setTitle('🔐 Private Key Export')
+          .setDescription(
+            'You requested to export your wallet private key.\n\n' +
+              'Please run `/wallet action:export-key` here in this DM to receive it securely.'
+          )
+          .setColor(0xffaa00);
+
+        await interaction.user.send({ embeds: [dmEmbed] });
+      } catch {
+        await interaction.editReply({
+          content: "I couldn't send you a DM. Please enable DMs from server members and try again.",
+        });
+      }
+      return;
+    }
+
+    // In DM channel, proceed with export
+    const user = await prisma.user.findUnique({
+      where: { discordId: interaction.user.id },
+    });
+
+    if (!user) {
+      await interaction.editReply({
+        content:
+          "You don't have a wallet yet. Use `/wallet action:create` in a server to create one!",
+      });
+      return;
+    }
+
+    // Decrypt the private key
+    const privateKeyBase58 = walletService.exportPrivateKey(user.encryptedPrivkey, user.keySalt);
+
+    // Send the private key via DM
+    const dmEmbed = new EmbedBuilder()
+      .setTitle('🔑 Your Wallet Private Key')
+      .setDescription(
+        '**IMPORTANT: Keep this safe!**\n\n' +
+          'This is your raw private key. Anyone with access to this can access your funds.\n\n' +
+          '```\n' +
+          privateKeyBase58 +
+          '\n```\n\n' +
+          '**Tips:**\n' +
+          '• Never share this with anyone\n' +
+          '• You can import this into Phantom/Solflare using "Import Private Key"\n\n' +
+          '⚠️ **This message will self-destruct in 15 minutes.**'
+      )
+      .setColor(0xff0000) // Red for danger
+      .setFooter({ text: 'Auto-deleting sensitive info in 15m' })
+      .setTimestamp();
+
+    const dmMessage = await interaction.editReply({ embeds: [dmEmbed] });
+
+    // Auto-delete after 15 minutes (with edit fallback)
+    setTimeout(async () => {
+      try {
+        await dmMessage.edit({
+          content:
+            '🔒 **Private key removed for security.**\nUse `/wallet action:export-key` to view it again.',
+          embeds: [],
+        });
+      } catch {
+        // Message might already be deleted
+      }
+    }, 900000); // 15 minutes
+  } catch (error) {
+    console.error('Error exporting private key:', error);
+    await interaction.editReply({
+      content: 'Failed to export private key. Please try again later.',
     });
   }
 }

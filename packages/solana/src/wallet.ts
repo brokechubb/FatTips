@@ -1,6 +1,7 @@
 import { Keypair, PublicKey } from '@solana/web3.js';
 import * as bip39 from 'bip39';
 import * as crypto from 'crypto';
+import bs58 from 'bs58';
 
 const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
@@ -129,6 +130,14 @@ export class WalletService {
   getKeypair(encryptedPrivateKey: string, salt: string): Keypair {
     const decrypted = this.decryptPrivateKey(encryptedPrivateKey, salt);
     return Keypair.fromSecretKey(decrypted);
+  }
+
+  /**
+   * Export private key as Base58 string (Phantom style)
+   */
+  exportPrivateKey(encryptedPrivateKey: string, salt: string): string {
+    const decrypted = this.decryptPrivateKey(encryptedPrivateKey, salt);
+    return bs58.encode(decrypted);
   }
 
   /**
