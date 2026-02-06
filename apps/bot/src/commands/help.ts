@@ -42,15 +42,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         name: '📤 Withdrawals',
         value:
           '`/send <address> $10` - Send funds to an external Solana wallet.\n' +
-          '`/send <address> all` - Drain your wallet completely (empties balance).\n' +
-          '*Alias:* `/withdraw` works the same as `/send`.',
+          '`/send <address> all` - Withdraw your entire balance (minus reserve).\n' +
+          '*Alias:* `/withdraw` works the same as `/send`.\n' +
+          'ℹ️ *Note: A minimum reserve of ~0.001 SOL is kept to keep your wallet active.*',
       },
       {
         name: '🪂 Airdrops',
         value:
           '`/airdrop amount:$10 duration:1h` - Create a pot for others to claim.\n' +
           '`/airdrop amount:1 SOL duration:30m max-winners:5` - First-come-first-served drop.\n' +
-          '*Funds are distributed when time expires or max winners reached.*',
+          '*Funds are distributed when time expires or max winners reached.*\n' +
+          'ℹ️ *On-chain network fees are automatically deducted from the total pot.*',
       },
       {
         name: '📜 History',

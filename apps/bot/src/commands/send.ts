@@ -164,10 +164,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       // Get balance to calculate max
       const balances = await balanceService.getBalances(sender.walletPubkey);
       const feeBuffer = 0.00001; // Tiny buffer for fee
+      const rentReserve = 0.001; // Keep account rent-exempt (~0.00089 SOL)
 
       if (tokenSymbol === 'SOL') {
-        // Max SOL = balance - fees (Drain Mode: No rent reserve kept)
-        amountToken = Math.max(0, balances.sol - feeBuffer);
+        // Max SOL = balance - fees - rent (Safety Mode)
+        amountToken = Math.max(0, balances.sol - feeBuffer - rentReserve);
       } else if (tokenSymbol === 'USDC') {
         amountToken = balances.usdc;
       } else {
@@ -179,8 +180,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           content:
             `${interaction.user} ❌ Insufficient balance!\n` +
             `You have **${balances.sol.toFixed(6)} SOL**.\n` +
-            `Minimum fee required: **${feeBuffer.toFixed(6)} SOL**.\n` +
-            `You don't have enough to cover the transaction fee.`,
+            `Required reserve: **${(feeBuffer + rentReserve).toFixed(5)} SOL** (to keep wallet active).\n` +
+            `You can only withdraw funds above this amount.`,
         });
         return;
       }
@@ -322,7 +323,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       data: {
         signature,
         fromId: sender.discordId,
-        toId: undefined, // External transfer, so no Discord user ID
+        toId: null as any, // External transfer, so no Discord user ID
         toAddress: recipientPubkey.toBase58(),
         fromAddress: sender.walletPubkey,
         amountUsd: usdValue,

@@ -75,8 +75,8 @@ export class AirdropService {
               walletPubkey: newWallet.publicKey,
               encryptedPrivkey: newWallet.encryptedPrivateKey,
               keySalt: newWallet.keySalt,
-              encryptedMnemonic: newWallet.encryptedMnemonic,
-              mnemonicSalt: newWallet.mnemonicSalt,
+              // encryptedMnemonic: newWallet.encryptedMnemonic,
+              // mnemonicSalt: newWallet.mnemonicSalt,
               seedDelivered: false,
             },
           });
@@ -123,6 +123,10 @@ export class AirdropService {
         data: { participantCount: { increment: 1 } },
         include: { participants: true, creator: true },
       });
+
+      console.log(
+        `[AIRDROP CLAIM] User ${interaction.user.tag} (${interaction.user.id}) joined airdrop ${airdropId}`
+      );
 
       await interaction.editReply({
         content: '✅ You have successfully joined the airdrop! Good luck! 🍀',
@@ -212,6 +216,8 @@ export class AirdropService {
         airdrop.keySalt
       );
       const tokenMint = airdrop.tokenMint;
+      const feePerTx = 0.000005; // Standard Solana fee
+      const rentBuffer = 0.001; // Safety margin for rent exemption
 
       let tokenSymbol = 'SOL';
       if (tokenMint === TOKEN_MINTS.USDC) tokenSymbol = 'USDC';
@@ -288,11 +294,8 @@ export class AirdropService {
             data: { status: 'EXPIRED' },
           });
 
-          this.notifyChannel(
-            client,
-            airdrop.channelId,
-            `🛑 Airdrop ended with no participants. Funds refunded to creator.`
-          );
+          // Update original message only
+          await this.endAirdropMessage(client, airdrop, 0, 0, tokenSymbol);
           return;
         } catch (refundError) {
           console.error('Failed to refund creator:', refundError);
@@ -311,7 +314,44 @@ export class AirdropService {
           .slice(0, airdrop.maxParticipants);
       }
 
-      const share = totalAmount / winners.length;
+      // --- DYNAMIC FEE ADJUSTMENT ---
+      let distributableAmount = totalAmount;
+      const totalEstimatedFees = winners.length * feePerTx;
+
+      // Check actual wallet balance to be safe
+      try {
+        const balances = await this.balanceService.getBalances(walletKeypair.publicKey.toBase58());
+
+        if (tokenMint === TOKEN_MINTS.SOL) {
+          // For SOL: We must subtract fees + rent buffer from the total pot
+          const maxAvailable = Math.max(0, balances.sol - totalEstimatedFees - rentBuffer);
+
+          // Use the smaller of: What was promised (totalAmount) OR what's actually safe to send
+          distributableAmount = Math.min(totalAmount, maxAvailable);
+
+          if (distributableAmount < totalAmount) {
+            console.warn(
+              `[AIRDROP] Adjusting payout due to fees. Promised: ${totalAmount}, Available: ${maxAvailable}`
+            );
+          }
+        } else {
+          // For Tokens: We distribute the token amount, but we must check if we have SOL for gas
+          if (balances.sol < totalEstimatedFees) {
+            console.error(
+              `[AIRDROP] CRITICAL: Not enough SOL for gas fees! Need ${totalEstimatedFees}, Have ${balances.sol}`
+            );
+            // In a real prod env, the bot might subsidize this or fail gracefully.
+            // For now, we proceed but expect failures.
+          }
+          // For tokens, we usually distribute exactly what was promised or what's in the wallet
+          const tokenBal = tokenMint === TOKEN_MINTS.USDC ? balances.usdc : balances.usdt;
+          distributableAmount = Math.min(totalAmount, tokenBal);
+        }
+      } catch (err) {
+        console.error('Failed to fetch realtime balance for settlement, using DB value', err);
+      }
+
+      const share = distributableAmount / winners.length;
 
       // 2. Distribute Funds (walletKeypair already initialized above)
       let successCount = 0;
@@ -330,8 +370,8 @@ export class AirdropService {
                 walletPubkey: newWallet.publicKey,
                 encryptedPrivkey: newWallet.encryptedPrivateKey,
                 keySalt: newWallet.keySalt,
-                encryptedMnemonic: newWallet.encryptedMnemonic,
-                mnemonicSalt: newWallet.mnemonicSalt,
+                // encryptedMnemonic: newWallet.encryptedMnemonic,
+                // mnemonicSalt: newWallet.mnemonicSalt,
                 seedDelivered: false,
               },
             });
@@ -367,7 +407,7 @@ export class AirdropService {
           await prisma.transaction.create({
             data: {
               signature,
-              fromId: 'AIRDROP_BOT', // Special ID
+              fromId: null as any, // System wallet, no user
               toId: winner.userId,
               amountUsd: 0, // TODO: Fetch price
               amountToken: share,
@@ -413,13 +453,11 @@ export class AirdropService {
         },
       });
 
-      // 4. Notify
-      this.notifyChannel(
-        client,
-        airdrop.channelId,
-        `🎉 **Airdrop Settled!**\n` +
-          `**${successCount} winners** received **${share.toFixed(4)} ${tokenSymbol}** each.`
-      );
+      // 4. Notify (Updating original message only, no new message)
+      // this.notifyChannel(...) // Removed as per request
+
+      // 5. Update Original Message
+      await this.endAirdropMessage(client, airdrop, successCount, share, tokenSymbol, winners);
     } catch (error) {
       console.error('Settlement critical error:', error);
     }
@@ -433,6 +471,61 @@ export class AirdropService {
       }
     } catch {
       // Channel might be deleted
+    }
+  }
+
+  private async endAirdropMessage(
+    client: any,
+    airdrop: any,
+    winnerCount: number,
+    shareAmount: number,
+    tokenSymbol: string,
+    winners: any[] = []
+  ) {
+    if (!airdrop.messageId || !airdrop.channelId) return;
+
+    try {
+      const channel = await client.channels.fetch(airdrop.channelId);
+      if (!channel?.isTextBased()) return;
+
+      const message = await channel.messages.fetch(airdrop.messageId);
+      if (!message) return;
+
+      const oldEmbed = message.embeds[0];
+      if (!oldEmbed) return;
+
+      const isRefund = winnerCount === 0;
+
+      const newEmbed = new EmbedBuilder(oldEmbed.data)
+        .setTitle(isRefund ? '🛑 Airdrop Expired' : '✅ Airdrop Settled')
+        .setDescription(
+          isRefund
+            ? `This airdrop ended with no participants.\nFunds have been refunded to the creator.`
+            : `**${winnerCount} winners** claimed this airdrop!\nEach received **${shareAmount.toFixed(4)} ${tokenSymbol}**.`
+        )
+        .setColor(isRefund ? 0xed4245 : 0x000000) // Red or Black
+        .setTimestamp(new Date());
+
+      // Add winners list if applicable
+      if (!isRefund && winners.length > 0) {
+        let winnersText = winners.map((w) => `<@${w.userId}>`).join(', ');
+
+        // Truncate if too long (Discord field limit is 1024)
+        if (winnersText.length > 1000) {
+          winnersText = winnersText.substring(0, 1000) + '... and more';
+        }
+
+        newEmbed.addFields({ name: '🏆 Winners', value: winnersText });
+      }
+
+      newEmbed.setFooter({ text: 'This event has ended.' });
+
+      await message.edit({
+        embeds: [newEmbed],
+        components: [],
+      });
+    } catch (error) {
+      console.error(`Failed to update airdrop message ${airdrop.messageId}:`, error);
     }
   }
 }

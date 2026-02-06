@@ -236,7 +236,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
       creatorId: creator.discordId,
       amountTotal: amountToken,
       tokenMint,
-      maxParticipants: maxWinners ?? undefined, // Use undefined instead of null for Prisma optional
+      maxParticipants: maxWinners ?? 0, // Use 0 for "unlimited" if integer required, or fix type
       expiresAt,
       channelId: interaction.channelId,
     },
@@ -309,13 +309,13 @@ function parseAmountInput(input: string) {
       token: usdMatch[2]?.toUpperCase(),
     };
 
-  const tokenMatch = trimmed.match(/^(\d+\.?\d*)\s*(SOL|USDC|USDT)$/i);
+  const tokenMatch = trimmed.match(/^(\d+\.?\d*)\s*(SOL|USDC|USDT)?$/i);
   if (tokenMatch)
     return {
       valid: true,
       type: 'token',
       value: parseFloat(tokenMatch[1]),
-      token: tokenMatch[2].toUpperCase(),
+      token: tokenMatch[2] ? tokenMatch[2].toUpperCase() : undefined,
     };
 
   return { valid: false, error: 'Invalid format' };
