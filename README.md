@@ -68,12 +68,20 @@ Send funds to any external Solana address directly from Discord.
 Create engaging community airdrops. Drop a pot of tokens in a channel, and users can click a button to claim their share. Perfect for community engagement and rewards.
 
 ### 4. Transaction History
-
-Keep track of your spending and earnings with a transparent history log, complete with Solscan links for on-chain verification.
-
+Keep track of your spending and earnings.
 ```
 
 /history
+
+```
+
+### 5. Wallet Management
+```
+
+/balance # Check balance & address
+/wallet action:export # Export seed phrase (DM)
+/wallet action:clear-dms # Delete bot DMs for privacy
+/help # List all commands
 
 ````
 

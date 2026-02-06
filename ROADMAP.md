@@ -395,6 +395,8 @@ enum ParticipantStatus {
 - [x] Implement `/history` command
 - [x] Auto-create wallets for unregistered tip recipients
 - [x] Implement "Drain Mode" (send all funds including dust)
+- [x] Refactor `/wallet` commands (flattened structure)
+- [x] Add `/help` command
 
 **Deliverables:**
 

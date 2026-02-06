@@ -6,54 +6,42 @@ import {
   DMChannel,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
-import { WalletService, BalanceService, PriceService, TOKEN_MINTS } from 'fattips-solana';
+import { WalletService } from 'fattips-solana';
 
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
-const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
-const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 
 export const data = new SlashCommandBuilder()
   .setName('wallet')
-  .setDescription('Manage your Solana wallet')
+  .setDescription('Manage your Solana wallet settings')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
-  .addSubcommand((subcommand) =>
-    subcommand.setName('create').setDescription('Create a new Solana wallet')
-  )
-  .addSubcommand((subcommand) =>
-    subcommand.setName('balance').setDescription('Check your wallet balance')
-  )
-  .addSubcommand((subcommand) =>
-    subcommand.setName('export').setDescription('Export your wallet seed phrase (DM only)')
-  )
-  .addSubcommand((subcommand) =>
-    subcommand.setName('address').setDescription('Show your wallet address')
-  )
-  .addSubcommand((subcommand) =>
-    subcommand.setName('clear-dms').setDescription('Delete bot messages in your DM')
+  .addStringOption((option) =>
+    option
+      .setName('action')
+      .setDescription('Select an action')
+      .setRequired(true)
+      .addChoices(
+        { name: 'Create Wallet', value: 'create' },
+        { name: 'Export Seed Phrase', value: 'export' },
+        { name: 'Clear DM History', value: 'clear-dms' }
+      )
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  const subcommand = interaction.options.getSubcommand();
+  const action = interaction.options.getString('action', true);
 
-  switch (subcommand) {
+  switch (action) {
     case 'create':
       await handleCreate(interaction);
       break;
-    case 'balance':
-      await handleBalance(interaction);
-      break;
     case 'export':
       await handleExport(interaction);
-      break;
-    case 'address':
-      await handleAddress(interaction);
       break;
     case 'clear-dms':
       await handleClearDms(interaction);
       break;
     default:
       await interaction.reply({
-        content: 'Unknown subcommand',
+        content: 'Unknown action',
         ephemeral: true,
       });
   }
@@ -70,7 +58,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
     if (existingUser) {
       await interaction.editReply({
-        content: 'You already have a wallet! Use `/wallet balance` to see your balance.',
+        content: 'You already have a wallet! Use `/balance` to see your balance.',
       });
       return;
     }
@@ -117,12 +105,10 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
       // Auto-delete after 60 seconds (with edit fallback)
       setTimeout(async () => {
         try {
-          // Try to overwrite content first (in case delete fails)
           await dmMessage.edit({
             content: '🔒 Seed phrase removed for security.',
             embeds: [],
           });
-          // Then delete
           await dmMessage.delete();
         } catch {
           // Message might already be deleted or channel closed
@@ -159,7 +145,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
       embed.addFields({
         name: '⚠️ Important',
         value:
-          "I couldn't send you a DM with your seed phrase. Please enable DMs from server members and run `/wallet export` to receive your recovery phrase.",
+          "I couldn't send you a DM with your seed phrase. Please enable DMs from server members and run `/wallet action:export` to receive your recovery phrase.",
         inline: false,
       });
     } else {
@@ -174,8 +160,6 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
     // Send public announcement if not in DM
     if (interaction.channel && !(interaction.channel instanceof DMChannel)) {
-      // Cast channel to TextChannel to access send()
-      // We know it supports send() because it's not a DM and interaction happened there
       const channel = interaction.channel as any;
       if (typeof channel.send === 'function') {
         await channel.send({
@@ -191,115 +175,12 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   }
 }
 
-async function handleBalance(interaction: ChatInputCommandInteraction) {
-  // Defer immediately - must be within 3 seconds
-  const deferPromise = interaction.deferReply({ ephemeral: true });
-
-  try {
-    // Wait for defer to complete
-    await deferPromise;
-
-    const user = await prisma.user.findUnique({
-      where: { discordId: interaction.user.id },
-    });
-
-    if (!user) {
-      await interaction.editReply({
-        content: "You don't have a wallet yet. Use `/wallet create` to create one!",
-      });
-      return;
-    }
-
-    // Fetch balances from Solana with timeout
-    let balances = { sol: 0, usdc: 0, usdt: 0 };
-    try {
-      const balancePromise = balanceService.getBalances(user.walletPubkey);
-      const timeoutPromise = new Promise<typeof balances>((_, reject) =>
-        setTimeout(() => reject(new Error('Balance fetch timeout')), 10000)
-      );
-      balances = await Promise.race([balancePromise, timeoutPromise]);
-    } catch (error) {
-      console.error('Error fetching balances from Solana:', error);
-      // Continue with zero balances
-    }
-
-    // Fetch SOL price for USD calculation
-    let solUsdValue = 0;
-    let showUsdValues = false;
-    try {
-      const solPrice = await priceService.getTokenPrice(TOKEN_MINTS.SOL);
-      if (solPrice) {
-        solUsdValue = balances.sol * solPrice.price;
-        showUsdValues = true;
-      }
-    } catch {
-      console.log('Price API unavailable, showing balances without USD values');
-    }
-
-    // Format balances
-    const solFormatted = BalanceService.formatBalance(balances.sol);
-    const usdcFormatted = BalanceService.formatBalance(balances.usdc);
-    const usdtFormatted = BalanceService.formatBalance(balances.usdt);
-
-    // Calculate total USD value
-    const totalUsd = solUsdValue + balances.usdc + balances.usdt;
-
-    // Build description based on whether we have USD values
-    let description = `**Public Address:**\n\`\`\`\n${user.walletPubkey}\n\`\`\``;
-    if (showUsdValues) {
-      description += `\n\n**Total Value:** $${totalUsd.toFixed(2)} USD`;
-    }
-
-    const embed = new EmbedBuilder()
-      .setTitle('💰 Your Wallet Balance')
-      .setDescription(description)
-      .setColor(0x00aaff)
-      .addFields(
-        {
-          name: '☀️ SOL',
-          value: showUsdValues ? `${solFormatted} ($${solUsdValue.toFixed(2)})` : solFormatted,
-          inline: true,
-        },
-        { name: '💵 USDC', value: usdcFormatted, inline: true },
-        { name: '💶 USDT', value: usdtFormatted, inline: true }
-      )
-      .setTimestamp();
-
-    // Add total value estimation if we have balances
-    const hasBalance = balances.sol > 0 || balances.usdc > 0 || balances.usdt > 0;
-    if (hasBalance) {
-      embed.addFields({
-        name: '💡 Tip',
-        value: 'Send `/tip @user $5` to tip someone!',
-        inline: false,
-      });
-    } else {
-      embed.addFields({
-        name: '💡 Getting Started',
-        value: 'Send SOL, USDC, or USDT to your address above to fund your wallet.',
-        inline: false,
-      });
-    }
-
-    await interaction.editReply({ embeds: [embed] });
-  } catch (error) {
-    console.error('Error fetching balance:', error);
-    try {
-      await interaction.editReply({
-        content: 'Failed to fetch balance. Please try again later.',
-      });
-    } catch (replyError) {
-      console.error('Failed to send error reply:', replyError);
-    }
-  }
-}
-
 async function handleExport(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    // Check if this is a DM
-    if (!(interaction.channel instanceof DMChannel)) {
+    // Check if this is a DM (interaction.guild is null in DMs)
+    if (interaction.guild) {
       await interaction.editReply({
         content:
           '⚠️ For security, you can only export your seed phrase in DMs. Please check your DMs!',
@@ -311,7 +192,7 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
           .setTitle('🔐 Seed Phrase Export')
           .setDescription(
             'You requested to export your wallet seed phrase.\n\n' +
-              'Please run `/wallet export` here in this DM to receive your seed phrase securely.'
+              'Please run `/wallet action:export` here in this DM to receive your seed phrase securely.'
           )
           .setColor(0xffaa00);
 
@@ -331,7 +212,8 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
 
     if (!user) {
       await interaction.editReply({
-        content: "You don't have a wallet yet. Use `/wallet create` in a server to create one!",
+        content:
+          "You don't have a wallet yet. Use `/wallet action:create` in a server to create one!",
       });
       return;
     }
@@ -389,44 +271,9 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
   }
 }
 
-async function handleAddress(interaction: ChatInputCommandInteraction) {
-  await interaction.deferReply({ ephemeral: true });
-
-  try {
-    const user = await prisma.user.findUnique({
-      where: { discordId: interaction.user.id },
-    });
-
-    if (!user) {
-      await interaction.editReply({
-        content: "You don't have a wallet yet. Use `/wallet create` to create one!",
-      });
-      return;
-    }
-
-    const embed = new EmbedBuilder()
-      .setTitle('📋 Your Wallet Address')
-      .setDescription(`**Public Address:**\n\`\`\`\n${user.walletPubkey}\n\`\`\``)
-      .setColor(0x00aaff)
-      .addFields({
-        name: '💰 Send funds to this address',
-        value: 'You can send SOL, USDC, or USDT to this address to fund your wallet.',
-        inline: false,
-      })
-      .setTimestamp();
-
-    await interaction.editReply({ embeds: [embed] });
-  } catch (error) {
-    console.error('Error fetching address:', error);
-    await interaction.editReply({
-      content: 'Failed to fetch address. Please try again later.',
-    });
-  }
-}
-
 async function handleClearDms(interaction: ChatInputCommandInteraction) {
-  // Must be in DM to clear DMs
-  if (!(interaction.channel instanceof DMChannel)) {
+  // Must be in DM to clear DMs (interaction.guild is null in DMs)
+  if (interaction.guild) {
     await interaction.reply({
       content: '❌ This command can only be used in DMs with the bot.',
       ephemeral: true,
@@ -437,9 +284,11 @@ async function handleClearDms(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    const channel = interaction.channel;
+    // In DMs, we need to fetch the channel if it's partial or use interaction.user.createDM()
+    const channel = interaction.channel || (await interaction.user.createDM());
 
     // Fetch last 100 messages (limit)
+    // Note: DMs are not guaranteed to support bulk delete, so we fetch and delete individually
     const messages = await channel.messages.fetch({ limit: 100 });
 
     // Filter messages sent by the bot
