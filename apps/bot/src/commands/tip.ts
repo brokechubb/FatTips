@@ -92,16 +92,38 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    // Get recipient's wallet
-    const recipient = await prisma.user.findUnique({
+    // Get recipient's wallet, or create one if it doesn't exist
+    let recipient = await prisma.user.findUnique({
       where: { discordId: targetUser.id },
     });
 
+    let isNewWallet = false;
+    let newWalletMnemonic = '';
+
     if (!recipient) {
-      await interaction.editReply({
-        content: `Hey ${targetUser}, ${interaction.user} tried to tip you **${amountStr}**! 💸\n\n⚠️ No funds were moved yet.\nUse \`/wallet create\` to start sending and receiving tips with FatTips!\n\n*- TRANSACTION HAS BEEN CANCELLED -*`,
-      });
-      return;
+      // Auto-create wallet for recipient
+      try {
+        const wallet = walletService.createEncryptedWallet();
+        recipient = await prisma.user.create({
+          data: {
+            discordId: targetUser.id,
+            walletPubkey: wallet.publicKey,
+            encryptedPrivkey: wallet.encryptedPrivateKey,
+            keySalt: wallet.keySalt,
+            encryptedMnemonic: wallet.encryptedMnemonic,
+            mnemonicSalt: wallet.mnemonicSalt,
+            seedDelivered: false,
+          },
+        });
+        isNewWallet = true;
+        newWalletMnemonic = wallet.mnemonic;
+      } catch (error) {
+        console.error('Error creating recipient wallet:', error);
+        await interaction.editReply({
+          content: `${interaction.user} ❌ Failed to create wallet for ${targetUser}. Please try again later.`,
+        });
+        return;
+      }
     }
 
     // Determine token and conversion
@@ -336,14 +358,38 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setColor(0x00ff00)
       .setTimestamp();
 
+    if (isNewWallet) {
+      embed.addFields({
+        name: '🆕 New Wallet Created',
+        value: `A new Solana wallet was created for ${targetUser} to receive this tip! Check your DMs for the seed phrase.`,
+        inline: false,
+      });
+    }
+
     await interaction.editReply({ embeds: [embed] });
 
     // 5. DM recipient
     try {
       const recipientUser = await interaction.client.users.fetch(recipient.discordId);
-      await recipientUser.send({
-        content: `🎉 You received a tip of **${formatTokenAmount(amountToken)} ${tokenSymbol}** (~$${usdValue.toFixed(2)}) from ${interaction.user.username}!`,
-      });
+      let dmContent = `🎉 You received a tip of **${formatTokenAmount(amountToken)} ${tokenSymbol}** (~$${usdValue.toFixed(2)}) from ${interaction.user.username}!`;
+
+      if (isNewWallet) {
+        dmContent +=
+          `\n\n**🔐 A new wallet was created for you!**\n` +
+          `Here is your recovery phrase (seed). **Keep this safe and secret!**\n` +
+          `\`\`\`\n${newWalletMnemonic}\n\`\`\`\n` +
+          `You can use this phrase to import your wallet into Phantom or Solflare.`;
+      }
+
+      await recipientUser.send({ content: dmContent });
+
+      // Update delivered status if successful
+      if (isNewWallet) {
+        await prisma.user.update({
+          where: { discordId: recipient.discordId },
+          data: { seedDelivered: true },
+        });
+      }
     } catch {
       // Ignore DM errors
     }

@@ -48,6 +48,29 @@ export const data = new SlashCommandBuilder()
       )
   );
 
+// Alias command for /withdraw
+export const withdrawData = new SlashCommandBuilder()
+  .setName('withdraw')
+  .setDescription('Withdraw funds to external wallet (alias for /send)')
+  .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
+  .addStringOption((option) =>
+    option.setName('address').setDescription('Solana wallet address').setRequired(true)
+  )
+  .addStringOption((option) =>
+    option.setName('amount').setDescription('Amount to withdraw').setRequired(true)
+  )
+  .addStringOption((option) =>
+    option
+      .setName('token')
+      .setDescription('Token to withdraw')
+      .setRequired(false)
+      .addChoices(
+        { name: 'SOL', value: 'SOL' },
+        { name: 'USDC', value: 'USDC' },
+        { name: 'USDT', value: 'USDT' }
+      )
+  );
+
 export async function execute(interaction: ChatInputCommandInteraction) {
   const address = interaction.options.getString('address', true);
   const amountStr = interaction.options.getString('amount', true);
@@ -128,12 +151,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
       // Get balance to calculate max
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00001; // Aggressive mode minimums
-      const rentReserve = 0.001;
+      const feeBuffer = 0.00001; // Tiny buffer for fee
 
       if (tokenSymbol === 'SOL') {
-        // Max SOL = balance - fees - rent reserve
-        amountToken = Math.max(0, balances.sol - feeBuffer - rentReserve);
+        // Max SOL = balance - fees (Drain Mode: No rent reserve kept)
+        amountToken = Math.max(0, balances.sol - feeBuffer);
       } else if (tokenSymbol === 'USDC') {
         amountToken = balances.usdc;
       } else {
@@ -145,8 +167,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           content:
             `${interaction.user} ❌ Insufficient balance!\n` +
             `You have **${balances.sol.toFixed(6)} SOL**.\n` +
-            `Required minimum reserve (rent + fees): **${(feeBuffer + rentReserve).toFixed(6)} SOL**.\n` +
-            `You don't have enough to send after reserving funds to keep your wallet open.`,
+            `Minimum fee required: **${feeBuffer.toFixed(6)} SOL**.\n` +
+            `You don't have enough to cover the transaction fee.`,
         });
         return;
       }
@@ -302,7 +324,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     // 4. Send success message
     const embed = new EmbedBuilder()
-      .setTitle('💸 Transfer Sent!')
+      .setTitle(
+        interaction.commandName === 'withdraw' ? '💸 Withdrawal Sent!' : '💸 Transfer Sent!'
+      )
       .setDescription(
         `${interaction.user} sent **${formatTokenAmount(amountToken)} ${tokenSymbol}** (~$${usdValue.toFixed(2)} USD) to\n` +
           `\`\`\`\n${recipientPubkey.toBase58()}\n\`\`\`\n\n` +

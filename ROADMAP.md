@@ -386,22 +386,25 @@ enum ParticipantStatus {
 
 **Goal:** Full tipping functionality with USD conversion
 
-- [x] Integrate Jupiter Price API
+- [x] Integrate Jupiter Price API (V3 with fallback)
 - [x] Implement USD to token conversion
-- [x] Implement `/tip` command with parsing
+- [x] Implement `/tip` command with parsing ("$5", "all", "max")
+- [x] Implement `/send` and `/withdraw` for external transfers
 - [x] Handle transaction signing from user wallets
-- [x] Log all transactions to database
-- [ ] Implement `/history` command
-- [ ] Add transaction status tracking
+- [x] Log all transactions to database (Tip, Withdrawal, Deposit)
+- [x] Implement `/history` command
+- [x] Auto-create wallets for unregistered tip recipients
+- [x] Implement "Drain Mode" (send all funds including dust)
 
 **Deliverables:**
 
 - `/tip @user $5` works end-to-end
+- `/withdraw address:xy... amount:all` works
 - USD conversion accurate
 - Transactions logged and queryable
-- `/send` command for external transfers added
+- Zero-friction onboarding (auto-wallet)
 
-### Phase 5: Airdrops (Week 6-7)
+### Phase 5: Airdrops (Week 6-7) 🚧 NEXT UP
 
 **Goal:** Complete airdrop system with button claims
 

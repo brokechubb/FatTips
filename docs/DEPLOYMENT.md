@@ -11,7 +11,9 @@
 
 1. Clone repository on VPS
 2. Copy `.env.example` to `.env`
-3. Configure all environment variables
+3. Configure all environment variables (See `.env.example`)
+   - **Important:** Get a free API key from [Jupiter Portal](https://portal.jup.ag) for USD price conversion.
+   - **Important:** Get a free API key from [Helius](https://dev.helius.xyz/) for Solana RPC.
 4. Set up PostgreSQL database
 
 ## Docker Deployment

@@ -47,12 +47,15 @@ Send crypto as easily as sending a message.
 /tip @friend all        # Sends your entire wallet balance
 ```
 
-### 2. External Transfers
+_Note: If you tip a user who doesn't have a wallet, FatTips creates one for them automatically!_
+
+### 2. External Transfers & Withdrawals
 
 Send funds to any external Solana address directly from Discord.
 
 ```
 /send address:9HMqa... $20
+/withdraw address:9HMqa... all   # Drains wallet completely (closes account)
 ```
 
 ### 3. Airdrops (Coming Soon)
