@@ -50,6 +50,35 @@ pnpm docker:up      # Start all services
 pnpm docker:down    # Stop all services
 ```
 
+## Production Deployment Guidelines
+
+The production environment on `codestats.gg` deviates slightly from local development to ensure stability and proper dependency management.
+
+### Docker Configuration
+
+- **Fat Images**: Production Dockerfiles use `pnpm deploy` to create isolated builds that include all necessary workspace dependencies. This avoids symlink issues typical in monorepo Docker deployments.
+- **Database Connection**: In `docker-compose.yml`, the `DATABASE_URL` environment variable is overridden to point to the `postgres` service instead of `localhost`.
+- **Web Dashboard**: The `web` service is currently disabled in production until Phase 8 is implemented.
+
+### Deployment Commands
+
+To deploy updates to the production server:
+
+```bash
+# 1. SSH into the server
+ssh -p 1337 chubb@codestats.gg
+
+# 2. Navigate to project directory
+cd /home/chubb/bots/FatTips
+
+# 3. Pull latest changes (if using git) or sync files
+# (Ensure Dockerfiles and docker-compose.yml are up to date)
+
+# 4. Rebuild and restart services
+# Note: Use --force-recreate to ensure env var changes apply
+docker compose up -d --build --force-recreate bot api
+```
+
 ## Code Style Guidelines
 
 ### TypeScript Configuration

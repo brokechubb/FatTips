@@ -1,23 +1,28 @@
 FROM node:18-alpine AS base
 
 # Install dependencies
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat openssl
 
 WORKDIR /app
 
-# Install dependencies
-COPY package.json pnpm-lock.yaml* ./
-RUN npm install -g pnpm && pnpm install
-
-# Copy source code
+# Copy source code first
 COPY . .
 
+# Install dependencies
+RUN npm install -g pnpm && pnpm install
+
+# Build dependencies
+RUN pnpm --filter fattips-database generate
+RUN pnpm --filter fattips-database build
+RUN pnpm --filter fattips-shared build
+RUN pnpm --filter fattips-solana build
+
 # Build the application
-RUN pnpm --filter database generate
-RUN pnpm --filter web build
+RUN pnpm --filter fattips-web build
 
 # Production image
 FROM node:18-alpine AS runner
+RUN apk add --no-cache openssl
 
 WORKDIR /app
 
@@ -26,7 +31,7 @@ ENV NODE_ENV=production
 # Copy necessary files
 COPY --from=base /app/apps/web/.next/standalone ./
 COPY --from=base /app/apps/web/.next/static ./.next/static
-COPY --from=base /app/apps/web/public ./public
+# Public folder removed as it does not exist
 COPY --from=base /app/apps/web/package.json ./
 COPY --from=base /app/node_modules ./node_modules
 
