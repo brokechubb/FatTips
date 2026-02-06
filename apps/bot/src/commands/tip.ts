@@ -367,7 +367,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (isNewWallet) {
       embed.addFields({
         name: '🆕 New Wallet Created',
-        value: `A new Solana wallet was created for ${targetUser} to receive this tip! Check your DMs for the seed phrase.`,
+        value:
+          `A new Solana wallet was created for ${targetUser} to receive this tip!\n\n` +
+          `📩 **Check your DMs:** I've sent you the key to access these funds.\n` +
+          `🤖 **Tip:** You can install **FatTips** to your account to manage your wallet anywhere!`,
         inline: false,
       });
     }
@@ -390,10 +393,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
       const dmMessage = await recipientUser.send({ content: dmContent });
 
-      // Auto-delete after 60 seconds if it contains sensitive info
+      // Auto-delete after 60 seconds (with edit fallback)
       if (isNewWallet) {
         setTimeout(async () => {
           try {
+            await dmMessage.edit({
+              content: '🔒 Seed phrase removed for security.',
+            });
             await dmMessage.delete();
           } catch {
             // Message might already be deleted or channel closed
