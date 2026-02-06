@@ -2,8 +2,11 @@ import { Client, GatewayIntentBits, REST, Routes, Collection } from 'discord.js'
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
+import { AirdropService } from './services/airdrop';
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+
+const airdropService = new AirdropService();
 
 // Extend Client to include commands collection
 declare module 'discord.js' {
@@ -57,9 +60,23 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN!
 
 client.once('clientReady', () => {
   console.log(`Bot logged in as ${client.user?.tag}`);
+
+  // Schedule airdrop settlement (every 10 seconds for responsiveness)
+  setInterval(() => {
+    airdropService.settleExpiredAirdrops(client);
+  }, 10 * 1000);
 });
 
 client.on('interactionCreate', async (interaction) => {
+  // Handle Buttons
+  if (interaction.isButton()) {
+    if (interaction.customId.startsWith('claim_airdrop_')) {
+      const airdropId = interaction.customId.replace('claim_airdrop_', '');
+      await airdropService.handleClaim(interaction, airdropId);
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const command = client.commands.get(interaction.commandName);

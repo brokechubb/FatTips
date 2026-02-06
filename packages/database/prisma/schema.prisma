@@ -50,19 +50,23 @@ model Transaction {
 
 model Airdrop {
   id                String   @id @default(uuid())
-  onChainPda        String   @unique
+  walletPubkey      String   @unique // Ephemeral wallet public key
+  encryptedPrivkey  String   // Ephemeral private key (encrypted)
+  keySalt           String   // Encryption salt
   creatorId         String
   creator           User     @relation("Creator", fields: [creatorId], references: [discordId])
   amountTotal       Decimal  @db.Decimal(20, 9)
   amountClaimed     Decimal  @default(0) @db.Decimal(20, 9)
   tokenMint         String
-  maxParticipants   Int
+  maxParticipants   Int?     // Optional cap
   participantCount  Int      @default(0)
   status            AirdropStatus @default(ACTIVE)
   expiresAt         DateTime
   settledAt         DateTime?
   createdAt         DateTime @default(now())
-  
+  channelId         String   // Channel where airdrop was created
+  messageId         String?  // ID of the embed message
+
   participants      AirdropParticipant[]
 
   @@index([status, expiresAt])
