@@ -100,26 +100,26 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
             '• Write this down on paper and store it securely\n' +
             '• Never share this with anyone\n' +
             '• You can use this phrase to import your wallet into any Solana wallet app\n\n' +
-            '⚠️ **This message will self-destruct in 60 seconds for your security.**'
+            '⚠️ **This message will self-destruct in 15 minutes for your security.**'
         )
         .setColor(0xff6b6b)
-        .setFooter({ text: 'Auto-deleting in 60s' })
+        .setFooter({ text: 'Auto-deleting sensitive info in 15m' })
         .setTimestamp();
 
       const dmMessage = await interaction.user.send({ embeds: [dmEmbed] });
 
-      // Auto-delete after 60 seconds (with edit fallback)
+      // Auto-remove seed phrase after 15 minutes
       setTimeout(async () => {
         try {
           await dmMessage.edit({
-            content: '🔒 Seed phrase removed for security.',
+            content:
+              '🔒 **Seed phrase removed for security.**\nUse `/wallet action:export` to view it again.',
             embeds: [],
           });
-          await dmMessage.delete();
         } catch {
           // Message might already be deleted or channel closed
         }
-      }, 60000);
+      }, 900000); // 15 minutes
 
       dmSuccess = true;
 
@@ -249,26 +249,26 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
           '• Write this down on paper and store it securely\n' +
           '• Never share this with anyone\n' +
           '• You can use this phrase to import your wallet into any Solana wallet app\n\n' +
-          '⚠️ **This message will self-destruct in 60 seconds.**'
+          '⚠️ **This message will self-destruct in 15 minutes.**'
       )
       .setColor(0xff6b6b)
-      .setFooter({ text: 'Auto-deleting in 60s' })
+      .setFooter({ text: 'Auto-deleting sensitive info in 15m' })
       .setTimestamp();
 
     const dmMessage = await interaction.editReply({ embeds: [dmEmbed] });
 
-    // Auto-delete after 60 seconds (with edit fallback)
+    // Auto-remove seed phrase after 15 minutes
     setTimeout(async () => {
       try {
         await dmMessage.edit({
-          content: '🔒 Seed phrase removed for security.',
+          content:
+            '🔒 **Seed phrase removed for security.**\nUse `/wallet action:export` to view it again.',
           embeds: [],
         });
-        await dmMessage.delete();
       } catch {
         // Message might already be deleted
       }
-    }, 60000);
+    }, 900000); // 15 minutes
   } catch (error) {
     console.error('Error exporting wallet:', error);
     await interaction.editReply({

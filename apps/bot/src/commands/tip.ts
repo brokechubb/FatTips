@@ -393,18 +393,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
       const dmMessage = await recipientUser.send({ content: dmContent });
 
-      // Auto-delete after 60 seconds (with edit fallback)
+      // Auto-delete after 15 minutes (with edit fallback)
       if (isNewWallet) {
         setTimeout(async () => {
           try {
             await dmMessage.edit({
-              content: '🔒 Seed phrase removed for security.',
+              content:
+                '🔒 **Seed phrase removed for security.**\nUse `/wallet action:export` to view it again.',
             });
-            await dmMessage.delete();
           } catch {
             // Message might already be deleted or channel closed
           }
-        }, 60000);
+        }, 900000); // 15 minutes
       }
 
       // Update delivered status if successful
