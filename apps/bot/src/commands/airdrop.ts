@@ -9,6 +9,7 @@ import {
   InteractionContextType,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
+import { logTransaction } from '../utils/logger';
 import {
   PriceService,
   TOKEN_MINTS,
@@ -188,25 +189,40 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
       // Send SOL
       const solToSend = tokenSymbol === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
-      await transactionService.transfer(
+      const solSig = await transactionService.transfer(
         creatorKeypair,
         ephemeralWallet.publicKey,
         solToSend,
         TOKEN_MINTS.SOL
       );
+      logTransaction('AIRDROP', {
+        fromId: creator.discordId,
+        amount: solToSend,
+        token: 'SOL',
+        signature: solSig,
+        status: 'SUCCESS',
+      });
     }
 
     // Transfer SPL Token if needed
     if (fundingAmountToken > 0) {
-      await transactionService.transfer(
+      const tokenSig = await transactionService.transfer(
         creatorKeypair,
         ephemeralWallet.publicKey,
         fundingAmountToken,
         tokenMint
       );
+      logTransaction('AIRDROP', {
+        fromId: creator.discordId,
+        amount: fundingAmountToken,
+        token: tokenSymbol,
+        signature: tokenSig,
+        status: 'SUCCESS',
+      });
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Funding failed:', error);
+    logTransaction('AIRDROP', { status: 'FAILED', error: error.message || String(error) });
     await interaction.editReply({ content: '❌ Failed to fund airdrop wallet. Please try again.' });
     return;
   }

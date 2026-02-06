@@ -6,6 +6,7 @@ import {
   InteractionContextType,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
+import { logTransaction } from '../utils/logger';
 import {
   PriceService,
   TOKEN_MINTS,
@@ -333,6 +334,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       },
     });
 
+    logTransaction('SEND', {
+      fromId: sender.discordId,
+      toId: recipientPubkey.toBase58(),
+      amount: amountToken,
+      token: tokenSymbol,
+      signature,
+      status: 'SUCCESS',
+    });
+
     // 4. Send success message
     const embed = new EmbedBuilder()
       .setTitle(
@@ -347,8 +357,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setTimestamp();
 
     await interaction.editReply({ embeds: [embed] });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error processing send:', error);
+    logTransaction('SEND', {
+      status: 'FAILED',
+      error: error.message || String(error),
+    });
     try {
       await interaction.editReply({
         content: `${interaction.user} ❌ Failed to process transfer. Please try again later.`,

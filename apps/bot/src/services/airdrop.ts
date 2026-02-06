@@ -1,5 +1,6 @@
 import { ButtonInteraction, EmbedBuilder } from 'discord.js';
 import { prisma } from 'fattips-database';
+import { logTransaction } from '../utils/logger';
 import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
 
 export class AirdropService {
@@ -179,33 +180,57 @@ export class AirdropService {
           if (tokenMint === TOKEN_MINTS.SOL) {
             const amount = Math.max(0, balances.sol - feeBuffer);
             if (amount > 0) {
-              await this.transactionService.transfer(
+              const signature = await this.transactionService.transfer(
                 walletKeypair,
                 airdrop.creator.walletPubkey,
                 amount,
                 tokenMint
               );
+              logTransaction('AIRDROP', {
+                fromId: 'BOT',
+                toId: airdrop.creatorId,
+                amount,
+                token: 'SOL',
+                signature,
+                status: 'SUCCESS',
+              });
             }
           } else {
             // Refund Token
             const tokenBal = tokenMint === TOKEN_MINTS.USDC ? balances.usdc : balances.usdt;
             if (tokenBal > 0) {
-              await this.transactionService.transfer(
+              const signature = await this.transactionService.transfer(
                 walletKeypair,
                 airdrop.creator.walletPubkey,
                 tokenBal,
                 tokenMint
               );
+              logTransaction('AIRDROP', {
+                fromId: 'BOT',
+                toId: airdrop.creatorId,
+                amount: tokenBal,
+                token: tokenSymbol,
+                signature,
+                status: 'SUCCESS',
+              });
             }
             // Refund SOL dust (gas money)
             const solAmount = Math.max(0, balances.sol - feeBuffer);
             if (solAmount > 0) {
-              await this.transactionService.transfer(
+              const signature = await this.transactionService.transfer(
                 walletKeypair,
                 airdrop.creator.walletPubkey,
                 solAmount,
                 TOKEN_MINTS.SOL
               );
+              logTransaction('AIRDROP', {
+                fromId: 'BOT',
+                toId: airdrop.creatorId,
+                amount: solAmount,
+                token: 'SOL',
+                signature,
+                status: 'SUCCESS',
+              });
             }
           }
 
@@ -293,6 +318,15 @@ export class AirdropService {
               txType: 'AIRDROP_CLAIM',
               status: 'CONFIRMED',
             },
+          });
+
+          logTransaction('AIRDROP', {
+            fromId: 'BOT',
+            toId: winner.userId,
+            amount: share,
+            token: tokenSymbol,
+            signature,
+            status: 'SUCCESS',
           });
 
           // Update Participant
