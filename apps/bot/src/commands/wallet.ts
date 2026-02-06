@@ -99,12 +99,24 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
             '**Tips:**\n' +
             '• Write this down on paper and store it securely\n' +
             '• Never share this with anyone\n' +
-            '• You can use this phrase to import your wallet into any Solana wallet app'
+            '• You can use this phrase to import your wallet into any Solana wallet app\n\n' +
+            '⚠️ **This message will self-destruct in 60 seconds for your security.**'
         )
         .setColor(0xff6b6b)
+        .setFooter({ text: 'Auto-deleting in 60s' })
         .setTimestamp();
 
-      await interaction.user.send({ embeds: [dmEmbed] });
+      const dmMessage = await interaction.user.send({ embeds: [dmEmbed] });
+
+      // Auto-delete after 60 seconds
+      setTimeout(async () => {
+        try {
+          await dmMessage.delete();
+        } catch {
+          // Message might already be deleted or channel closed
+        }
+      }, 60000);
+
       dmSuccess = true;
 
       // Update seed delivered status
@@ -336,12 +348,23 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
           '**Tips:**\n' +
           '• Write this down on paper and store it securely\n' +
           '• Never share this with anyone\n' +
-          '• You can use this phrase to import your wallet into any Solana wallet app'
+          '• You can use this phrase to import your wallet into any Solana wallet app\n\n' +
+          '⚠️ **This message will self-destruct in 60 seconds.**'
       )
       .setColor(0xff6b6b)
+      .setFooter({ text: 'Auto-deleting in 60s' })
       .setTimestamp();
 
-    await interaction.editReply({ embeds: [dmEmbed] });
+    const dmMessage = await interaction.editReply({ embeds: [dmEmbed] });
+
+    // Auto-delete after 60 seconds
+    setTimeout(async () => {
+      try {
+        await dmMessage.delete();
+      } catch {
+        // Message might already be deleted or channel closed
+      }
+    }, 60000);
   } catch (error) {
     console.error('Error exporting wallet:', error);
     await interaction.editReply({

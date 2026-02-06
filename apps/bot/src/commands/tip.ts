@@ -378,10 +378,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           `\n\n**🔐 A new wallet was created for you!**\n` +
           `Here is your recovery phrase (seed). **Keep this safe and secret!**\n` +
           `\`\`\`\n${newWalletMnemonic}\n\`\`\`\n` +
-          `You can use this phrase to import your wallet into Phantom or Solflare.`;
+          `You can use this phrase to import your wallet into Phantom or Solflare.\n\n` +
+          `⚠️ **This message will self-destruct in 60 seconds.**`;
       }
 
-      await recipientUser.send({ content: dmContent });
+      const dmMessage = await recipientUser.send({ content: dmContent });
+
+      // Auto-delete after 60 seconds if it contains sensitive info
+      if (isNewWallet) {
+        setTimeout(async () => {
+          try {
+            await dmMessage.delete();
+          } catch {
+            // Message might already be deleted or channel closed
+          }
+        }, 60000);
+      }
 
       // Update delivered status if successful
       if (isNewWallet) {

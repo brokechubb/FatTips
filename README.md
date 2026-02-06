@@ -55,7 +55,12 @@ Send funds to any external Solana address directly from Discord.
 
 ```
 /send address:9HMqa... $20
-/withdraw address:9HMqa... all   # Drains wallet completely (closes account)
+/withdraw address:9HMqa... all   # Drains wallet completely (empties balance)
+```
+
+/send address:9HMqa... $20
+/withdraw address:9HMqa... all # Drains wallet completely (closes account)
+
 ```
 
 ### 3. Airdrops (Coming Soon)
@@ -67,8 +72,10 @@ Create engaging community airdrops. Drop a pot of tokens in a channel, and users
 Keep track of your spending and earnings with a transparent history log, complete with Solscan links for on-chain verification.
 
 ```
+
 /history
-```
+
+````
 
 ---
 
@@ -105,7 +112,7 @@ FatTips is open source and can be self-hosted.
    ```bash
    git clone https://github.com/brokechubb/FatTips.git
    cd FatTips
-   ```
+````
 
 2. **Install Dependencies**
 
