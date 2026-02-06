@@ -392,19 +392,53 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const recipientUser = await interaction.client.users.fetch(recipient.discordId);
       let dmContent = `🎉 You received a tip of **${formatTokenAmount(amountToken)} ${tokenSymbol}** (~$${usdValue.toFixed(2)}) from ${interaction.user.username}!`;
 
+      let dmMessage: any;
+
       if (isNewWallet) {
         dmContent +=
           `\n\n**🔐 A new wallet was created for you!**\n` +
           `Here is your recovery phrase (seed). **Keep this safe and secret!**\n` +
           `\`\`\`\n${newWalletMnemonic}\n\`\`\`\n` +
           `You can use this phrase to import your wallet into Phantom or Solflare.\n\n` +
-          `⚠️ **This message will self-destruct in 60 seconds.**`;
+          `⚠️ **This message will self-destruct in 15 minutes.**`;
+
+        dmMessage = await recipientUser.send({ content: dmContent });
+
+        // Send a separate persistent guide message
+        const guideEmbed = new EmbedBuilder()
+          .setTitle('🚀 Getting Started with FatTips')
+          .setDescription('FatTips is a non-custodial wallet. Here is how to use it:')
+          .setColor(0x00aaff)
+          .addFields(
+            {
+              name: '💰 Check Balance',
+              value: 'Use `/balance` to see your funds and public address.',
+            },
+            {
+              name: '💸 Send & Tip',
+              value: 'Use `/tip @user $5` to tip friends instantly.',
+            },
+            {
+              name: '📤 Withdraw Funds',
+              value:
+                'Want to move funds to Phantom/Solflare? Use:\n' +
+                '`/send <address> all`\n' +
+                '(This drains your wallet completely to your external address).',
+            },
+            {
+              name: '🔐 Security',
+              value:
+                'The seed phrase above allows you to import this wallet anywhere. **It will self-destruct in 15 minutes.** If you miss it, use `/wallet action:export` to see it again.',
+            }
+          );
+
+        await recipientUser.send({ embeds: [guideEmbed] });
+      } else {
+        await recipientUser.send({ content: dmContent });
       }
 
-      const dmMessage = await recipientUser.send({ content: dmContent });
-
       // Auto-delete after 15 minutes (with edit fallback)
-      if (isNewWallet) {
+      if (isNewWallet && dmMessage) {
         setTimeout(async () => {
           try {
             await dmMessage.edit({

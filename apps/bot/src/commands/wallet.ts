@@ -112,6 +112,36 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
       const dmMessage = await interaction.user.send({ embeds: [dmEmbed] });
 
+      // Send a separate persistent guide message
+      const guideEmbed = new EmbedBuilder()
+        .setTitle('🚀 Getting Started with FatTips')
+        .setDescription('FatTips is a non-custodial wallet. Here is how to use it:')
+        .setColor(0x00aaff)
+        .addFields(
+          {
+            name: '💰 Check Balance',
+            value: 'Use `/balance` to see your funds and public address.',
+          },
+          {
+            name: '💸 Send & Tip',
+            value: 'Use `/tip @user $5` to tip friends instantly.',
+          },
+          {
+            name: '📤 Withdraw Funds',
+            value:
+              'Want to move funds to Phantom/Solflare? Use:\n' +
+              '`/send <address> all`\n' +
+              '(This drains your wallet completely to your external address).',
+          },
+          {
+            name: '🔐 Security',
+            value:
+              'The seed phrase above allows you to import this wallet anywhere. **It will self-destruct in 15 minutes.** If you miss it, use `/wallet action:export` to see it again.',
+          }
+        );
+
+      await interaction.user.send({ embeds: [guideEmbed] });
+
       // Auto-remove seed phrase after 15 minutes
       setTimeout(async () => {
         try {
