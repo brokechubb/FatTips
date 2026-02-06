@@ -1,9 +1,10 @@
 import { ButtonInteraction, EmbedBuilder } from 'discord.js';
 import { prisma } from 'fattips-database';
-import { TransactionService, WalletService, TOKEN_MINTS } from 'fattips-solana';
+import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
 
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
+const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
 
 export class AirdropService {
   /**
@@ -87,6 +88,7 @@ export class AirdropService {
         },
         include: {
           participants: true,
+          creator: true,
         },
       });
 
@@ -104,7 +106,7 @@ export class AirdropService {
   async settleAirdropById(airdropId: string, client: any) {
     const airdrop = await prisma.airdrop.findUnique({
       where: { id: airdropId },
-      include: { participants: true },
+      include: { participants: true, creator: true },
     });
 
     if (airdrop && airdrop.status === 'ACTIVE') {
@@ -136,18 +138,68 @@ export class AirdropService {
       const totalAmount = Number(airdrop.amountTotal);
       const winnerCount = participants.length;
 
-      if (winnerCount === 0) {
-        // No winners: Refund creator or forfeit to treasury
-        // For simplicity: Forfeit to treasury (bot keeps it) or just leave in wallet for now.
-        // We'll mark as EXPIRED.
-        await prisma.airdrop.update({
-          where: { id: airdrop.id },
-          data: { status: 'EXPIRED' },
-        });
+      // 2. Distribute Funds
+      const walletKeypair = walletService.getKeypair(airdrop.encryptedPrivkey, airdrop.keySalt);
+      const tokenMint = airdrop.tokenMint;
 
-        // Notify channel
-        this.notifyChannel(client, airdrop.channelId, `🛑 Airdrop ended with no participants.`);
-        return;
+      let tokenSymbol = 'SOL';
+      if (tokenMint === TOKEN_MINTS.USDC) tokenSymbol = 'USDC';
+      if (tokenMint === TOKEN_MINTS.USDT) tokenSymbol = 'USDT';
+
+      if (winnerCount === 0) {
+        // No winners: Refund creator completely
+        try {
+          const balances = await balanceService.getBalances(walletKeypair.publicKey.toBase58());
+          const feeBuffer = 0.00001;
+
+          // Refund Logic
+          if (tokenMint === TOKEN_MINTS.SOL) {
+            const amount = Math.max(0, balances.sol - feeBuffer);
+            if (amount > 0) {
+              await transactionService.transfer(
+                walletKeypair,
+                airdrop.creator.walletPubkey,
+                amount,
+                tokenMint
+              );
+            }
+          } else {
+            // Refund Token
+            const tokenBal = tokenMint === TOKEN_MINTS.USDC ? balances.usdc : balances.usdt;
+            if (tokenBal > 0) {
+              await transactionService.transfer(
+                walletKeypair,
+                airdrop.creator.walletPubkey,
+                tokenBal,
+                tokenMint
+              );
+            }
+            // Refund SOL dust (gas money)
+            const solAmount = Math.max(0, balances.sol - feeBuffer);
+            if (solAmount > 0) {
+              await transactionService.transfer(
+                walletKeypair,
+                airdrop.creator.walletPubkey,
+                solAmount,
+                TOKEN_MINTS.SOL
+              );
+            }
+          }
+
+          await prisma.airdrop.update({
+            where: { id: airdrop.id },
+            data: { status: 'EXPIRED' },
+          });
+
+          this.notifyChannel(
+            client,
+            airdrop.channelId,
+            `🛑 Airdrop ended with no participants. Funds refunded to creator.`
+          );
+          return;
+        } catch (refundError) {
+          console.error('Failed to refund creator:', refundError);
+        }
       }
 
       // Calculate share
@@ -165,10 +217,7 @@ export class AirdropService {
 
       const share = totalAmount / winners.length;
 
-      // 2. Distribute Funds
-      const walletKeypair = walletService.getKeypair(airdrop.encryptedPrivkey, airdrop.keySalt);
-      const tokenMint = airdrop.tokenMint;
-
+      // 2. Distribute Funds (walletKeypair already initialized above)
       let successCount = 0;
 
       for (const winner of winners) {
@@ -250,10 +299,6 @@ export class AirdropService {
       });
 
       // 4. Notify
-      let tokenSymbol = 'SOL'; // Lookup based on mint
-      if (tokenMint === TOKEN_MINTS.USDC) tokenSymbol = 'USDC';
-      if (tokenMint === TOKEN_MINTS.USDT) tokenSymbol = 'USDT';
-
       this.notifyChannel(
         client,
         airdrop.channelId,
