@@ -269,6 +269,12 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   } catch (err) {
     console.error('Failed to save message ID', err);
   }
+
+  // Schedule short airdrops for precise settlement
+  if (durationMs < 60000 * 5) {
+    // If less than 5 minutes
+    interaction.client.emit('scheduleAirdrop', airdrop.id, durationMs);
+  }
 }
 
 // Helpers (reused from tip.ts logic, ideally shared)

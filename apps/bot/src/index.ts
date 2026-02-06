@@ -19,6 +19,18 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages],
 });
 
+// Custom event for short airdrops
+client.on('scheduleAirdrop', (airdropId: string, durationMs: number) => {
+  console.log(`Scheduling precise settlement for ${airdropId} in ${durationMs}ms`);
+  setTimeout(() => {
+    // Re-fetch client to be safe, though closure captures it
+    // We need to fetch the airdrop object first since settleAirdrop expects it
+    // Actually, settleExpiredAirdrops finds it.
+    // We should expose a method to settle specific ID.
+    airdropService.settleAirdropById(airdropId, client);
+  }, durationMs);
+});
+
 // Store commands in a collection
 client.commands = new Collection();
 

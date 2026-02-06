@@ -99,16 +99,38 @@ export class AirdropService {
   }
 
   /**
+   * Settle a single airdrop by ID
+   */
+  async settleAirdropById(airdropId: string, client: any) {
+    const airdrop = await prisma.airdrop.findUnique({
+      where: { id: airdropId },
+      include: { participants: true },
+    });
+
+    if (airdrop && airdrop.status === 'ACTIVE') {
+      await this.settleAirdrop(airdrop, client);
+    }
+  }
+
+  /**
    * Settle a single airdrop
    */
   private async settleAirdrop(airdrop: any, client: any) {
+    // Double check status transactionally or optimistic
+    // Just simple check here since node is single threaded usually
+    if (airdrop.status !== 'ACTIVE') return;
+
     console.log(`Settling airdrop ${airdrop.id}...`);
 
     try {
       // 1. Mark as SETTLED (to prevent double processing)
-      // Actually, keep as PROCESSING or immediately settled?
-      // Let's mark settled first to be safe, or use a status like SETTLING.
-      // For now, we'll assume the script runs serially.
+      // We do this via updateMany to be atomic
+      const { count } = await prisma.airdrop.updateMany({
+        where: { id: airdrop.id, status: 'ACTIVE' },
+        data: { status: 'SETTLED', settledAt: new Date() }, // Mark settled immediately
+      });
+
+      if (count === 0) return; // Already settled by another process
 
       const participants = airdrop.participants;
       const totalAmount = Number(airdrop.amountTotal);
