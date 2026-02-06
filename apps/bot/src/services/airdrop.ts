@@ -174,7 +174,7 @@ export class AirdropService {
           const balances = await this.balanceService.getBalances(
             walletKeypair.publicKey.toBase58()
           );
-          const feeBuffer = 0.00001;
+          const feeBuffer = 0.001; // Increase buffer to ensure rent exemption
 
           // Refund Logic
           if (tokenMint === TOKEN_MINTS.SOL) {
@@ -360,7 +360,7 @@ export class AirdropService {
         where: { id: airdrop.id },
         data: {
           status: 'SETTLED',
-          amountClaimed: share * successCount,
+          amountClaimed: (share * successCount).toFixed(9), // Convert to string for Decimal safety
           settledAt: new Date(),
         },
       });
