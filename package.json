@@ -1,0 +1,38 @@
+{
+  "name": "fattips",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Solana-based Discord tipping bot with airdrop functionality",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:migrate": "pnpm --filter database migrate",
+    "db:generate": "pnpm --filter database generate",
+    "db:studio": "pnpm --filter database studio",
+    "db:seed": "pnpm --filter database seed",
+    "contract:build": "pnpm --filter airdrop build",
+    "contract:test": "pnpm --filter airdrop test",
+    "contract:deploy": "pnpm --filter airdrop deploy",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "format": "prettier --write .",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "prettier": "^3.1.0",
+    "turbo": "^1.11.0",
+    "typescript": "^5.3.0"
+  },
+  "packageManager": "pnpm@8.12.0",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "programs/*"
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "name": "fattips-solana",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Solana client wrappers for FatTips",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src/**/*.ts",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.3.9",
+    "@solana/web3.js": "^1.87.0",
+    "bip39": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.31",
+    "eslint": "^8.55.0",
+    "typescript": "^5.3.0"
+  }
+}

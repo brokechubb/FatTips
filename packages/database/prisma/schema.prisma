@@ -1,0 +1,130 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  discordId         String   @id
+  walletPubkey      String   @unique
+  encryptedPrivkey  String
+  keySalt           String
+  encryptedMnemonic String?
+  mnemonicSalt      String?
+  seedDelivered     Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  lastActive        DateTime @updatedAt
+
+  sentTips          Transaction[] @relation("SentTips")
+  receivedTips      Transaction[] @relation("ReceivedTips")
+  airdropsCreated   Airdrop[]     @relation("Creator")
+  participations    AirdropParticipant[]
+
+  @@index([walletPubkey])
+}
+
+model Transaction {
+  id                String   @id @default(uuid())
+  signature         String   @unique
+  fromId            String?
+  toId              String?
+  fromAddress       String?
+  toAddress         String?
+  from              User?    @relation("SentTips", fields: [fromId], references: [discordId])
+  to                User?    @relation("ReceivedTips", fields: [toId], references: [discordId])
+  amountUsd         Decimal  @db.Decimal(10, 2)
+  amountToken       Decimal  @db.Decimal(20, 9)
+  tokenMint         String
+  usdRate           Decimal  @db.Decimal(20, 9)
+  txType            TxType
+  status            TxStatus
+  createdAt         DateTime @default(now())
+
+  @@index([fromId, createdAt])
+  @@index([toId, createdAt])
+  @@index([status])
+}
+
+model Airdrop {
+  id                String   @id @default(uuid())
+  onChainPda        String   @unique
+  creatorId         String
+  creator           User     @relation("Creator", fields: [creatorId], references: [discordId])
+  amountTotal       Decimal  @db.Decimal(20, 9)
+  amountClaimed     Decimal  @default(0) @db.Decimal(20, 9)
+  tokenMint         String
+  maxParticipants   Int
+  participantCount  Int      @default(0)
+  status            AirdropStatus @default(ACTIVE)
+  expiresAt         DateTime
+  settledAt         DateTime?
+  createdAt         DateTime @default(now())
+  
+  participants      AirdropParticipant[]
+
+  @@index([status, expiresAt])
+  @@index([creatorId])
+}
+
+model AirdropParticipant {
+  id                String   @id @default(uuid())
+  airdropId         String
+  airdrop           Airdrop  @relation(fields: [airdropId], references: [id])
+  userId            String
+  user              User     @relation(fields: [userId], references: [discordId])
+  shareAmount       Decimal  @db.Decimal(20, 9)
+  hasWalletAtClaim  Boolean  @default(false)
+  claimedAt         DateTime @default(now())
+  walletCreatedBy   DateTime?
+  deadline          DateTime?
+  notificationsSent Json     @default("{}")
+  status            ParticipantStatus @default(PENDING)
+  txSignature       String?
+
+  @@unique([airdropId, userId])
+  @@index([status, deadline])
+  @@index([userId])
+}
+
+model BotTreasury {
+  id                String   @id @default(uuid())
+  sourceAirdropId   String
+  originalUserId    String
+  amount            Decimal  @db.Decimal(20, 9)
+  tokenMint         String
+  forfeitedAt       DateTime @default(now())
+  notes             String?
+
+  @@index([originalUserId])
+  @@index([forfeitedAt])
+}
+
+enum TxType {
+  TIP
+  DEPOSIT
+  WITHDRAWAL
+  AIRDROP_CLAIM
+  FORFEIT
+}
+
+enum TxStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum AirdropStatus {
+  ACTIVE
+  EXPIRED
+  SETTLED
+  RECLAIMED
+}
+
+enum ParticipantStatus {
+  PENDING
+  TRANSFERRED
+  FORFEITED
+}
