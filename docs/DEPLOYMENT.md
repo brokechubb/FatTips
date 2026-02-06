@@ -16,6 +16,34 @@
    - **Important:** Get a free API key from [Helius](https://dev.helius.xyz/) for Solana RPC.
 4. Set up PostgreSQL database
 
+## Discord Configuration
+
+If setting up your own bot instance in the Discord Developer Portal:
+
+### 1. Scopes & Permissions
+
+- **Scopes:** `bot`, `applications.commands`
+- **Bot Permissions:**
+  - Send Messages
+  - Embed Links
+  - Attach Files
+  - Read Message History
+  - Use External Emojis
+
+### 2. Privileged Gateway Intents
+
+FatTips is privacy-focused and **does NOT require** any privileged intents.
+
+- **Presence Intent:** OFF
+- **Server Members Intent:** OFF
+- **Message Content Intent:** OFF
+
+### 3. Installation Contexts
+
+Enable **User Install** to allow users to add the bot to their account.
+
+- **Supported Contexts:** Guild Install, User Install (Guilds, DMs)
+
 ## Docker Deployment
 
 ```bash
