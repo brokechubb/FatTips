@@ -3,6 +3,7 @@ import {
   SlashCommandBuilder,
   PermissionFlagsBits,
   EmbedBuilder,
+  InteractionContextType,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import {
@@ -23,6 +24,11 @@ export const data = new SlashCommandBuilder()
   .setName('tip')
   .setDescription('Tip a user with SOL, USDC, or USDT')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
+  .setContexts([
+    InteractionContextType.Guild,
+    InteractionContextType.BotDM,
+    InteractionContextType.PrivateChannel,
+  ])
   .addUserOption((option) =>
     option.setName('user').setDescription('The user to tip').setRequired(true)
   )

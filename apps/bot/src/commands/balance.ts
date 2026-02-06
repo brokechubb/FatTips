@@ -1,4 +1,9 @@
-import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import {
+  ChatInputCommandInteraction,
+  SlashCommandBuilder,
+  EmbedBuilder,
+  InteractionContextType,
+} from 'discord.js';
 import { prisma } from 'fattips-database';
 import { BalanceService, PriceService, TOKEN_MINTS } from 'fattips-solana';
 
@@ -7,7 +12,12 @@ const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.J
 
 export const data = new SlashCommandBuilder()
   .setName('balance')
-  .setDescription('Check your wallet balance and address');
+  .setDescription('Check your wallet balance and address')
+  .setContexts([
+    InteractionContextType.Guild,
+    InteractionContextType.BotDM,
+    InteractionContextType.PrivateChannel,
+  ]);
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   // Defer immediately

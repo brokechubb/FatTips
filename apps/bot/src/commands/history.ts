@@ -3,6 +3,7 @@ import {
   SlashCommandBuilder,
   EmbedBuilder,
   PermissionFlagsBits,
+  InteractionContextType,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 
@@ -10,6 +11,11 @@ export const data = new SlashCommandBuilder()
   .setName('history')
   .setDescription('View your transaction history')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
+  .setContexts([
+    InteractionContextType.Guild,
+    InteractionContextType.BotDM,
+    InteractionContextType.PrivateChannel,
+  ])
   .addIntegerOption((option) =>
     option.setName('limit').setDescription('Number of transactions to show (default: 5, max: 10)')
   );

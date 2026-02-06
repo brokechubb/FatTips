@@ -4,6 +4,7 @@ import {
   PermissionFlagsBits,
   EmbedBuilder,
   DMChannel,
+  InteractionContextType,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { WalletService } from 'fattips-solana';
@@ -14,6 +15,11 @@ export const data = new SlashCommandBuilder()
   .setName('wallet')
   .setDescription('Manage your Solana wallet settings')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
+  .setContexts([
+    InteractionContextType.Guild,
+    InteractionContextType.BotDM,
+    InteractionContextType.PrivateChannel,
+  ])
   .addStringOption((option) =>
     option
       .setName('action')

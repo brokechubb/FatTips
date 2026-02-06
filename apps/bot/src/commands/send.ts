@@ -3,6 +3,7 @@ import {
   SlashCommandBuilder,
   PermissionFlagsBits,
   EmbedBuilder,
+  InteractionContextType,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import {
@@ -24,6 +25,11 @@ export const data = new SlashCommandBuilder()
   .setName('send')
   .setDescription('Send SOL, USDC, or USDT to any Solana address')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
+  .setContexts([
+    InteractionContextType.Guild,
+    InteractionContextType.BotDM,
+    InteractionContextType.PrivateChannel,
+  ])
   .addStringOption((option) =>
     option
       .setName('address')
@@ -53,6 +59,11 @@ export const withdrawData = new SlashCommandBuilder()
   .setName('withdraw')
   .setDescription('Withdraw funds to external wallet (alias for /send)')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
+  .setContexts([
+    InteractionContextType.Guild,
+    InteractionContextType.BotDM,
+    InteractionContextType.PrivateChannel,
+  ])
   .addStringOption((option) =>
     option.setName('address').setDescription('Solana wallet address').setRequired(true)
   )
