@@ -43,6 +43,73 @@ export class TransactionService {
   }
 
   /**
+   * Batch Transfer SOL or SPL tokens
+   */
+  async batchTransfer(
+    senderKeypair: Keypair,
+    transfers: { recipient: string; amount: number }[],
+    mintAddress: string
+  ): Promise<string> {
+    const transaction = new Transaction();
+
+    // Case 1: SOL Batch Transfer
+    if (mintAddress === TOKEN_MINTS.SOL) {
+      for (const t of transfers) {
+        transaction.add(
+          SystemProgram.transfer({
+            fromPubkey: senderKeypair.publicKey,
+            toPubkey: new PublicKey(t.recipient),
+            lamports: Math.round(t.amount * LAMPORTS_PER_SOL),
+          })
+        );
+      }
+      return sendAndConfirmTransaction(this.connection, transaction, [senderKeypair]);
+    }
+
+    // Case 2: SPL Token Batch Transfer (USDC/USDT)
+    const mintPubkey = new PublicKey(mintAddress);
+    const decimals = 6; // USDC/USDT
+
+    // Get Sender ATA
+    const senderAta = await getAssociatedTokenAddress(mintPubkey, senderKeypair.publicKey);
+
+    // Get all recipient ATAs
+    const recipientAtas = await Promise.all(
+      transfers.map((t) => getAssociatedTokenAddress(mintPubkey, new PublicKey(t.recipient)))
+    );
+
+    // Check if ATAs exist
+    const accountInfos = await this.connection.getMultipleAccountsInfo(recipientAtas);
+
+    for (let i = 0; i < transfers.length; i++) {
+      const transfer = transfers[i];
+      const recipientAta = recipientAtas[i];
+      const accountInfo = accountInfos[i];
+      const recipientPubkey = new PublicKey(transfer.recipient);
+
+      // If ATA doesn't exist, create it (payer = sender)
+      if (!accountInfo) {
+        transaction.add(
+          createAssociatedTokenAccountInstruction(
+            senderKeypair.publicKey,
+            recipientAta,
+            recipientPubkey,
+            mintPubkey
+          )
+        );
+      }
+
+      // Add transfer instruction (6 decimals for USDC/USDT)
+      const amountRaw = Math.round(transfer.amount * 1_000_000);
+      transaction.add(
+        createTransferInstruction(senderAta, recipientAta, senderKeypair.publicKey, amountRaw)
+      );
+    }
+
+    return sendAndConfirmTransaction(this.connection, transaction, [senderKeypair]);
+  }
+
+  /**
    * Transfer SOL
    */
   private async transferSol(

@@ -1,10 +1,11 @@
-import { Client, GatewayIntentBits, REST, Routes, Collection } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, Collection, Events } from 'discord.js';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import { AirdropService } from './services/airdrop';
+import { activityService } from './services/activity';
 import { logger } from './utils/logger';
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
@@ -33,10 +34,23 @@ declare module 'discord.js' {
 }
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildMessages,
+  ],
+});
+
+// Track user activity
+client.on(Events.MessageCreate, (message) => {
+  if (message.author.bot) return;
+  if (!message.guild) return;
+
+  activityService.recordActivity(message.author.id, message.channelId);
 });
 
 // Custom event for short airdrops
+
 client.on('scheduleAirdrop', (airdropId: string, durationMs: number) => {
   logger.info(`Scheduling precise settlement for ${airdropId} in ${durationMs}ms`);
   setTimeout(() => {

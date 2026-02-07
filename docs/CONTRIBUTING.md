@@ -19,6 +19,7 @@ Thank you for your interest in contributing to FatTips! This document provides g
 ## Commit Messages
 
 Use conventional commits:
+
 - `feat:` - New feature
 - `fix:` - Bug fix
 - `docs:` - Documentation
@@ -38,8 +39,9 @@ Example: `feat: add support for multiple tokens`
 
 - Use issue templates
 - Provide reproduction steps
-- Include error messages
+- Include error messages and screenshots if applicable
 - Specify environment (OS, Node version, etc.)
+- **Note**: Production errors are automatically captured via Sentry. Check existing Sentry issues before reporting duplicate bugs.
 
 ## Questions?
 

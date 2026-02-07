@@ -15,6 +15,7 @@ import {
   WalletService,
   BalanceService,
 } from 'fattips-solana';
+import { activityService } from '../services/activity';
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
@@ -22,92 +23,65 @@ const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
 const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
 
 export const data = new SlashCommandBuilder()
-  .setName('tip')
-  .setDescription('Tip one or more users with SOL, USDC, or USDT')
+  .setName('rain')
+  .setDescription('Randomly distribute tokens to active users in this channel')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
-  .setContexts([
-    InteractionContextType.Guild,
-    InteractionContextType.BotDM,
-    InteractionContextType.PrivateChannel,
-  ])
-  .addStringOption((option) =>
-    option
-      .setName('recipients')
-      .setDescription('User(s) to tip (e.g. @User1 @User2)')
-      .setRequired(true)
-  )
+  .setContexts([InteractionContextType.Guild])
   .addStringOption((option) =>
     option
       .setName('amount')
-      .setDescription('Amount to tip (e.g., $5, 0.5 SOL, 10 USDC)')
+      .setDescription('Total amount to rain (e.g., $10, 1 SOL)')
       .setRequired(true)
+  )
+  .addIntegerOption((option) =>
+    option
+      .setName('count')
+      .setDescription('Number of lucky users to pick (default: 5)')
+      .setMinValue(1)
+      .setMaxValue(25)
+      .setRequired(false)
   )
   .addStringOption((option) =>
     option
       .setName('token')
-      .setDescription('Token to tip (default: SOL)')
+      .setDescription('Token to rain (default: SOL)')
       .setRequired(false)
       .addChoices(
         { name: 'SOL', value: 'SOL' },
         { name: 'USDC', value: 'USDC' },
         { name: 'USDT', value: 'USDT' }
       )
-  )
-  .addStringOption((option) =>
-    option
-      .setName('mode')
-      .setDescription('How to split the amount (default: split)')
-      .setRequired(false)
-      .addChoices(
-        { name: 'Split (Total amount divided)', value: 'split' },
-        { name: 'Each (Amount per user)', value: 'each' }
-      )
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  const recipientsStr = interaction.options.getString('recipients', true);
   const amountStr = interaction.options.getString('amount', true);
+  const count = interaction.options.getInteger('count') || 5;
   const tokenPreference = interaction.options.getString('token') || 'SOL';
-  const mode = interaction.options.getString('mode') || 'split';
-
-  // Parse mentions from recipients string
-  const mentionedIds = [...new Set([...recipientsStr.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]))];
-
-  // Filter out invalid targets (self, bot)
-  const validRecipientIds = mentionedIds.filter(
-    (id) => id !== interaction.user.id && id !== interaction.client.user?.id
-  );
-
-  if (validRecipientIds.length === 0) {
-    await interaction.reply({
-      content: '❌ No valid recipients found! (You cannot tip yourself or the bot)',
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (validRecipientIds.length > 10) {
-    await interaction.reply({
-      content: '❌ You can tip up to 10 users at once.',
-      ephemeral: true,
-    });
-    return;
-  }
 
   await interaction.deferReply();
 
   try {
-    // Parse the amount
-    const parsedAmount = parseAmountInput(amountStr);
+    // 1. Get Active Users
+    const activeUserIds = activityService.getActiveUsers(interaction.channelId, 15); // Last 15 mins
 
-    if (!parsedAmount.valid) {
+    // Filter out sender and bots (though listener filters bots)
+    const candidates = activeUserIds.filter((id) => id !== interaction.user.id);
+
+    if (candidates.length === 0) {
       await interaction.editReply({
-        content: `❌ ${parsedAmount.error}\n\nExamples:\n• \`/tip recipients:@user $5\`\n• \`/tip recipients:"@user1 @user2" amount:$10 mode:split\``,
+        content: '❌ No active users found to rain on! The channel is dry. 🏜️',
       });
       return;
     }
 
-    // Get sender's wallet
+    // Pick Winners
+    const winners: string[] = [];
+    // Shuffle candidates
+    const shuffled = candidates.sort(() => 0.5 - Math.random());
+    // Pick top N
+    winners.push(...shuffled.slice(0, Math.min(count, candidates.length)));
+
+    // 2. Sender Wallet Check
     const sender = await prisma.user.findUnique({
       where: { discordId: interaction.user.id },
     });
@@ -119,11 +93,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    // Process all recipients (Get or Create Wallets)
+    // 3. Prepare Recipient Wallets
     const recipientWallets = [];
     const newWallets: { id: string; key: string }[] = [];
 
-    for (const recipientId of validRecipientIds) {
+    for (const recipientId of winners) {
       let recipient = await prisma.user.findUnique({
         where: { discordId: recipientId },
       });
@@ -153,17 +127,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     if (recipientWallets.length === 0) {
-      await interaction.editReply({
-        content: '❌ Failed to prepare recipient wallets.',
-      });
+      await interaction.editReply({ content: '❌ Failed to prepare recipient wallets.' });
       return;
     }
 
-    // --- AMOUNT CALCULATION ---
+    // 4. Parse Amount & Calculate Split
+    const parsedAmount = parseAmountInput(amountStr);
+    if (!parsedAmount.valid) {
+      await interaction.editReply({ content: `❌ ${parsedAmount.error}` });
+      return;
+    }
+
     let tokenSymbol: string;
     let tokenMint: string;
-    let totalAmountToken: number; // Total to be deducted
-    let amountPerUser: number; // Amount each user receives
+    let totalAmountToken: number;
+    let amountPerUser: number;
     let usdValuePerUser: number;
 
     const tokenMap: Record<string, { symbol: string; mint: string }> = {
@@ -172,30 +150,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       USDT: { symbol: 'USDT', mint: TOKEN_MINTS.USDT },
     };
 
-    // Determine Token
     let preferredToken = parsedAmount.token ? parsedAmount.token.toUpperCase() : tokenPreference;
-    if (parsedAmount.type === 'usd' && parsedAmount.token) {
-      preferredToken = parsedAmount.token; // Use hint from "$5 sol"
-    }
+    if (parsedAmount.type === 'usd' && parsedAmount.token) preferredToken = parsedAmount.token;
+
     const selectedToken = tokenMap[preferredToken] || tokenMap['SOL'];
     tokenSymbol = selectedToken.symbol;
     tokenMint = selectedToken.mint;
 
-    // Calculate Amounts based on Input Type
     if (parsedAmount.type === 'max') {
-      // Logic for MAX: "Max" is always total balance.
-      // Mode 'split': Total balance split among users.
-      // Mode 'each': Not supported for MAX (ambiguous).
-      if (mode === 'each') {
-        await interaction.editReply({
-          content:
-            '❌ "Max" amount cannot be used with "Each" mode. Use "Split" or specify an amount.',
-        });
-        return;
-      }
-
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00001 * recipientWallets.length; // Approximate fee for batch
+      const feeBuffer = 0.00001 * recipientWallets.length;
       const rentReserve = 0.001;
 
       if (tokenSymbol === 'SOL') {
@@ -207,15 +171,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
 
       if (totalAmountToken <= 0) {
-        await interaction.editReply({
-          content: `${interaction.user} ❌ Insufficient balance!`,
-        });
+        await interaction.editReply({ content: `${interaction.user} ❌ Insufficient balance!` });
         return;
       }
-
       amountPerUser = totalAmountToken / recipientWallets.length;
 
-      // Get USD value
       try {
         const price = await priceService.getTokenPrice(tokenMint);
         usdValuePerUser = price ? amountPerUser * price.price : 0;
@@ -223,16 +183,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         usdValuePerUser = 0;
       }
     } else if (parsedAmount.type === 'usd') {
-      // USD Value Input
-      // Convert TOTAL input to Token
-      // If mode=each: input is per user.
-      // If mode=split: input is total.
-
-      const inputUsdValue = parsedAmount.value;
-
       let conversion: ConversionResult | null = null;
       try {
-        conversion = await priceService.convertUsdToToken(inputUsdValue, tokenMint, tokenSymbol);
+        conversion = await priceService.convertUsdToToken(
+          parsedAmount.value,
+          tokenMint,
+          tokenSymbol
+        );
       } catch {
         conversion = null;
       }
@@ -241,33 +198,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         await interaction.editReply({ content: '❌ Price service unavailable.' });
         return;
       }
-
-      const convertedTokenAmount = conversion.amountToken;
-
-      if (mode === 'each') {
-        amountPerUser = convertedTokenAmount;
-        totalAmountToken = amountPerUser * recipientWallets.length;
-        usdValuePerUser = inputUsdValue;
-      } else {
-        // split
-        totalAmountToken = convertedTokenAmount;
-        amountPerUser = totalAmountToken / recipientWallets.length;
-        usdValuePerUser = inputUsdValue / recipientWallets.length;
-      }
+      totalAmountToken = conversion.amountToken;
+      amountPerUser = totalAmountToken / recipientWallets.length;
+      usdValuePerUser = parsedAmount.value / recipientWallets.length;
     } else {
-      // Direct Token Input
-      const inputTokenAmount = parsedAmount.value;
-
-      if (mode === 'each') {
-        amountPerUser = inputTokenAmount;
-        totalAmountToken = amountPerUser * recipientWallets.length;
-      } else {
-        // split
-        totalAmountToken = inputTokenAmount;
-        amountPerUser = totalAmountToken / recipientWallets.length;
-      }
-
-      // Get USD value
+      // Direct Token Amount
+      totalAmountToken = parsedAmount.value;
+      amountPerUser = totalAmountToken / recipientWallets.length;
       try {
         const price = await priceService.getTokenPrice(tokenMint);
         usdValuePerUser = price ? amountPerUser * price.price : 0;
@@ -276,15 +213,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
     }
 
-    // Validate Amounts
     if (amountPerUser <= 0) {
-      await interaction.editReply({ content: '❌ Amount too small!' });
+      await interaction.editReply({ content: '❌ Amount too small to split!' });
       return;
     }
 
-    // Check Balance
+    // 5. Check Balance
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.00002; // Slightly higher buffer for batch tx
+    const feeBuffer = 0.00002;
     const rentReserve = 0.001;
 
     if (tokenSymbol === 'SOL') {
@@ -296,7 +232,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         return;
       }
     } else {
-      // SPL Token
       const currentBal = tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
       if (currentBal < totalAmountToken) {
         await interaction.editReply({
@@ -310,10 +245,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
     }
 
-    // --- EXECUTE BATCH TRANSFER ---
+    // 6. Execute Batch Transfer
     const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
-
-    // Prepare transfers array
     const transfers = recipientWallets.map((r) => ({
       recipient: r.walletPubkey,
       amount: amountPerUser,
@@ -321,19 +254,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     let signature: string;
     try {
-      // @ts-ignore - batchTransfer exists in updated package but types might lag in editor
       signature = await transactionService.batchTransfer(senderKeypair, transfers, tokenMint);
     } catch (error: any) {
-      console.error('Batch Transaction failed:', error);
+      console.error('Rain Transaction failed:', error);
       await interaction.editReply({
         content: `❌ Transaction failed: ${error.message || 'Unknown error'}`,
       });
       return;
     }
 
-    // --- LOGGING & RESPONSES ---
-
-    // 1. Log Transactions to DB
+    // 7. Log & Respond
     for (const recipient of recipientWallets) {
       await prisma.transaction.create({
         data: {
@@ -344,7 +274,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           amountToken: amountPerUser,
           tokenMint,
           usdRate: usdValuePerUser > 0 ? usdValuePerUser / amountPerUser : 0,
-          txType: 'TIP',
+          txType: 'TIP', // Rain is a type of tip
           status: 'CONFIRMED',
         },
       });
@@ -359,49 +289,42 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     }
 
-    // 2. Reply Embed
-    const userMentions = recipientWallets.map((r) => `<@${r.discordId}>`).join(', ');
+    const winnerMentions = recipientWallets.map((r) => `<@${r.discordId}>`).join(', ');
     const embed = new EmbedBuilder()
-      .setTitle('💸 Tip Sent!')
+      .setTitle('🌧️ Making it Rain!')
       .setDescription(
-        `**${interaction.user}** tipped **${recipientWallets.length} users**!\n\n` +
-          `**Recipients:** ${userMentions}\n` +
-          `**Amount Each:** ${formatTokenAmount(amountPerUser)} ${tokenSymbol} (~$${usdValuePerUser.toFixed(2)})\n` +
-          `**Total Sent:** ${formatTokenAmount(totalAmountToken)} ${tokenSymbol}\n\n` +
+        `**${interaction.user}** made it rain on **${recipientWallets.length} active users**!\n\n` +
+          `**Total Rain:** ${formatTokenAmount(totalAmountToken)} ${tokenSymbol}\n` +
+          `**Each User Gets:** ${formatTokenAmount(amountPerUser)} ${tokenSymbol} (~$${usdValuePerUser.toFixed(2)})\n\n` +
+          `**Lucky Winners:**\n${winnerMentions}\n\n` +
           `[View on Solscan](https://solscan.io/tx/${signature})`
       )
-      .setColor(0x00ff00)
+      .setColor(0x00aaff) // Cyan for rain
+      .setThumbnail(
+        'https://em-content.zobj.net/source/microsoft-teams/337/cloud-with-rain_1f327.png'
+      )
       .setTimestamp();
-
-    if (newWallets.length > 0) {
-      embed.addFields({
-        name: '🆕 New Wallets Created',
-        value: `Created wallets for ${newWallets.length} new users. Check DMs!`,
-      });
-    }
 
     await interaction.editReply({ embeds: [embed] });
 
-    // 3. Send DMs
+    // DMs
     for (const recipient of recipientWallets) {
       try {
         const user = await interaction.client.users.fetch(recipient.discordId);
         const isNew = newWallets.find((w) => w.id === recipient.discordId);
 
-        let msg = `🎉 You received **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** (~$${usdValuePerUser.toFixed(2)}) from ${interaction.user.username}!`;
+        let msg = `🌧️ **It's Raining!** You caught **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** (~$${usdValuePerUser.toFixed(2)}) from ${interaction.user.username}!`;
 
         if (isNew) {
           msg += `\n\n**🔐 New Wallet Key:**\n\`\`\`\n${isNew.key}\n\`\`\`\n*Self-destructs in 15m.*`;
           const sentMsg = await user.send(msg);
 
-          // Cleanup timer
           setTimeout(async () => {
             try {
               await sentMsg.edit('🔒 **Key removed for security.**');
             } catch {}
           }, 900000);
 
-          // Send Guide Embed
           const guideEmbed = new EmbedBuilder()
             .setTitle('🚀 Welcome to FatTips')
             .setDescription('You just received crypto! Use `/balance` to check it.')
@@ -415,18 +338,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         } else {
           await user.send(msg);
         }
-      } catch {
-        // Ignore DM fails
-      }
+      } catch {}
     }
   } catch (error: any) {
-    console.error('Error in tip command:', error);
+    console.error('Error in rain command:', error);
     try {
       await interaction.editReply({ content: '❌ An unexpected error occurred.' });
     } catch {}
   }
 }
 
+// Helpers (Same as tip.ts - in a real refactor, move to utils)
 interface ParsedAmount {
   valid: boolean;
   type?: 'usd' | 'token' | 'max';

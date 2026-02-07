@@ -81,7 +81,17 @@ docker-compose exec api pnpm db:status
 
 ## Monitoring
 
-- Use `docker-compose logs` to view logs
+### Error Tracking (Sentry)
+
+FatTips uses **Sentry** for real-time error tracking and performance monitoring.
+
+- **Automatic Error Capture**: Crashes in the bot are automatically sent to Sentry with full stack traces and user context.
+- **Performance Monitoring**: Slow endpoints and database queries are tracked to identify bottlenecks.
+- **Alerts**: Configure alert rules in Sentry to receive Slack/email notifications when errors spike.
+
+**Access**: Ask the project maintainer for Sentry DSN access.
+
+- Use `docker-compose logs -f bot` to view real-time bot logs
 - Consider setting up PM2 or systemd for process management
 - Set up monitoring (recommended: UptimeRobot for alerts)
 
