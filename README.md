@@ -83,7 +83,7 @@ Keep track of your spending and earnings.
 
 /balance # Check balance & address
 /wallet action:create # Create a new wallet
-/wallet action:export # Export seed phrase (DM)
+/wallet action:export # Export recovery phrase (DM)
 /wallet action:clear-dms # Delete bot DMs for privacy
 /help # List all commands
 

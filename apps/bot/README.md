@@ -16,7 +16,7 @@ The Discord bot is the primary user interface for FatTips.
 
 - `/wallet create` - Generate a new Solana wallet
 - `/wallet balance` - Check your wallet balance
-- `/wallet export` - Export your seed phrase (DM only)
+- `/wallet export` - Export your recovery phrase (DM only)
 - `/wallet address` - Show your deposit address
 
 ### Tipping Commands

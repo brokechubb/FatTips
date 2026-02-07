@@ -3,28 +3,50 @@ services:
     image: postgres:16-alpine
     container_name: fattips-db
     restart: unless-stopped
+    # Note: postgres:alpine runs as 'postgres' user (UID 70) by default
     environment:
       POSTGRES_USER: fattips_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-SecurePass_wUB1E51mxmG8}
       POSTGRES_DB: fattips
+    env_file:
+      - .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - '5432:5432'
+    # Port not exposed externally - containers connect via internal Docker network
+    # This allows nftables firewall to properly block external access
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U fattips_user -d fattips']
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
 
   redis:
     image: redis:7-alpine
     container_name: fattips-redis
     restart: unless-stopped
-    ports:
-      - '6379:6379'
+    # Note: redis:alpine runs as 'redis' user (UID 100) by default
     volumes:
       - redis_data:/data
+    # Port not exposed externally - containers connect via internal Docker network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    security_opt:
+      - no-new-privileges:true
 
   bot:
     build:
@@ -32,18 +54,28 @@ services:
       dockerfile: docker/Dockerfile.bot
     container_name: fattips-bot
     restart: unless-stopped
-    environment:
-      - NODE_ENV=production
-      # Override DATABASE_URL to point to the postgres service name instead of localhost
-      - DATABASE_URL=postgresql://fattips_user:SecurePass_wUB1E51mxmG8@postgres:5432/fattips
     env_file:
       - .env
+    environment:
+      - NODE_ENV=production
+      # Override DATABASE_URL to use internal Docker network hostname
+      - DATABASE_URL=postgresql://fattips_user:${POSTGRES_PASSWORD}@postgres:5432/fattips
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       # Mount logs directory to host for persistence and easy access
       - ./logs/bot:/app/apps/bot/logs
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
 
   api:
     build:
@@ -53,16 +85,26 @@ services:
     restart: unless-stopped
     ports:
       - '3001:3001'
+    env_file:
+      - .env
     environment:
       - NODE_ENV=production
       - PORT=3001
-      # Override DATABASE_URL to point to the postgres service name instead of localhost
-      - DATABASE_URL=postgresql://fattips_user:SecurePass_wUB1E51mxmG8@postgres:5432/fattips
-    env_file:
-      - .env
+      # Override DATABASE_URL to use internal Docker network hostname
+      - DATABASE_URL=postgresql://fattips_user:${POSTGRES_PASSWORD}@postgres:5432/fattips
     depends_on:
       postgres:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   postgres_data:

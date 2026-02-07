@@ -1,6 +1,7 @@
 import { ButtonInteraction, EmbedBuilder } from 'discord.js';
+import * as Sentry from '@sentry/node';
 import { prisma } from 'fattips-database';
-import { logTransaction } from '../utils/logger';
+import { logger, logTransaction } from '../utils/logger';
 import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
 
 export class AirdropService {
@@ -138,12 +139,19 @@ export class AirdropService {
         updatedAirdrop.participantCount >= updatedAirdrop.maxParticipants
       ) {
         // Trigger settlement immediately
-        console.log(`Airdrop ${airdropId} reached max participants. Settling...`);
+        logger.info(`Airdrop ${airdropId} reached max participants. Settling...`);
         // Use setImmediate to not block the reply
         setImmediate(() => this.settleAirdrop(updatedAirdrop, interaction.client));
       }
     } catch (error) {
-      console.error('Error claiming airdrop:', error);
+      logger.error('Error claiming airdrop:', error);
+      Sentry.captureException(error, {
+        tags: {
+          airdropId,
+          userId: interaction.user.id,
+          action: 'claim',
+        },
+      });
       await interaction.editReply({ content: '❌ Failed to claim. Please try again.' });
     }
   }
@@ -168,7 +176,12 @@ export class AirdropService {
         await this.settleAirdrop(airdrop, client);
       }
     } catch (error) {
-      console.error('Error settling airdrops:', error);
+      logger.error('Error settling airdrops:', error);
+      Sentry.captureException(error, {
+        tags: {
+          action: 'settleExpiredAirdrops',
+        },
+      });
     }
   }
 
@@ -439,7 +452,14 @@ export class AirdropService {
 
           successCount++;
         } catch (txError) {
-          console.error(`Failed to pay winner ${winner.userId}:`, txError);
+          logger.error(`Failed to pay winner ${winner.userId}:`, txError);
+          Sentry.captureException(txError, {
+            tags: {
+              airdropId: airdrop.id,
+              winnerId: winner.userId,
+              action: 'payWinner',
+            },
+          });
         }
       }
 
@@ -459,7 +479,13 @@ export class AirdropService {
       // 5. Update Original Message
       await this.endAirdropMessage(client, airdrop, successCount, share, tokenSymbol, winners);
     } catch (error) {
-      console.error('Settlement critical error:', error);
+      logger.error('Settlement critical error:', error);
+      Sentry.captureException(error, {
+        tags: {
+          airdropId: airdrop.id,
+          action: 'settleAirdrop',
+        },
+      });
     }
   }
 
@@ -525,7 +551,7 @@ export class AirdropService {
         components: [],
       });
     } catch (error) {
-      console.error(`Failed to update airdrop message ${airdrop.messageId}:`, error);
+      logger.error(`Failed to update airdrop message ${airdrop.messageId}:`, error);
     }
   }
 }

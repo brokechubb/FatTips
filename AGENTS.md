@@ -8,7 +8,6 @@ FatTips is a Solana-based Discord tipping bot with airdrop functionality.
 
 - **Monorepo**: Turborepo with pnpm workspaces
 - **Apps**: Discord bot (Node.js), REST API (Express), Web dashboard (Next.js)
-- **Smart Contract**: Anchor framework (Rust)
 - **Database**: PostgreSQL with Prisma ORM
 
 **WORK OFF THE ROADMAP.md AND KEEP IT UPDATED WITH PROGRESS**
@@ -39,11 +38,6 @@ pnpm db:generate    # Generate Prisma client
 pnpm db:migrate     # Run migrations
 pnpm db:studio      # Open Prisma Studio
 pnpm db:seed        # Seed database
-
-# Smart contract (Anchor)
-pnpm contract:build
-pnpm contract:test
-pnpm contract:deploy
 
 # Docker
 pnpm docker:up      # Start all services
@@ -198,8 +192,6 @@ packages/
   database/     # Prisma schema & client
   shared/       # Shared utilities
   solana/       # Solana wrappers
-programs/
-  airdrop/      # Anchor smart contract
 docs/           # Documentation
 ```
 

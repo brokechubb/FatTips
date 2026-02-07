@@ -27,7 +27,7 @@ export const data = new SlashCommandBuilder()
       .setRequired(true)
       .addChoices(
         { name: 'Create Wallet', value: 'create' },
-        { name: 'Export Seed Phrase', value: 'export' },
+        { name: 'Export Recovery Phrase (BIP39)', value: 'export' },
         { name: 'Export Private Key', value: 'export-key' },
         { name: 'Clear DM History', value: 'clear-dms' }
       )
@@ -185,13 +185,13 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
       embed.addFields({
         name: '⚠️ Important',
         value:
-          "I couldn't send you a DM with your seed phrase. Please enable DMs from server members and run `/wallet action:export` to receive your recovery phrase.",
+          "I couldn't send you a DM with your private key. Please enable DMs from server members and run `/wallet action:export-key` to receive your private key.",
         inline: false,
       });
     } else {
       embed.addFields({
-        name: '🔐 Recovery Phrase',
-        value: 'Check your DMs for your seed phrase. Keep it safe!',
+        name: '🔐 Private Key',
+        value: 'Check your DMs for your private key. Keep it safe!',
         inline: false,
       });
     }
@@ -223,16 +223,16 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
     if (interaction.guild) {
       await interaction.editReply({
         content:
-          '⚠️ For security, you can only export your seed phrase in DMs. Please check your DMs!',
+          '⚠️ For security, you can only export your recovery phrase in DMs. Please check your DMs!',
       });
 
       // Try to initiate DM
       try {
         const dmEmbed = new EmbedBuilder()
-          .setTitle('🔐 Seed Phrase Export')
+          .setTitle('🔐 Recovery Phrase Export')
           .setDescription(
-            'You requested to export your wallet seed phrase.\n\n' +
-              'Please run `/wallet action:export` here in this DM to receive your seed phrase securely.'
+            'You requested to export your wallet recovery phrase.\n\n' +
+              'Please run `/wallet action:export` here in this DM to receive your recovery phrase securely.'
           )
           .setColor(0xffaa00);
 
@@ -262,7 +262,7 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
     if (!user.encryptedMnemonic || !user.mnemonicSalt) {
       await interaction.editReply({
         content:
-          'Unable to export seed phrase. Your wallet may have been created before this feature was available. Please create a new wallet if needed.',
+          'Unable to export recovery phrase. Your wallet may have been created before this feature was available. Please create a new wallet if needed.',
       });
       return;
     }
@@ -272,7 +272,7 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
 
     // Send the mnemonic via DM
     const dmEmbed = new EmbedBuilder()
-      .setTitle('🔐 Your Wallet Seed Phrase')
+      .setTitle('🔐 Your Wallet Recovery Phrase')
       .setDescription(
         '**IMPORTANT: Keep this safe!**\n\n' +
           'This is your wallet recovery phrase. Anyone with access to this phrase can access your funds.\n\n' +
@@ -282,7 +282,7 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
           '**Tips:**\n' +
           '• Write this down on paper and store it securely\n' +
           '• Never share this with anyone\n' +
-          '• **Note:** Some wallets (Phantom/Solflare) may derive a different address from this seed. Use `/wallet action:export-key` for an exact match.\n\n' +
+          '• **Note:** Some wallets (Phantom/Solflare) may derive a different address from this phrase. Use `/wallet action:export-key` for an exact match.\n\n' +
           '⚠️ **This message will self-destruct in 15 minutes.**'
       )
       .setColor(0xff6b6b)
@@ -291,12 +291,12 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
 
     const dmMessage = await interaction.editReply({ embeds: [dmEmbed] });
 
-    // Auto-remove seed phrase after 15 minutes
+    // Auto-remove recovery phrase after 15 minutes
     setTimeout(async () => {
       try {
         await dmMessage.edit({
           content:
-            '🔒 **Seed phrase removed for security.**\nUse `/wallet action:export` to view it again.',
+            '🔒 **Recovery phrase removed for security.**\nUse `/wallet action:export` to view it again.',
           embeds: [],
         });
       } catch {

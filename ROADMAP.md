@@ -21,12 +21,12 @@
 
 ## Project Overview
 
-FatTips is a Discord bot that enables Solana-based tipping with support for SOL, USDC, and USDT. Users can create time-limited airdrops that other users can claim via button interactions. The bot manages user wallets (custodial with seed phrase recovery) while maintaining a trustless smart contract escrow system for airdrops.
+FatTips is a Discord bot that enables Solana-based tipping with support for SOL, USDC, and USDT. Users can create time-limited airdrops that other users can claim via button interactions. The bot manages user wallets (custodial with private key recovery) with bot-managed ephemeral wallets for airdrop escrow.
 
 ### Key Features
 
 - **Instant Tipping**: `/tip @user $5` converts USD to SOL automatically
-- **Airdrops**: Button-based claims with 90-day settlement window
+- **Airdrops**: Button-based claims with instant settlement on expiry
 - **Multi-token Support**: SOL, USDC, USDT hardcoded
 - **Wallet Recovery**: Users receive their Private Key for full custody
 - **Web Dashboard**: Leaderboards, user stats, transaction history
@@ -67,16 +67,7 @@ FatTips is a Discord bot that enables Solana-based tipping with support for SOL,
 │  └─────────────┘  └──────────────┘  └────────────────┘   │
 └──────────────────────────────────────────────────────────┘
                             │
-          ┌─────────────────┴──────────────────┐
-          │       SMART CONTRACT (Anchor)      │
-          │  ┌──────────────────────────────┐  │
-          │  │ Airdrop Escrow Program       │  │
-          │  │ - create_airdrop()           │  │
-          │  │ - enter_airdrop()            │  │
-          │  │ - settle_airdrop()           │  │
-          │  │ - reclaim_unclaimed()        │  │
-          │  └──────────────────────────────┘  │
-          └────────────────────────────────────┘
+
 ```
 
 ---
@@ -85,21 +76,19 @@ FatTips is a Discord bot that enables Solana-based tipping with support for SOL,
 
 ### Core Technologies
 
-| Component       | Technology       | Version |
-| --------------- | ---------------- | ------- |
-| Language        | TypeScript       | 5.x     |
-| Smart Contract  | Anchor Framework | 0.29+   |
-| Runtime         | Node.js          | 18+ LTS |
-| Package Manager | pnpm             | 8+      |
+| Component       | Technology | Version |
+| --------------- | ---------- | ------- |
+| Language        | TypeScript | 5.x     |
+| Runtime         | Node.js    | 18+ LTS |
+| Package Manager | pnpm       | 8+      |
 
 ### Applications
 
-| App      | Framework      | Purpose              |
-| -------- | -------------- | -------------------- |
-| Bot      | discord.js v14 | Discord interactions |
-| API      | Express + tRPC | REST API             |
-| Web      | Next.js 14     | Dashboard            |
-| Contract | Anchor + Rust  | Solana program       |
+| App | Framework      | Purpose              |
+| --- | -------------- | -------------------- |
+| Bot | discord.js v14 | Discord interactions |
+| API | Express + tRPC | REST API             |
+| Web | Next.js 14     | Dashboard            |
 
 ### Infrastructure
 
@@ -155,11 +144,6 @@ fattips/
 │   │   └── src/
 │   └── solana/
 │       └── src/
-├── programs/
-│   └── airdrop/
-│       ├── programs/
-│       ├── tests/
-│       └── Anchor.toml
 ├── docker/
 │   ├── docker-compose.yml
 │   ├── Dockerfile.bot
@@ -192,7 +176,7 @@ model User {
   walletPubkey      String   @unique
   encryptedPrivkey  String
   keySalt           String
-  seedDelivered     Boolean  @default(false)
+  keyDelivered      Boolean  @default(false)
   createdAt         DateTime @default(now())
   lastActive        DateTime @updatedAt
 
@@ -261,30 +245,11 @@ model AirdropParticipant {
   userId            String
   user              User     @relation(fields: [userId], references: [discordId])
   shareAmount       Decimal  @db.Decimal(20, 9)
-  hasWalletAtClaim  Boolean  @default(false)
   claimedAt         DateTime @default(now())
-  walletCreatedBy   DateTime?
-  deadline          DateTime?
-  notificationsSent Json     @default("{}")
   status            ParticipantStatus @default(PENDING)
   txSignature       String?
 
   @@unique([airdropId, userId])
-  @@index([status, deadline])
-}
-```
-
-### BotTreasury Model
-
-```prisma
-model BotTreasury {
-  id                String   @id @default(uuid())
-  sourceAirdropId   String
-  originalUserId    String
-  amount            Decimal  @db.Decimal(20, 9)
-  tokenMint         String
-  forfeitedAt       DateTime @default(now())
-  notes             String?
 }
 ```
 
@@ -296,7 +261,6 @@ enum TxType {
   DEPOSIT
   WITHDRAWAL
   AIRDROP_CLAIM
-  FORFEIT
 }
 
 enum TxStatus {
@@ -315,7 +279,6 @@ enum AirdropStatus {
 enum ParticipantStatus {
   PENDING
   TRANSFERRED
-  FORFEITED
 }
 ```
 
@@ -341,35 +304,17 @@ enum ParticipantStatus {
 - CI pipeline passing
 - Database running locally
 
-### Phase 2: Smart Contract (Week 2-4)
-
-**Goal:** Deployed airdrop escrow contract on mainnet
-
-- [ ] Initialize Anchor project
-- [ ] Implement `create_airdrop()` instruction
-- [ ] Implement `enter_airdrop()` instruction
-- [ ] Implement `settle_airdrop()` instruction
-- [ ] Implement `reclaim_unclaimed()` instruction
-- [ ] Write comprehensive tests
-- [ ] Deploy to mainnet
-- [ ] Document contract addresses
-
-**Deliverables:**
-
-- Smart contract deployed on mainnet
-- Test suite passing
-- Contract interaction scripts
-
-### Phase 3: Discord Bot Core (Week 4-5) ✅ COMPLETED
+### Phase 2: Discord Bot Core (Week 2-3) ✅ COMPLETED
 
 **Goal:** Basic bot functionality, wallet management
 
 - [x] Set up discord.js bot
 - [x] Implement `/wallet create` command
 - [x] Implement wallet encryption/decryption (AES-256-GCM)
-- [x] DM seed phrase delivery
+- [x] DM private key delivery
 - [x] Implement `/wallet balance` command (fetches real SOL, USDC, USDT balances + USD values)
-- [x] Implement `/wallet export` command
+- [x] Implement `/wallet export-key` command (primary method)
+- [x] Implement `/wallet export` command (recovery phrase backup)
 - [x] Implement `/wallet address` command
 - [x] Database integration for wallets
 - [x] Integrate Solana balance fetching (requires RPC connection)
@@ -382,31 +327,7 @@ enum ParticipantStatus {
 - Basic wallet commands working
 - Real-time balance fetching from mainnet
 
-### Phase 4: Tipping System (Week 5-6) ✅ COMPLETED
-
-**Goal:** Full tipping functionality with USD conversion
-
-- [x] Integrate Jupiter Price API (V3 with fallback)
-- [x] Implement USD to token conversion
-- [x] Implement `/tip` command with parsing ("$5", "all", "max")
-- [x] Implement `/send` and `/withdraw` for external transfers
-- [x] Handle transaction signing from user wallets
-- [x] Log all transactions to database (Tip, Withdrawal, Deposit)
-- [x] Implement `/history` command
-- [x] Auto-create wallets for unregistered tip recipients
-- [x] Implement "Drain Mode" (send all funds including dust)
-- [x] Refactor `/wallet` commands (flattened structure)
-- [x] Add `/help` command
-
-**Deliverables:**
-
-- `/tip @user $5` works end-to-end
-- `/withdraw address:xy... amount:all` works
-- USD conversion accurate
-- Transactions logged and queryable
-- Zero-friction onboarding (auto-wallet)
-
-### Phase 5: Airdrops (Week 6-7) ✅ COMPLETED
+### Phase 4: Airdrops (Week 4-5) ✅ COMPLETED
 
 **Goal:** Complete airdrop system with button claims
 
@@ -427,33 +348,7 @@ enum ParticipantStatus {
 - Settlement automatic at expiry
 - Zero-risk funds management (Refunds)
 
-### Phase 6: 90-Day System (Week 7-8) 🚧 NEXT UP
-
-**Deliverables:**
-
-- Airdrops can be created and claimed
-- Button-based claims working
-- Settlement automatic at expiry
-
-### Phase 6: 90-Day System (Week 7-8)
-
-**Goal:** Settlement window and forfeiture logic
-
-- [ ] Implement 90-day deadline calculation
-- [ ] Create notification system (30, 60, 80, 85-90 days)
-- [ ] Handle wallet creation during window
-- [ ] Implement forfeiture to bot treasury
-- [ ] Add `/wallet address` command
-- [ ] Implement `/withdraw` command
-- [ ] Create cron job for daily checks
-
-**Deliverables:**
-
-- 90-day countdown working
-- Notifications sent via DM
-- Unclaimed funds forfeit correctly
-
-### Phase 7: REST API (Week 8)
+### Phase 5: REST API (Week 6) 🚧 NEXT UP
 
 **Goal:** Public API for integrations
 
@@ -471,7 +366,7 @@ enum ParticipantStatus {
 - All endpoints documented
 - Authentication working
 
-### Phase 8: Web Dashboard (Week 9)
+### Phase 6: Web Dashboard (Week 7)
 
 **Goal:** User-facing web interface
 
@@ -489,7 +384,7 @@ enum ParticipantStatus {
 - All pages functional
 - Discord OAuth working
 
-### Phase 9: Testing & Polish (Week 10)
+### Phase 7: Testing & Polish (Week 8)
 
 **Goal:** Production readiness
 
@@ -528,7 +423,7 @@ MASTER_ENCRYPTION_KEY=          # 32-byte base64 encoded key
 # Jupiter (Required)
 JUPITER_API_URL=                # https://price.jup.ag/v4
 
-# Web (Phase 8)
+# Web (Phase 6)
 NEXTAUTH_SECRET=                # Random string for JWT
 NEXTAUTH_URL=                   # http://localhost:3000 (dev) / https://codestats.gg (prod)
 
@@ -557,7 +452,7 @@ const TOKEN_MINTS = {
 
 1. **Wallet Creation**
    - Create wallet
-   - Verify seed phrase delivery
+   - Verify private key delivery
    - Test encryption/decryption
 
 2. **Tipping**
@@ -571,12 +466,6 @@ const TOKEN_MINTS = {
    - Claim via button
    - Test max participants limit
    - Verify settlement math
-
-4. **90-Day Window**
-   - Fast-forward time (dev only)
-   - Verify notifications sent
-   - Test forfeiture logic
-   - Test wallet creation within window
 
 ### Test Checklist
 
@@ -664,8 +553,6 @@ const TOKEN_MINTS = {
 - pnpm 8+
 - PostgreSQL 14+
 - Git
-- Solana CLI (for contract dev)
-- Rust + Anchor (for contract dev)
 
 ### Quick Start
 
@@ -705,7 +592,6 @@ pnpm dev
 ### Documentation
 
 - [Discord.js Guide](https://discordjs.guide/)
-- [Anchor Framework](https://www.anchor-lang.com/)
 - [Solana Web3.js](https://solana-labs.github.io/solana-web3.js/)
 - [Jupiter API](https://station.jup.ag/docs/apis/price-api)
 - [Prisma ORM](https://www.prisma.io/docs)

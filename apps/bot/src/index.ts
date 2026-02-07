@@ -2,9 +2,26 @@ import { Client, GatewayIntentBits, REST, Routes, Collection } from 'discord.js'
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as Sentry from '@sentry/node';
+import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import { AirdropService } from './services/airdrop';
+import { logger } from './utils/logger';
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+
+// Initialize Sentry if DSN is provided
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    integrations: [nodeProfilingIntegration()],
+    // Performance Monitoring
+    tracesSampleRate: 1.0, // Capture 100% of transactions in development
+    // Set sampling rate for profiling - this is relative to tracesSampleRate
+    profilesSampleRate: 1.0,
+    environment: process.env.NODE_ENV || 'development',
+  });
+  logger.info('Sentry initialized successfully');
+}
 
 const airdropService = new AirdropService();
 
@@ -21,7 +38,7 @@ const client = new Client({
 
 // Custom event for short airdrops
 client.on('scheduleAirdrop', (airdropId: string, durationMs: number) => {
-  console.log(`Scheduling precise settlement for ${airdropId} in ${durationMs}ms`);
+  logger.info(`Scheduling precise settlement for ${airdropId} in ${durationMs}ms`);
   setTimeout(() => {
     // Re-fetch client to be safe, though closure captures it
     // We need to fetch the airdrop object first since settleAirdrop expects it
@@ -49,9 +66,9 @@ for (const file of commandFiles) {
   if ('data' in command && 'execute' in command) {
     client.commands.set(command.data.name, command);
     commands.push(command.data.toJSON());
-    console.log(`Loaded command: ${command.data.name}`);
+    logger.info(`Loaded command: ${command.data.name}`);
   } else {
-    console.log(`[WARNING] The command at ${filePath} is missing required properties.`);
+    logger.warn(`The command at ${filePath} is missing required properties.`);
   }
 }
 
@@ -60,20 +77,21 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN!
 
 (async () => {
   try {
-    console.log(`Started refreshing ${commands.length} application (/) commands.`);
+    logger.info(`Started refreshing ${commands.length} application (/) commands.`);
 
     const data = await rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID!), {
       body: commands,
     });
 
-    console.log(`Successfully reloaded ${(data as any[]).length} application (/) commands.`);
+    logger.info(`Successfully reloaded ${(data as any[]).length} application (/) commands.`);
   } catch (error) {
-    console.error('Error registering commands:', error);
+    logger.error('Error registering commands:', error);
+    Sentry.captureException(error);
   }
 })();
 
 client.once('clientReady', () => {
-  console.log(`Bot logged in as ${client.user?.tag}`);
+  logger.info(`Bot logged in as ${client.user?.tag}`);
 
   // Schedule airdrop settlement (every 10 seconds for responsiveness)
   setInterval(() => {
@@ -96,14 +114,23 @@ client.on('interactionCreate', async (interaction) => {
   const command = client.commands.get(interaction.commandName);
 
   if (!command) {
-    console.error(`No command matching ${interaction.commandName} was found.`);
+    logger.error(`No command matching ${interaction.commandName} was found.`);
     return;
   }
 
   try {
     await command.execute(interaction);
   } catch (error) {
-    console.error(`Error executing ${interaction.commandName}:`, error);
+    logger.error(`Error executing ${interaction.commandName}:`, error);
+
+    // Capture error in Sentry with context
+    Sentry.captureException(error, {
+      tags: {
+        command: interaction.commandName,
+        userId: interaction.user.id,
+        guildId: interaction.guild?.id,
+      },
+    });
 
     try {
       if (interaction.replied || interaction.deferred) {
@@ -118,7 +145,7 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
     } catch (replyError) {
-      console.error('Failed to send error message:', replyError);
+      logger.error('Failed to send error message:', replyError);
     }
   }
 });

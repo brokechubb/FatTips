@@ -74,36 +74,18 @@ model Airdrop {
 }
 
 model AirdropParticipant {
-  id                String   @id @default(uuid())
-  airdropId         String
-  airdrop           Airdrop  @relation(fields: [airdropId], references: [id])
-  userId            String
-  user              User     @relation(fields: [userId], references: [discordId])
-  shareAmount       Decimal  @db.Decimal(20, 9)
-  hasWalletAtClaim  Boolean  @default(false)
-  claimedAt         DateTime @default(now())
-  walletCreatedBy   DateTime?
-  deadline          DateTime?
-  notificationsSent Json     @default("{}")
-  status            ParticipantStatus @default(PENDING)
-  txSignature       String?
+  id          String   @id @default(uuid())
+  airdropId   String
+  airdrop     Airdrop  @relation(fields: [airdropId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [discordId])
+  shareAmount Decimal  @db.Decimal(20, 9)
+  claimedAt   DateTime @default(now())
+  status      ParticipantStatus @default(PENDING)
+  txSignature String?
 
   @@unique([airdropId, userId])
-  @@index([status, deadline])
   @@index([userId])
-}
-
-model BotTreasury {
-  id                String   @id @default(uuid())
-  sourceAirdropId   String
-  originalUserId    String
-  amount            Decimal  @db.Decimal(20, 9)
-  tokenMint         String
-  forfeitedAt       DateTime @default(now())
-  notes             String?
-
-  @@index([originalUserId])
-  @@index([forfeitedAt])
 }
 
 enum TxType {
@@ -111,7 +93,6 @@ enum TxType {
   DEPOSIT
   WITHDRAWAL
   AIRDROP_CLAIM
-  FORFEIT
 }
 
 enum TxStatus {
@@ -130,5 +111,4 @@ enum AirdropStatus {
 enum ParticipantStatus {
   PENDING
   TRANSFERRED
-  FORFEITED
 }
