@@ -26,7 +26,8 @@ docker save fattips-bot:latest fattips-api:latest | gzip | ssh -p $SERVER_PORT $
 # 3. Sync Configuration Files
 echo "📦 Syncing configuration files..."
 # We only need docker-compose.yml, scripts, and basic config. Source code is inside the image!
-rsync -avz -e "ssh -p $SERVER_PORT" \
+# Use --delete to remove files on remote that are not in the source list (cleans up old source code)
+rsync -avz -e "ssh -p $SERVER_PORT" --delete \
   docker-compose.yml \
   scripts/ \
   package.json \
