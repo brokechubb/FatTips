@@ -518,30 +518,34 @@ const TOKEN_MINTS = {
 
 ## Open Issues & Decisions
 
-### Technical Decisions
+### Technical Decisions (Resolved)
 
-| Issue         | Options             | Status   | Decision                        |
-| ------------- | ------------------- | -------- | ------------------------------- |
-| Monorepo tool | Turborepo vs Nx     | **OPEN** | Turborepo recommended           |
-| API protocol  | REST vs tRPC        | **OPEN** | Start REST, consider tRPC later |
-| WebSocket     | Socket.io vs native | **OPEN** | SSE for MVP, upgrade later      |
-| Caching       | In-memory vs Redis  | **OPEN** | In-memory for MVP               |
+| Issue          | Options             | Status      | Decision                       |
+| -------------- | ------------------- | ----------- | ------------------------------ |
+| Monorepo tool  | Turborepo vs Nx     | ✅ RESOLVED | Turborepo implemented          |
+| API protocol   | REST vs tRPC        | ✅ RESOLVED | REST API (Phase 5 in progress) |
+| WebSocket      | Socket.io vs native | ✅ RESOLVED | SSE for MVP, upgrade later     |
+| Caching        | In-memory vs Redis  | ✅ RESOLVED | Redis for production (Phase 6) |
+| Error Handling | Custom vs standard  | ✅ RESOLVED | FatTipsError classes (Phase 2) |
+| Logging        | Winston + Sentry    | ✅ RESOLVED | Implemented in bot             |
 
 ### Feature Decisions
 
-| Feature              | Priority | Notes                |
-| -------------------- | -------- | -------------------- |
-| Leaderboard          | High     | Web dashboard page   |
-| Transaction export   | Medium   | CSV/JSON download    |
-| Mobile app           | Low      | Future consideration |
-| Multi-server support | Medium   | Phase 9+             |
+| Feature                | Priority | Status  | Notes              |
+| ---------------------- | -------- | ------- | ------------------ |
+| Leaderboard            | High     | Phase 6 | Web dashboard page |
+| Transaction export     | Medium   | Future  | CSV/JSON download  |
+| Mobile app             | Low      | Future  | Phase 10+          |
+| Multi-server support   | Medium   | Future  | Phase 9+           |
+| Shared utilities       | High     | Phase 1 | Code consolidation |
+| Testing infrastructure | High     | Phase 5 | Jest/Vitest setup  |
 
-### Questions
+### Questions (Answered)
 
-1. **Error Handling**: How verbose should error messages be in Discord?
-2. **Logging**: What level of logging for production? (recommend: warn/error)
-3. **Monitoring**: Any preference for error tracking? (Sentry recommended)
-4. **Backups**: Automated database backup schedule? (recommend: daily)
+1. **Error Handling**: Standardized via FatTipsError classes with ephemeral user messages
+2. **Logging**: Winston for app logs, Sentry for errors, transaction logs separate
+3. **Monitoring**: Sentry implemented for error tracking
+4. **Backups**: Recommend daily automated backups (not yet implemented)
 
 ---
 
@@ -587,10 +591,10 @@ pnpm dev
 
 ---
 
-## Resources
+## References
 
-### Documentation
-
+- [Architecture Analysis](./docs/ARCHITECTURE.md) - Comprehensive codebase analysis
+- [Architecture Improvement Plan](./docs/ARCHITECTURE_PLAN.md) - Implementation roadmap for code quality improvements
 - [Discord.js Guide](https://discordjs.guide/)
 - [Solana Web3.js](https://solana-labs.github.io/solana-web3.js/)
 - [Jupiter API](https://station.jup.ag/docs/apis/price-api)
@@ -606,9 +610,10 @@ pnpm dev
 
 ## Changelog
 
-| Date       | Version | Changes         |
-| ---------- | ------- | --------------- |
-| 2024-XX-XX | 0.1.0   | Initial roadmap |
+| Date       | Version | Changes                                          |
+| ---------- | ------- | ------------------------------------------------ |
+| 2026-02-07 | 0.2.0   | Added architecture analysis and improvement plan |
+| 2024-XX-XX | 0.1.0   | Initial roadmap                                  |
 
 ---
 
