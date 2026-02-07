@@ -43,6 +43,10 @@ ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST << EOF
   # Ensure scripts are executable
   chmod +x scripts/deploy-prod.sh
   
+  # CLEANUP: Remove source code directories (now unused as we use pre-built images)
+  echo "🧹 Removing unused source code..."
+  rm -rf apps packages programs docker docs
+  
   echo "🚀 Starting services with new images..."
   # Use the images we just loaded
   docker compose up -d
