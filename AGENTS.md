@@ -69,14 +69,14 @@ To deploy updates to the production server:
 ssh -p 1337 chubb@codestats.gg
 
 # 2. Navigate to project directory
-cd /home/chubb/bots/FatTips
+cd /opt/FatTips
 
 # 3. Pull latest changes (if using git) or sync files
 # (Ensure Dockerfiles and docker-compose.yml are up to date)
 
-# 4. Rebuild and restart services
-# Note: Use --force-recreate to ensure env var changes apply
-docker compose up -d --build --force-recreate bot api
+# 4. Deploy using the automated script (Recommended)
+# This builds locally and uploads compressed images to save disk space
+./scripts/deploy-prod.sh
 ```
 
 ## Code Style Guidelines
