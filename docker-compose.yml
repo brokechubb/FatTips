@@ -49,6 +49,7 @@ services:
       - no-new-privileges:true
 
   bot:
+    image: fattips-bot:latest
     build:
       context: .
       dockerfile: docker/Dockerfile.bot
@@ -78,6 +79,7 @@ services:
       - no-new-privileges:true
 
   api:
+    image: fattips-api:latest
     build:
       context: .
       dockerfile: docker/Dockerfile.api

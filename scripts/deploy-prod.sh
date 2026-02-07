@@ -7,38 +7,43 @@ SERVER_HOST="codestats.gg"
 SERVER_PORT="1337"
 REMOTE_DIR="/opt/FatTips"
 
-echo "🚀 Deploying FatTips to production..."
+echo "🚀 Deploying FatTips to production (Local Build Strategy)..."
 
-# 1. Sync files to server (excluding node_modules, logs, etc)
-echo "📦 Syncing files..."
+# 1. Build Docker images locally
+echo "🏗️  Building Docker images locally..."
+docker compose build
+
+# 2. Upload Images to Server
+echo "📤 Uploading compressed images to production..."
+# Save both images, compress with gzip, and pipe to remote docker load
+docker save fattips-bot:latest fattips-api:latest | gzip | ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST "gunzip | docker load"
+
+# 3. Sync Configuration Files
+echo "📦 Syncing configuration files..."
+# We only need docker-compose.yml and scripts, NOT the source code
 rsync -avz -e "ssh -p $SERVER_PORT" \
-  --exclude 'node_modules' \
-  --exclude 'dist' \
-  --exclude '.git' \
-  --exclude 'logs' \
-  --exclude '.env' \
-  --exclude '.turbo' \
-  . $SERVER_USER@$SERVER_HOST:$REMOTE_DIR
+  docker-compose.yml \
+  scripts/ \
+  package.json \
+  pnpm-lock.yaml \
+  $SERVER_USER@$SERVER_HOST:$REMOTE_DIR/
 
-# 2. Run remote commands
-echo "🔄 Updating services on server..."
+# 4. Restart Services on Remote
+echo "🔄 Restarting services on server..."
 ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST << EOF
   cd $REMOTE_DIR
   
-  # 3. Rebuild and Restart
-  echo "🏗️  Rebuilding Docker images..."
-  docker compose down
-  docker compose build
-  
-  echo "Starting services..."
+  echo "🚀 Starting services with new images..."
   docker compose up -d
   
-  # 4. Run Migrations (inside container to access internal DB network)
+  # 5. Run Migrations
   echo "🐘 Running database migrations..."
   # Wait for DB to be ready
-  sleep 10
-  # We use the 'bot' container to run migrations since it has the code + pnpm
+  sleep 5
   docker compose exec -T bot pnpm --filter fattips-database migrate:prod
+  
+  echo "🧹 Cleaning up unused images..."
+  docker image prune -f
   
   echo "✅ Deployment complete!"
   docker compose ps
