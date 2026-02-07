@@ -1,14 +1,15 @@
 FROM node:18-alpine AS base
 
-# Install dependencies
-RUN apk add --no-cache libc6-compat openssl
+# Install dependencies and build tools for native modules (bigint-buffer, etc.)
+RUN apk add --no-cache libc6-compat openssl python3 make g++
 
 WORKDIR /app
 
-# Copy source code
+# Copy source code first
 COPY . .
 
-# Install dependencies
+# Install dependencies and global prisma (matching project version)
+# We need pnpm globally to run pnpm commands
 RUN npm install -g pnpm && pnpm install
 
 # Build dependencies

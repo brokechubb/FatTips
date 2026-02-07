@@ -77,3 +77,4 @@ volumes/
 # Misc
 .vercel
 .netlify
+fattips_dump.sql
