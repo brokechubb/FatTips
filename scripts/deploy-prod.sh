@@ -28,9 +28,11 @@ echo "📦 Syncing configuration files..."
 # We only need docker-compose.yml, scripts, and basic config. Source code is inside the image!
 # Use --delete to remove files on remote that are not in the source list (cleans up old source code)
 rsync -avz -e "ssh -p $SERVER_PORT" --delete \
+  --exclude 'logs' \
   docker-compose.yml \
-  scripts/ \
+  scripts \
   package.json \
+  .env \
   pnpm-lock.yaml \
   .env.example \
   $SERVER_USER@$SERVER_HOST:$REMOTE_DIR/
