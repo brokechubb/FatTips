@@ -8,7 +8,11 @@ import { AirdropService } from './services/airdrop';
 import { activityService } from './services/activity';
 import { handlePrefixCommand } from './handlers/prefixCommands';
 import { logger } from './utils/logger';
-import { handleTipSelectMenu, handleTipModal } from './handlers/tipInteractions';
+import {
+  handleTipSelectMenu,
+  handleTipModal,
+  handleTipUserSelect,
+} from './handlers/tipInteractions';
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
@@ -135,6 +139,13 @@ client.on('interactionCreate', async (interaction) => {
   // Handle Select Menus
   if (interaction.isStringSelectMenu()) {
     const handled = await handleTipSelectMenu(interaction);
+    if (handled) return;
+    return;
+  }
+
+  // Handle User Select Menus
+  if (interaction.isUserSelectMenu()) {
+    const handled = await handleTipUserSelect(interaction);
     if (handled) return;
     return;
   }

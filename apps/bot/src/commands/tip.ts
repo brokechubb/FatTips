@@ -8,6 +8,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
   ActionRowBuilder,
+  UserSelectMenuBuilder,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logTransaction } from '../utils/logger';
@@ -532,31 +533,21 @@ function formatTokenAmount(amount: number): string {
   return amount.toFixed(2);
 }
 
-// Helper function to show interactive tip form with recipient and amount inputs
+// Helper function to show user select menu for recipient selection
 async function showTipForm(interaction: ChatInputCommandInteraction) {
-  const modal = new ModalBuilder().setCustomId('tip_form_recipients').setTitle('Send a Tip 💸');
+  const selectMenu = new UserSelectMenuBuilder()
+    .setCustomId('tip_select_recipients')
+    .setPlaceholder('Select user(s) to tip')
+    .setMinValues(1)
+    .setMaxValues(10);
 
-  const recipientsInput = new TextInputBuilder()
-    .setCustomId('recipients')
-    .setLabel('Recipients')
-    .setPlaceholder('@username1 @username2 (up to 10 users)')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMaxLength(200);
+  const row = new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(selectMenu);
 
-  const amountInput = new TextInputBuilder()
-    .setCustomId('amount')
-    .setLabel('Amount')
-    .setPlaceholder('e.g., $5, 0.5 SOL, 10 USDC, or max')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true);
-
-  const firstRow = new ActionRowBuilder<TextInputBuilder>().addComponents(recipientsInput);
-  const secondRow = new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput);
-
-  modal.addComponents(firstRow, secondRow);
-
-  await interaction.showModal(modal);
+  await interaction.reply({
+    content: '💸 Select the user(s) you want to tip (up to 10):',
+    components: [row],
+    ephemeral: true,
+  });
 }
 
 // Helper function to show amount modal when recipients are provided but amount is missing

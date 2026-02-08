@@ -1,5 +1,6 @@
 import {
   StringSelectMenuInteraction,
+  UserSelectMenuInteraction,
   ModalSubmitInteraction,
   ModalBuilder,
   TextInputBuilder,
@@ -635,4 +636,58 @@ async function handleTipAmountFormModal(interaction: ModalSubmitInteraction): Pr
     await interaction.editReply({ content: '❌ An unexpected error occurred.' });
     return true;
   }
+}
+
+// Handle user select menu for recipient selection
+export async function handleTipUserSelect(
+  interaction: UserSelectMenuInteraction
+): Promise<boolean> {
+  if (interaction.customId !== 'tip_select_recipients') return false;
+
+  const selectedUserIds = interaction.values;
+
+  // Filter out invalid targets (self, bot)
+  const validRecipientIds = selectedUserIds.filter(
+    (id) => id !== interaction.user.id && id !== interaction.client.user?.id
+  );
+
+  if (validRecipientIds.length === 0) {
+    await interaction.update({
+      content: '❌ No valid recipients selected! (You cannot tip yourself or the bot)',
+      components: [],
+    });
+    return true;
+  }
+
+  // Show token selection menu
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`tip_form_token_${validRecipientIds.join(',')}_`)
+    .setPlaceholder('Select a token to tip')
+    .addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel('SOL')
+        .setDescription('Solana native token')
+        .setValue('SOL')
+        .setEmoji('💎'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('USDC')
+        .setDescription('USD Coin')
+        .setValue('USDC')
+        .setEmoji('💵'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('USDT')
+        .setDescription('Tether USD')
+        .setValue('USDT')
+        .setEmoji('💸')
+    );
+
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+
+  const mentions = validRecipientIds.map((id) => `<@${id}>`).join(', ');
+  await interaction.update({
+    content: `💸 Selected recipients: ${mentions}\n\nNow choose which token to send:`,
+    components: [row],
+  });
+
+  return true;
 }
