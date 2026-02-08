@@ -8,6 +8,8 @@
 
 FatTips is a next-generation Discord tipping bot designed specifically for the Solana ecosystem. It enables instant, seamless tipping of SOL, USDC, and USDT directly within Discord conversations, while strictly adhering to a **non-custodial philosophy**.
 
+[![Add to Discord](https://img.shields.io)](https://discord.com/oauth2/authorize?client_id=1469150968615669761)
+
 ---
 
 ## 🚀 Why FatTips?

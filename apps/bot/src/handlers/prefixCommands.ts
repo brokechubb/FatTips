@@ -8,8 +8,6 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
-  MessageReaction,
-  User,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logger } from '../utils/logger';
@@ -205,7 +203,7 @@ async function handleHelp(message: Message, prefix: string) {
       }
     )
     .setFooter({
-      text: '⚡ Prefix commands recommended for guilds | Large tips (>$20) require confirmation',
+      text: '⚡ Prefix commands recommended for guilds',
     });
 
   await message.reply({ embeds: [embed] });
@@ -453,46 +451,6 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
 
   const amountPerUser = amountToken / recipientWallets.length;
   const usdPerUser = usdValue / recipientWallets.length;
-
-  // Check for large amount confirmation (> $20)
-  if (usdValue > 20) {
-    const confirmMsg = await message.reply({
-      content:
-        `⚠️ **Large Transaction Warning**\n\n` +
-        `You're about to send **$${usdValue.toFixed(2)}** (${formatTokenAmount(amountToken)} ${tokenSymbol}) to ${recipientWallets.length} user(s).\n\n` +
-        `React with ✅ to confirm or ❌ to cancel.`,
-    });
-
-    await confirmMsg.react('✅');
-    await confirmMsg.react('❌');
-
-    const filter = (reaction: MessageReaction, user: User) => {
-      return ['✅', '❌'].includes(reaction.emoji.name ?? '') && user.id === message.author.id;
-    };
-
-    try {
-      const collected = await confirmMsg.awaitReactions({
-        filter,
-        max: 1,
-        time: 30000,
-        errors: ['time'],
-      });
-      const reaction = collected.first();
-
-      if (reaction?.emoji.name === '❌') {
-        await confirmMsg.edit({ content: '❌ Transaction cancelled.', embeds: [] });
-        return;
-      }
-
-      await confirmMsg.delete().catch(() => {});
-    } catch {
-      await confirmMsg.edit({
-        content: '⏰ Confirmation timed out. Transaction cancelled.',
-        embeds: [],
-      });
-      return;
-    }
-  }
 
   if (amountPerUser <= 0) {
     await message.reply('❌ Amount too small!');

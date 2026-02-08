@@ -612,6 +612,7 @@ pnpm dev
 
 | Date       | Version | Changes                                          |
 | ---------- | ------- | ------------------------------------------------ |
+| 2026-02-08 | 0.2.1   | Removed $20 tip confirmation due to UX issues    |
 | 2026-02-07 | 0.2.0   | Added architecture analysis and improvement plan |
 | 2024-XX-XX | 0.1.0   | Initial roadmap                                  |
 
