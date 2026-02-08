@@ -4,11 +4,6 @@ import {
   PermissionFlagsBits,
   EmbedBuilder,
   InteractionContextType,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  ActionRowBuilder,
-  UserSelectMenuBuilder,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logTransaction } from '../utils/logger';
@@ -38,14 +33,14 @@ export const data = new SlashCommandBuilder()
   .addStringOption((option) =>
     option
       .setName('recipients')
-      .setDescription('User(s) to tip (e.g. @User1 @User2) - leave empty for interactive form')
-      .setRequired(false)
+      .setDescription('User(s) to tip (e.g. @User1 @User2)')
+      .setRequired(true)
   )
   .addStringOption((option) =>
     option
       .setName('amount')
       .setDescription('Amount to tip (e.g., $5, 0.5 SOL, 10 USDC)')
-      .setRequired(false)
+      .setRequired(true)
   )
   .addStringOption((option) =>
     option
@@ -70,35 +65,10 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  const recipientsStr = interaction.options.getString('recipients');
-  const amountStr = interaction.options.getString('amount');
+  const recipientsStr = interaction.options.getString('recipients', true);
+  const amountStr = interaction.options.getString('amount', true);
   const tokenPreference = interaction.options.getString('token') || 'SOL';
   const mode = interaction.options.getString('mode') || 'split';
-
-  // If no recipients provided, show interactive form
-  if (!recipientsStr) {
-    await showTipForm(interaction);
-    return;
-  }
-
-  // If recipients provided but no amount, show amount modal
-  if (recipientsStr && !amountStr) {
-    const mentionedIds = [...new Set([...recipientsStr.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]))];
-    const validRecipientIds = mentionedIds.filter(
-      (id) => id !== interaction.user.id && id !== interaction.client.user?.id
-    );
-
-    if (validRecipientIds.length === 0) {
-      await interaction.reply({
-        content: '❌ No valid recipients found! (You cannot tip yourself or the bot)',
-        ephemeral: true,
-      });
-      return;
-    }
-
-    await showAmountModal(interaction, validRecipientIds, tokenPreference, mode);
-    return;
-  }
 
   // Parse mentions from recipients string
   const mentionedIds = [...new Set([...recipientsStr.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]))];
@@ -515,12 +485,12 @@ function parseAmountInput(input: string): ParsedAmount {
     return { valid: true, type: 'usd', value, token: usdMatch[2]?.toUpperCase() };
   }
 
-  const tokenMatch = trimmed.match(/^(\d+\.?\d*)\s*(SOL|USDC|USDT)$/i);
+  const tokenMatch = trimmed.match(/^(\d+\.?\d*)\s*(SOL|USDC|USDT)?$/i);
   if (tokenMatch) {
     const value = parseFloat(tokenMatch[1]);
     if (isNaN(value) || value <= 0)
       return { valid: false, value: 0, error: 'Invalid token amount' };
-    return { valid: true, type: 'token', value, token: tokenMatch[2].toUpperCase() };
+    return { valid: true, type: 'token', value, token: tokenMatch[2]?.toUpperCase() };
   }
 
   return { valid: false, value: 0, error: 'Invalid format. Try: $5, 0.5 SOL, or max' };
@@ -531,45 +501,4 @@ function formatTokenAmount(amount: number): string {
   if (amount < 1) return amount.toFixed(6);
   if (amount < 100) return amount.toFixed(4);
   return amount.toFixed(2);
-}
-
-// Helper function to show user select menu for recipient selection
-async function showTipForm(interaction: ChatInputCommandInteraction) {
-  const selectMenu = new UserSelectMenuBuilder()
-    .setCustomId('tip_select_recipients')
-    .setPlaceholder('Select user(s) to tip')
-    .setMinValues(1)
-    .setMaxValues(10);
-
-  const row = new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(selectMenu);
-
-  await interaction.reply({
-    content: '💸 Select the user(s) you want to tip (up to 10):',
-    components: [row],
-    ephemeral: true,
-  });
-}
-
-// Helper function to show amount modal when recipients are provided but amount is missing
-async function showAmountModal(
-  interaction: ChatInputCommandInteraction,
-  recipientIds: string[],
-  tokenPreference: string,
-  mode: string
-) {
-  const modal = new ModalBuilder()
-    .setCustomId(`tip_amount_form_${recipientIds.join(',')}_${tokenPreference}_${mode}`)
-    .setTitle('Enter Tip Amount 💸');
-
-  const amountInput = new TextInputBuilder()
-    .setCustomId('amount')
-    .setLabel('Amount')
-    .setPlaceholder('e.g., $5, 0.5 SOL, 10 USDC, or max')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true);
-
-  const row = new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput);
-  modal.addComponents(row);
-
-  await interaction.showModal(modal);
 }

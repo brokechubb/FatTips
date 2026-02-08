@@ -251,7 +251,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       usdValue = parsedAmount.value;
     } else {
       // Direct token amount
-      tokenSymbol = parsedAmount.token!;
+      tokenSymbol = parsedAmount.token || tokenPreference;
       tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS];
       amountToken = parsedAmount.value;
 
@@ -455,11 +455,11 @@ function parseAmountInput(input: string): ParsedAmount {
     return { valid: true, type: 'usd', value, token: tokenHint };
   }
 
-  // Check for token format: 5 SOL, 10 USDC, 0.5 USDT
-  const tokenMatch = trimmed.match(/^(\d+\.?\d*)\s*(SOL|USDC|USDT)$/i);
+  // Check for token format: 5 SOL, 10 USDC, 0.5 USDT (or just 5, 10, 0.5)
+  const tokenMatch = trimmed.match(/^(\d+\.?\d*)\s*(SOL|USDC|USDT)?$/i);
   if (tokenMatch) {
     const value = parseFloat(tokenMatch[1]);
-    const token = tokenMatch[2].toUpperCase();
+    const token = tokenMatch[2] ? tokenMatch[2].toUpperCase() : undefined;
     if (isNaN(value) || value <= 0) {
       return { valid: false, value: 0, error: 'Invalid token amount' };
     }

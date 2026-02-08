@@ -22,7 +22,7 @@ import {
 } from 'fattips-solana';
 import { activityService } from '../services/activity';
 
-const DEFAULT_PREFIX = 'f';
+export const DEFAULT_PREFIX = 'f';
 const DISCORD_CANNOT_DM = 50007;
 
 // Cache for guild prefixes (refresh every 5 minutes)
@@ -37,7 +37,7 @@ const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
 /**
  * Get the prefix for a guild (cached)
  */
-async function getGuildPrefix(guildId: string | null): Promise<string> {
+export async function getGuildPrefix(guildId: string | null): Promise<string> {
   if (!guildId) return DEFAULT_PREFIX; // DMs use default
 
   const cached = prefixCache.get(guildId);
@@ -132,6 +132,9 @@ export async function handlePrefixCommand(message: Message, client: Client) {
       case 'bals':
         await handleBalance(message, prefix);
         break;
+      case 'deposit':
+        await handleDeposit(message, prefix);
+        break;
       case 'wallet':
         await handleWallet(message, args, prefix);
         break;
@@ -173,52 +176,36 @@ async function handleHelp(message: Message, prefix: string) {
     .setTitle('💰 FatTips Commands')
     .setDescription(
       `Send crypto tips instantly on Discord!\n` +
-        `**Prefix:** \`${prefix}\` (or no prefix in DMs)\n\n` +
+        `**Prefix:** \`${prefix}\` (recommended for guilds)\n\n` +
         `💡 **Pro Tips:**\n` +
         `• Reply to any message with \`${p}tip $5\` to tip the author\n` +
-        `• Amount can go anywhere: \`${p}tip $5 @user\` or \`${p}tip @user $5\``
+        `• Amount can go anywhere: \`${p}tip $5 @user\` or \`${p}tip @user $5\`\n` +
+        `• Slash commands also available: \`/tip user:@user amount:$5\``
     )
     .setColor(0x00ff00)
     .addFields(
       {
-        name: '📚 Basics',
+        name: '💸 Tipping & Fun',
         value:
-          `${p}help — Show commands\n` +
-          `${p}balance — Check wallet\n` +
-          `${p}history — Transactions`,
-        inline: true,
+          `\`${p}tip @user $5\` • \`${p}tip 0.1 SOL\`\n` +
+          `\`${p}rain $10 5\` (Active users)\n` +
+          `\`${p}airdrop $20 10m\``,
       },
       {
-        name: '💸 Tipping',
+        name: '💰 Wallet & Transfers',
         value:
-          `${p}tip @user $5 — Tip with USD\n` +
-          `${p}tip @user 0.1 SOL — Tip with crypto\n` +
-          `${p}tip $5 (reply) — Tip message author`,
-        inline: true,
+          `\`${p}balance\` • \`${p}deposit\` • \`${p}history\`\n` +
+          `\`${p}send <addr> $10\` • \`${p}withdraw <addr> all\`\n` +
+          `\`${p}wallet create\` • \`${p}wallet export-key\``,
       },
       {
-        name: '🎁 Community',
-        value: `${p}rain $10 5 — Rain on 5 users\n` + `${p}airdrop $20 10m — 10 min airdrop`,
-        inline: true,
-      },
-      {
-        name: '💳 Transfers',
+        name: '⚙️ Info',
         value:
-          `${p}send <address> $10 — Send to wallet\n` + `${p}withdraw <address> max — Withdraw all`,
-        inline: true,
-      },
-      {
-        name: '🔐 Wallet',
-        value:
-          `${p}wallet create — Create wallet\n` +
-          `${p}wallet export-key — Show key (DMs only)\n` +
-          `${p}setprefix <new> — Change prefix`,
-        inline: true,
-      },
-      { name: '💎 Supported', value: 'SOL, USDC, USDT', inline: true }
+          `\`${p}help\` • \`${p}setprefix <new>\`\n` + `*Slash commands available for all actions*`,
+      }
     )
     .setFooter({
-      text: '⚡ Also works with /slash commands! | Large tips (>$20) require confirmation',
+      text: '⚡ Prefix commands recommended for guilds | Large tips (>$20) require confirmation',
     });
 
   await message.reply({ embeds: [embed] });
@@ -1248,4 +1235,22 @@ function parseDuration(str: string): number | null {
   if (unit === 'd') return val * 24 * 60 * 60 * 1000;
   if (unit === 'w') return val * 7 * 24 * 60 * 60 * 1000;
   return null;
+}
+
+// ============ DEPOSIT ============
+async function handleDeposit(message: Message, prefix: string) {
+  const user = await prisma.user.findUnique({
+    where: { discordId: message.author.id },
+  });
+
+  if (!user) {
+    await message.reply(
+      `❌ You don't have a wallet yet! Use \`${prefix}wallet create\` to create one.`
+    );
+    return;
+  }
+
+  await message.reply(
+    `**Your Deposit Address:**\n\`\`\`\n${user.walletPubkey}\n\`\`\`\nSend SOL, USDC, or USDT to this address to fund your wallet.`
+  );
 }

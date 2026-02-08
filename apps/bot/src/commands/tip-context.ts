@@ -2,9 +2,10 @@ import {
   ContextMenuCommandBuilder,
   UserContextMenuCommandInteraction,
   ApplicationCommandType,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   ActionRowBuilder,
-  StringSelectMenuBuilder,
-  StringSelectMenuOptionBuilder,
 } from 'discord.js';
 
 export const data = new ContextMenuCommandBuilder()
@@ -30,32 +31,19 @@ export async function execute(interaction: UserContextMenuCommandInteraction) {
     return;
   }
 
-  const select = new StringSelectMenuBuilder()
-    .setCustomId(`tip_token_${targetUser.id}`)
-    .setPlaceholder('Select a token to tip')
-    .addOptions(
-      new StringSelectMenuOptionBuilder()
-        .setLabel('SOL')
-        .setDescription('Solana native token')
-        .setValue('SOL')
-        .setEmoji('💎'),
-      new StringSelectMenuOptionBuilder()
-        .setLabel('USDC')
-        .setDescription('USD Coin')
-        .setValue('USDC')
-        .setEmoji('💵'),
-      new StringSelectMenuOptionBuilder()
-        .setLabel('USDT')
-        .setDescription('Tether USD')
-        .setValue('USDT')
-        .setEmoji('💸')
-    );
+  const modal = new ModalBuilder()
+    .setCustomId(`tip_modal_${targetUser.id}`)
+    .setTitle(`Tip ${targetUser.username}`);
 
-  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+  const amountInput = new TextInputBuilder()
+    .setCustomId('amount')
+    .setLabel('Amount')
+    .setPlaceholder('Enter amount (e.g., $5, 0.5 SOL, 10 USDC)')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
 
-  await interaction.reply({
-    content: `💸 How would you like to tip ${targetUser}?`,
-    components: [row],
-    ephemeral: true,
-  });
+  const firstActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput);
+  modal.addComponents(firstActionRow);
+
+  await interaction.showModal(modal);
 }

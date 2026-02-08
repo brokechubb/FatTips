@@ -3,6 +3,9 @@ import {
   SlashCommandBuilder,
   EmbedBuilder,
   InteractionContextType,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { BalanceService, PriceService, TOKEN_MINTS } from 'fattips-solana';
@@ -72,7 +75,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const totalUsd = solUsdValue + balances.usdc + balances.usdt;
 
     // Build description
-    let description = `**Public Address:**\n\`\`\`\n${user.walletPubkey}\n\`\`\``;
+    let description = `**Deposit Address:**\n\`\`\`\n${user.walletPubkey}\n\`\`\``;
     if (showUsdValues) {
       description += `\n\n**Total Value:** $${totalUsd.toFixed(2)} USD`;
     }
@@ -108,7 +111,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     }
 
-    await interaction.editReply({ embeds: [embed] });
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId('balance_deposit')
+        .setLabel('Deposit')
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('📥'),
+      new ButtonBuilder()
+        .setCustomId('balance_withdraw')
+        .setLabel('Withdraw')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('📤'),
+      new ButtonBuilder()
+        .setCustomId('balance_history')
+        .setLabel('History')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('📜')
+    );
+
+    await interaction.editReply({ embeds: [embed], components: [row] });
   } catch (error) {
     console.error('Error fetching balance:', error);
     try {

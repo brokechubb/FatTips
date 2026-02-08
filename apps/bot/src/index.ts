@@ -8,13 +8,13 @@ import { AirdropService } from './services/airdrop';
 import { activityService } from './services/activity';
 import { handlePrefixCommand } from './handlers/prefixCommands';
 import { logger } from './utils/logger';
+import { handleTipSelectMenu, handleTipModal } from './handlers/tipInteractions';
 import {
-  handleTipSelectMenu,
-  handleTipModal,
-  handleTipUserSelect,
-  handleSendModal,
-  handleSendTokenSelect,
-} from './handlers/tipInteractions';
+  handleBalanceDeposit,
+  handleBalanceHistory,
+  handleBalanceWithdraw,
+  handleWithdrawModal,
+} from './handlers/balanceInteractions';
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
@@ -131,6 +131,19 @@ client.once('clientReady', () => {
 client.on('interactionCreate', async (interaction) => {
   // Handle Buttons
   if (interaction.isButton()) {
+    if (interaction.customId === 'balance_deposit') {
+      await handleBalanceDeposit(interaction);
+      return;
+    }
+    if (interaction.customId === 'balance_withdraw') {
+      await handleBalanceWithdraw(interaction);
+      return;
+    }
+    if (interaction.customId === 'balance_history') {
+      await handleBalanceHistory(interaction);
+      return;
+    }
+
     if (interaction.customId.startsWith('claim_airdrop_')) {
       const airdropId = interaction.customId.replace('claim_airdrop_', '');
       await airdropService.handleClaim(interaction, airdropId);
@@ -142,24 +155,27 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isStringSelectMenu()) {
     const handled = await handleTipSelectMenu(interaction);
     if (handled) return;
-    const handledSend = await handleSendTokenSelect(interaction);
-    if (handledSend) return;
     return;
   }
 
-  // Handle User Select Menus
+  /*
+  // User Select Menus disabled
   if (interaction.isUserSelectMenu()) {
     const handled = await handleTipUserSelect(interaction);
     if (handled) return;
     return;
   }
+  */
 
   // Handle Modals
   if (interaction.isModalSubmit()) {
+    if (interaction.customId === 'withdraw_modal') {
+      await handleWithdrawModal(interaction);
+      return;
+    }
+
     const handled = await handleTipModal(interaction);
     if (handled) return;
-    const handledSend = await handleSendModal(interaction);
-    if (handledSend) return;
     return;
   }
 
