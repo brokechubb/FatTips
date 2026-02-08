@@ -1,8 +1,16 @@
-import { ButtonInteraction, EmbedBuilder } from 'discord.js';
+import { ButtonInteraction, EmbedBuilder, Client, TextChannel } from 'discord.js';
 import * as Sentry from '@sentry/node';
 import { prisma } from 'fattips-database';
 import { logger, logTransaction } from '../utils/logger';
 import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
+
+// Discord error codes
+const DISCORD_ERRORS = {
+  CANNOT_DM_USER: 50007,
+  MISSING_ACCESS: 50001,
+  UNKNOWN_CHANNEL: 10003,
+  UNKNOWN_MESSAGE: 10008,
+} as const;
 
 export class AirdropService {
   private transactionService: TransactionService;
@@ -13,6 +21,63 @@ export class AirdropService {
     this.transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
     this.walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
     this.balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
+  }
+
+  /**
+   * Safely send a DM to a user. If DM fails, optionally notify in a fallback channel.
+   * IMPORTANT: Never send private keys to public channels!
+   */
+  private async safeSendDM(
+    client: Client,
+    userId: string,
+    message: string,
+    options?: {
+      fallbackChannelId?: string;
+      fallbackMessage?: string; // Safe message for public channel (no sensitive data)
+      onSuccess?: (msg: any) => void;
+    }
+  ): Promise<boolean> {
+    try {
+      const user = await client.users.fetch(userId);
+      const sentMsg = await user.send(message);
+      if (options?.onSuccess) {
+        options.onSuccess(sentMsg);
+      }
+      return true;
+    } catch (error: any) {
+      // Only log at debug level for expected DM failures
+      if (error.code === DISCORD_ERRORS.CANNOT_DM_USER) {
+        logger.debug(`Cannot DM user ${userId} - DMs disabled`);
+
+        // Send fallback message to channel if provided
+        if (options?.fallbackChannelId && options?.fallbackMessage) {
+          try {
+            const channel = await client.channels.fetch(options.fallbackChannelId);
+            if (channel?.isTextBased()) {
+              await (channel as TextChannel).send(options.fallbackMessage);
+            }
+          } catch {
+            // Channel also inaccessible, silently fail
+          }
+        }
+        return false;
+      }
+
+      // Log unexpected errors
+      logger.warn(`Failed to DM user ${userId}:`, { code: error.code, message: error.message });
+      return false;
+    }
+  }
+
+  /**
+   * Safely notify the creator about airdrop events via DM
+   */
+  private async notifyCreator(
+    client: Client,
+    creatorId: string,
+    message: string
+  ): Promise<boolean> {
+    return this.safeSendDM(client, creatorId, message);
   }
 
   /**
@@ -67,6 +132,7 @@ export class AirdropService {
         where: { discordId: interaction.user.id },
       });
 
+      let newWalletCreated = false;
       if (!user) {
         try {
           const newWallet = this.walletService.createEncryptedWallet();
@@ -76,33 +142,54 @@ export class AirdropService {
               walletPubkey: newWallet.publicKey,
               encryptedPrivkey: newWallet.encryptedPrivateKey,
               keySalt: newWallet.keySalt,
-              // encryptedMnemonic: newWallet.encryptedMnemonic,
-              // mnemonicSalt: newWallet.mnemonicSalt,
               seedDelivered: false,
             },
           });
+          newWalletCreated = true;
 
-          // Send DM with keys
-          const dmMsg = await interaction.user.send(
+          // Try to send DM with private key
+          const dmSent = await this.safeSendDM(
+            interaction.client as Client,
+            interaction.user.id,
             `🎉 **Welcome to FatTips!**\n\n` +
               `You claimed an airdrop, so I created a secure Solana wallet for you.\n\n` +
               `**Private Key:** \`\`\`${newWallet.privateKeyBase58}\`\`\`\n` +
               `⚠️ **Save this key! This message self-destructs in 15m.**\n\n` +
-              `Use \`/balance\` to check your funds.`
+              `Use \`/balance\` to check your funds.`,
+            {
+              onSuccess: (dmMsg) => {
+                // Auto-delete sensitive DM after 15 minutes
+                setTimeout(async () => {
+                  try {
+                    await dmMsg.edit(
+                      '🔒 **Private Key removed for security.** Use `/wallet action:export-key` to view it again.'
+                    );
+                  } catch {}
+                }, 900000);
+              },
+            }
           );
 
-          // Auto-delete sensitive DM
-          setTimeout(async () => {
-            try {
-              await dmMsg.edit(
-                '🔒 **Private Key removed for security.** Use `/wallet action:export-key` to view it again.'
-              );
-            } catch {}
-          }, 900000);
-        } catch (walletError) {
-          console.error('Failed to auto-create wallet:', walletError);
-          await interaction.editReply({ content: '❌ Failed to create wallet. Please try again.' });
-          return;
+          if (dmSent) {
+            await prisma.user.update({
+              where: { discordId: interaction.user.id },
+              data: { seedDelivered: true },
+            });
+          }
+          // Note: We don't send private keys to public channels for security
+          // If DM fails, user can use /wallet export-key later
+        } catch (walletError: any) {
+          // Only fail if wallet creation itself failed, not just DM
+          if (!user) {
+            logger.error('Failed to create wallet for airdrop claim:', {
+              userId: interaction.user.id,
+              error: walletError.message,
+            });
+            await interaction.editReply({
+              content: '❌ Failed to create wallet. Please try again.',
+            });
+            return;
+          }
         }
       }
 
@@ -129,9 +216,21 @@ export class AirdropService {
         `[AIRDROP CLAIM] User ${interaction.user.tag} (${interaction.user.id}) joined airdrop ${airdropId}`
       );
 
-      await interaction.editReply({
-        content: '✅ You have successfully joined the airdrop! Good luck! 🍀',
-      });
+      // Customize reply based on whether wallet was created and DM status
+      let replyContent = '✅ You have successfully joined the airdrop! Good luck! 🍀';
+      if (newWalletCreated) {
+        const userRecord = await prisma.user.findUnique({
+          where: { discordId: interaction.user.id },
+        });
+        if (!userRecord?.seedDelivered) {
+          replyContent =
+            '✅ Joined the airdrop! 🍀\n\n' +
+            "⚠️ **Important:** I created a wallet for you but couldn't send your private key via DM.\n" +
+            'Please enable DMs from server members, then use `/wallet action:export-key` to get your key.';
+        }
+      }
+
+      await interaction.editReply({ content: replyContent });
 
       // Check if max participants reached
       if (
@@ -383,29 +482,36 @@ export class AirdropService {
                 walletPubkey: newWallet.publicKey,
                 encryptedPrivkey: newWallet.encryptedPrivateKey,
                 keySalt: newWallet.keySalt,
-                // encryptedMnemonic: newWallet.encryptedMnemonic,
-                // mnemonicSalt: newWallet.mnemonicSalt,
                 seedDelivered: false,
               },
             });
 
-            // Try to DM private key (fire and forget with auto-delete)
-            try {
-              const u = await client.users.fetch(winner.userId);
-              const dmMsg = await u.send(
-                `🎉 You won an airdrop! A wallet was created for you.\n` +
-                  `Private Key: \`\`\`${newWallet.privateKeyBase58}\`\`\`\n` +
-                  `⚠️ **Save this now! This message self-destructs in 15m.**`
-              );
+            // Try to DM private key using safe method
+            const dmSent = await this.safeSendDM(
+              client,
+              winner.userId,
+              `🎉 You won an airdrop! A wallet was created for you.\n` +
+                `Private Key: \`\`\`${newWallet.privateKeyBase58}\`\`\`\n` +
+                `⚠️ **Save this now! This message self-destructs in 15m.**`,
+              {
+                onSuccess: (dmMsg) => {
+                  setTimeout(async () => {
+                    try {
+                      await dmMsg.edit(
+                        '🔒 **Private Key removed for security.** Use `/wallet action:export-key` to view it again.'
+                      );
+                    } catch {}
+                  }, 900000);
+                },
+              }
+            );
 
-              setTimeout(async () => {
-                try {
-                  await dmMsg.edit(
-                    '🔒 **Private Key removed for security.** Use `/wallet action:export-key` to view it again.'
-                  );
-                } catch {}
-              }, 900000);
-            } catch {}
+            if (dmSent) {
+              await prisma.user.update({
+                where: { discordId: winner.userId },
+                data: { seedDelivered: true },
+              });
+            }
           }
 
           // Transfer
@@ -489,36 +595,53 @@ export class AirdropService {
     }
   }
 
-  private async notifyChannel(client: any, channelId: string, content: string) {
+  private async notifyChannel(client: Client, channelId: string, content: string) {
     try {
       const channel = await client.channels.fetch(channelId);
       if (channel?.isTextBased()) {
-        await channel.send(content);
+        await (channel as TextChannel).send(content);
       }
     } catch {
-      // Channel might be deleted
+      // Channel might be deleted or inaccessible
     }
   }
 
   private async endAirdropMessage(
-    client: any,
+    client: Client,
     airdrop: any,
     winnerCount: number,
     shareAmount: number,
     tokenSymbol: string,
     winners: any[] = []
   ) {
-    if (!airdrop.messageId || !airdrop.channelId) return;
+    if (!airdrop.messageId || !airdrop.channelId) {
+      // No message to update - notify creator via DM instead
+      await this.notifyCreatorOfSettlement(
+        client,
+        airdrop,
+        winnerCount,
+        shareAmount,
+        tokenSymbol,
+        winners
+      );
+      return;
+    }
 
     try {
       const channel = await client.channels.fetch(airdrop.channelId);
-      if (!channel?.isTextBased()) return;
+      if (!channel?.isTextBased()) {
+        throw new Error('Channel not text-based');
+      }
 
-      const message = await channel.messages.fetch(airdrop.messageId);
-      if (!message) return;
+      const message = await (channel as TextChannel).messages.fetch(airdrop.messageId);
+      if (!message) {
+        throw new Error('Message not found');
+      }
 
       const oldEmbed = message.embeds[0];
-      if (!oldEmbed) return;
+      if (!oldEmbed) {
+        throw new Error('No embed found');
+      }
 
       const isRefund = winnerCount === 0;
 
@@ -550,8 +673,67 @@ export class AirdropService {
         embeds: [newEmbed],
         components: [],
       });
-    } catch (error) {
-      logger.error(`Failed to update airdrop message ${airdrop.messageId}:`, error);
+    } catch (error: any) {
+      // Check if this is an access error
+      const isAccessError = [
+        DISCORD_ERRORS.MISSING_ACCESS,
+        DISCORD_ERRORS.UNKNOWN_CHANNEL,
+        DISCORD_ERRORS.UNKNOWN_MESSAGE,
+      ].includes(error.code);
+
+      if (isAccessError) {
+        // Bot can't access the channel/message - notify creator via DM instead
+        logger.info(`Cannot update airdrop message (${error.code}), notifying creator via DM`);
+        await this.notifyCreatorOfSettlement(
+          client,
+          airdrop,
+          winnerCount,
+          shareAmount,
+          tokenSymbol,
+          winners
+        );
+      } else {
+        logger.warn(`Failed to update airdrop message ${airdrop.messageId}:`, {
+          code: error.code,
+          message: error.message,
+        });
+      }
     }
+  }
+
+  /**
+   * Notify the airdrop creator about settlement when we can't update the original message
+   */
+  private async notifyCreatorOfSettlement(
+    client: Client,
+    airdrop: any,
+    winnerCount: number,
+    shareAmount: number,
+    tokenSymbol: string,
+    winners: any[] = []
+  ) {
+    const isRefund = winnerCount === 0;
+
+    let message: string;
+    if (isRefund) {
+      message =
+        `🛑 **Airdrop Expired**\n\n` +
+        `Your airdrop ended with no participants.\n` +
+        `Funds have been refunded to your wallet.`;
+    } else {
+      const winnerMentions = winners
+        .slice(0, 10)
+        .map((w) => `<@${w.userId}>`)
+        .join(', ');
+      const moreText = winners.length > 10 ? ` and ${winners.length - 10} more` : '';
+
+      message =
+        `✅ **Airdrop Settled!**\n\n` +
+        `**${winnerCount} winners** received **${shareAmount.toFixed(4)} ${tokenSymbol}** each.\n\n` +
+        `**Winners:** ${winnerMentions}${moreText}\n\n` +
+        `_Note: I couldn't update the original message in the server (bot may have been removed or channel deleted)._`;
+    }
+
+    await this.notifyCreator(client, airdrop.creatorId, message);
   }
 }

@@ -4,6 +4,7 @@ import {
   PermissionFlagsBits,
   EmbedBuilder,
   InteractionContextType,
+  TextChannel,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logTransaction } from '../utils/logger';
@@ -15,6 +16,9 @@ import {
   WalletService,
   BalanceService,
 } from 'fattips-solana';
+
+// Discord error codes
+const DISCORD_CANNOT_DM = 50007;
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
@@ -334,10 +338,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // --- LOGGING & RESPONSES ---
 
     // 1. Log Transactions to DB
-    for (const recipient of recipientWallets) {
+    // For batch transactions, append an index to the signature to satisfy the unique constraint
+    // The real Solana signature can be extracted by splitting on ':'
+    for (let i = 0; i < recipientWallets.length; i++) {
+      const recipient = recipientWallets[i];
+      const batchSignature = recipientWallets.length > 1 ? `${signature}:${i}` : signature;
       await prisma.transaction.create({
         data: {
-          signature,
+          signature: batchSignature,
           fromId: sender.discordId,
           toId: recipient.discordId,
           amountUsd: usdValuePerUser,
@@ -354,7 +362,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         toId: recipient.discordId,
         amount: amountPerUser,
         token: tokenSymbol,
-        signature,
+        signature: batchSignature,
         status: 'SUCCESS',
       });
     }
@@ -382,7 +390,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     await interaction.editReply({ embeds: [embed] });
 
-    // 3. Send DMs
+    // 3. Send DMs (with fallback for users who have DMs disabled)
+    const failedDMs: string[] = []; // Track users we couldn't DM
+
     for (const recipient of recipientWallets) {
       try {
         const user = await interaction.client.users.fetch(recipient.discordId);
@@ -415,8 +425,33 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         } else {
           await user.send(msg);
         }
+      } catch (error: any) {
+        // If this was a new wallet and DM failed, track for public notification
+        const isNew = newWallets.find((w) => w.id === recipient.discordId);
+        if (isNew) {
+          failedDMs.push(recipient.discordId);
+        }
+      }
+    }
+
+    // 4. Send public fallback for users who couldn't receive DMs
+    if (failedDMs.length > 0) {
+      try {
+        const mentions = failedDMs.map((id) => `<@${id}>`).join(' ');
+        const clientId = interaction.client.user?.id;
+        const installLink = `https://discord.com/oauth2/authorize?client_id=${clientId}`;
+
+        const fallbackMsg =
+          `💰 ${mentions} — You just received a tip from ${interaction.user} and a new wallet was created for you!\n` +
+          `To access your wallet: **[Install FatTips](${installLink})** → then use \`/help\` for help`;
+
+        // Use followUp to ensure message delivery in all contexts (including User App DMs)
+        await interaction.followUp({
+          content: fallbackMsg,
+          allowedMentions: { users: failedDMs }, // Ensure mention works
+        });
       } catch {
-        // Ignore DM fails
+        // Ignore fallback errors
       }
     }
   } catch (error: any) {

@@ -112,3 +112,12 @@ enum ParticipantStatus {
   PENDING
   TRANSFERRED
 }
+
+model GuildSettings {
+  guildId       String   @id
+  prefix        String   @default("%")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([prefix])
+}

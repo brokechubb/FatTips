@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, REST, Routes, Collection, Events } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, Collection, Events, Partials } from 'discord.js';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -6,6 +6,7 @@ import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import { AirdropService } from './services/airdrop';
 import { activityService } from './services/activity';
+import { handlePrefixCommand } from './handlers/prefixCommands';
 import { logger } from './utils/logger';
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
@@ -38,15 +39,22 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent, // Required for prefix commands
   ],
+  partials: [Partials.Channel], // Required for DM handling
 });
 
-// Track user activity
-client.on(Events.MessageCreate, (message) => {
+// Track user activity and handle prefix commands
+client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
-  if (!message.guild) return;
 
-  activityService.recordActivity(message.author.id, message.channelId);
+  // Handle prefix commands (works in guilds and DMs)
+  await handlePrefixCommand(message, client);
+
+  // Track activity for rain command (guilds only)
+  if (message.guild) {
+    activityService.recordActivity(message.author.id, message.channelId);
+  }
 });
 
 // Custom event for short airdrops

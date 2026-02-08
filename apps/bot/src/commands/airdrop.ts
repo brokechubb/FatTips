@@ -7,6 +7,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   InteractionContextType,
+  ApplicationIntegrationType,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logTransaction } from '../utils/logger';
@@ -28,7 +29,8 @@ export const data = new SlashCommandBuilder()
   .setName('airdrop')
   .setDescription('Create a crypto airdrop for the community')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
-  .setContexts([InteractionContextType.Guild]) // Airdrops are guild-only
+  .setIntegrationTypes([ApplicationIntegrationType.GuildInstall]) // Only visible when bot is guild-installed
+  .setContexts([InteractionContextType.Guild]) // Only usable in guild channels
   .addStringOption((option) =>
     option
       .setName('amount')
@@ -57,6 +59,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 }
 
 async function handleCreate(interaction: ChatInputCommandInteraction) {
+  // Check if bot is actually a member of this guild
+  // With user-installable apps, command can be used in guilds where bot isn't a member
+  const botIsMember = interaction.guild?.members.me !== null;
+
+  if (!botIsMember) {
+    await interaction.reply({
+      content:
+        '❌ **Airdrops require the bot to be added to this server.**\n\n' +
+        "Since you're using FatTips as a user-installed app, the bot cannot update the airdrop message when it ends.\n\n" +
+        '**Options:**\n' +
+        '• Ask a server admin to [add FatTips to the server](https://discord.com/oauth2/authorize?client_id=' +
+        interaction.client.user?.id +
+        '&permissions=2147483648&scope=bot%20applications.commands)\n' +
+        '• Use `/tip` or `/send` instead (these work anywhere!)',
+      ephemeral: true,
+    });
+    return;
+  }
+
   await interaction.deferReply();
 
   const amountStr = interaction.options.getString('amount', true);

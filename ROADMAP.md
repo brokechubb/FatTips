@@ -348,15 +348,15 @@ enum ParticipantStatus {
 - Settlement automatic at expiry
 - Zero-risk funds management (Refunds)
 
-### Phase 5: REST API (Week 6) 🚧 NEXT UP
+### Phase 5: REST API (Week 6) ✅ COMPLETED
 
 **Goal:** Public API for integrations
 
-- [ ] Set up Express server
-- [ ] Implement authentication middleware
-- [ ] Create user endpoints
-- [ ] Create transaction endpoints
-- [ ] Create airdrop endpoints
+- [x] Set up Express server
+- [x] Implement authentication middleware
+- [x] Create user endpoints
+- [x] Create transaction endpoints
+- [x] Create leaderboard endpoints
 - [ ] Add rate limiting
 - [ ] API documentation
 
@@ -366,7 +366,7 @@ enum ParticipantStatus {
 - All endpoints documented
 - Authentication working
 
-### Phase 6: Web Dashboard (Week 7)
+### Phase 6: Web Dashboard (Week 7) ❌ CANCELLED
 
 **Goal:** User-facing web interface
 
@@ -384,7 +384,7 @@ enum ParticipantStatus {
 - All pages functional
 - Discord OAuth working
 
-### Phase 7: Testing & Polish (Week 8)
+### Phase 7: Testing & Polish (Week 8) 🚧 NEXT UP
 
 **Goal:** Production readiness
 

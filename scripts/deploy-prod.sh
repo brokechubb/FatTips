@@ -18,6 +18,11 @@ docker compose build bot api
 docker tag fattips-bot fattips-bot:latest
 docker tag fattips-api fattips-api:latest
 
+# 1.5. Pre-cleanup on Remote
+echo "🧹 Cleaning up old images on remote to free space..."
+# Remove dangling images (previous deployments) and stopped containers
+ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST "docker system prune -f"
+
 # 2. Upload Images to Server
 echo "📤 Uploading compressed images to production..."
 # Save both images, compress with gzip, and pipe to remote docker load
@@ -26,13 +31,13 @@ docker save fattips-bot:latest fattips-api:latest | gzip | ssh -p $SERVER_PORT $
 # 3. Sync Configuration Files
 echo "📦 Syncing configuration files..."
 # We only need docker-compose.yml, scripts, and basic config. Source code is inside the image!
+# NOTE: .env is NOT synced - production has its own .env with secrets
 # Use --delete to remove files on remote that are not in the source list (cleans up old source code)
 rsync -avz -e "ssh -p $SERVER_PORT" --delete \
   --exclude 'logs' \
   docker-compose.yml \
   scripts \
   package.json \
-  .env \
   pnpm-lock.yaml \
   .env.example \
   $SERVER_USER@$SERVER_HOST:$REMOTE_DIR/
@@ -58,8 +63,8 @@ ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST << EOF
   sleep 10
   docker compose exec -T bot pnpm --filter fattips-database migrate:prod
   
-  echo "🧹 Cleaning up..."
-  docker image prune -f
+  echo "🧹 Post-deployment cleanup..."
+  docker system prune -f
   
   echo "✅ Deployment complete!"
   docker compose ps

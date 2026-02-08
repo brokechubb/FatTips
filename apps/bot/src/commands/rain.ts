@@ -4,6 +4,8 @@ import {
   PermissionFlagsBits,
   EmbedBuilder,
   InteractionContextType,
+  ApplicationIntegrationType,
+  TextChannel,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logTransaction } from '../utils/logger';
@@ -17,6 +19,9 @@ import {
 } from 'fattips-solana';
 import { activityService } from '../services/activity';
 
+// Discord error codes
+const DISCORD_CANNOT_DM = 50007;
+
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
@@ -26,7 +31,8 @@ export const data = new SlashCommandBuilder()
   .setName('rain')
   .setDescription('Randomly distribute tokens to active users in this channel')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
-  .setContexts([InteractionContextType.Guild])
+  .setIntegrationTypes([ApplicationIntegrationType.GuildInstall]) // Only visible when bot is guild-installed
+  .setContexts([InteractionContextType.Guild]) // Only usable in guild channels
   .addStringOption((option) =>
     option
       .setName('amount')
@@ -54,6 +60,23 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
+  // Check if bot is actually a member of this guild
+  // Rain requires bot membership to track channel activity
+  const botIsMember = interaction.guild?.members.me !== null;
+
+  if (!botIsMember) {
+    await interaction.reply({
+      content:
+        '❌ **Rain requires the bot to be added to this server.**\n\n' +
+        'The rain command tracks active users in channels, which only works when the bot is a server member.\n\n' +
+        '**Options:**\n' +
+        '• Ask a server admin to add FatTips to the server\n' +
+        '• Use `/tip @users` to tip specific people instead',
+      ephemeral: true,
+    });
+    return;
+  }
+
   const amountStr = interaction.options.getString('amount', true);
   const count = interaction.options.getInteger('count') || 5;
   const tokenPreference = interaction.options.getString('token') || 'SOL';
@@ -264,10 +287,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     // 7. Log & Respond
-    for (const recipient of recipientWallets) {
+    // For batch transactions, append an index to the signature to satisfy the unique constraint
+    // The real Solana signature can be extracted by splitting on ':'
+    for (let i = 0; i < recipientWallets.length; i++) {
+      const recipient = recipientWallets[i];
+      const batchSignature = recipientWallets.length > 1 ? `${signature}:${i}` : signature;
       await prisma.transaction.create({
         data: {
-          signature,
+          signature: batchSignature,
           fromId: sender.discordId,
           toId: recipient.discordId,
           amountUsd: usdValuePerUser,
@@ -284,7 +311,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         toId: recipient.discordId,
         amount: amountPerUser,
         token: tokenSymbol,
-        signature,
+        signature: batchSignature,
         status: 'SUCCESS',
       });
     }
@@ -307,7 +334,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     await interaction.editReply({ embeds: [embed] });
 
-    // DMs
+    // DMs (with fallback for users who have DMs disabled)
+    const failedDMs: string[] = [];
+
     for (const recipient of recipientWallets) {
       try {
         const user = await interaction.client.users.fetch(recipient.discordId);
@@ -338,6 +367,29 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         } else {
           await user.send(msg);
         }
+      } catch (error: any) {
+        const isNew = newWallets.find((w) => w.id === recipient.discordId);
+        if (isNew) {
+          failedDMs.push(recipient.discordId);
+        }
+      }
+    }
+
+    // Send public fallback for new users who couldn't receive DMs
+    if (failedDMs.length > 0) {
+      try {
+        const mentions = failedDMs.map((id) => `<@${id}>`).join(' ');
+        const clientId = interaction.client.user?.id;
+        const installLink = `https://discord.com/oauth2/authorize?client_id=${clientId}`;
+
+        const fallbackMsg =
+          `💰 ${mentions} — You just received a tip from ${interaction.user} and a new wallet was created for you!\n` +
+          `To access your wallet: **[Install FatTips](${installLink})** → then use \`/help\` for help`;
+
+        await interaction.followUp({
+          content: fallbackMsg,
+          allowedMentions: { users: failedDMs },
+        });
       } catch {}
     }
   } catch (error: any) {
