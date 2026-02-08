@@ -12,6 +12,8 @@ import {
   handleTipSelectMenu,
   handleTipModal,
   handleTipUserSelect,
+  handleSendModal,
+  handleSendTokenSelect,
 } from './handlers/tipInteractions';
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
@@ -140,6 +142,8 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isStringSelectMenu()) {
     const handled = await handleTipSelectMenu(interaction);
     if (handled) return;
+    const handledSend = await handleSendTokenSelect(interaction);
+    if (handledSend) return;
     return;
   }
 
@@ -154,6 +158,8 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isModalSubmit()) {
     const handled = await handleTipModal(interaction);
     if (handled) return;
+    const handledSend = await handleSendModal(interaction);
+    if (handledSend) return;
     return;
   }
 

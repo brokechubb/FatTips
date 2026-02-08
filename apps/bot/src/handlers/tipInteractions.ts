@@ -10,6 +10,7 @@ import {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
 } from 'discord.js';
+import { PublicKey } from '@solana/web3.js';
 import { prisma } from 'fattips-database';
 import { logTransaction } from '../utils/logger';
 import {
@@ -690,4 +691,323 @@ export async function handleTipUserSelect(
   });
 
   return true;
+}
+
+// Handle send/withdraw form modal
+export async function handleSendModal(interaction: ModalSubmitInteraction): Promise<boolean> {
+  // Handle full form modal (address + amount)
+  if (interaction.customId === 'send_form') {
+    const address = interaction.fields.getTextInputValue('address');
+    const amountStr = interaction.fields.getTextInputValue('amount');
+
+    // Show token selection
+    const select = new StringSelectMenuBuilder()
+      .setCustomId(`send_token_${address}_${amountStr}`)
+      .setPlaceholder('Select a token to send')
+      .addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel('SOL')
+          .setDescription('Solana native token')
+          .setValue('SOL')
+          .setEmoji('💎'),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('USDC')
+          .setDescription('USD Coin')
+          .setValue('USDC')
+          .setEmoji('💵'),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('USDT')
+          .setDescription('Tether USD')
+          .setValue('USDT')
+          .setEmoji('💸')
+      );
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+
+    await interaction.reply({
+      content: `💸 Sending to: \`${address}\`\nAmount: ${amountStr}\n\nSelect which token:`,
+      components: [row],
+      ephemeral: true,
+    });
+
+    return true;
+  }
+
+  // Handle amount-only modal
+  if (interaction.customId.startsWith('send_amount_form_')) {
+    const parts = interaction.customId.replace('send_amount_form_', '').split('_');
+    const address = parts[0];
+    // const tokenPreference = parts[1] || 'SOL'; // Reserved for future default token selection
+    const amountStr = interaction.fields.getTextInputValue('amount');
+
+    // Show token selection
+    const select = new StringSelectMenuBuilder()
+      .setCustomId(`send_token_${address}_${amountStr}`)
+      .setPlaceholder('Select a token to send')
+      .addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel('SOL')
+          .setDescription('Solana native token')
+          .setValue('SOL')
+          .setEmoji('💎'),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('USDC')
+          .setDescription('USD Coin')
+          .setValue('USDC')
+          .setEmoji('💵'),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('USDT')
+          .setDescription('Tether USD')
+          .setValue('USDT')
+          .setEmoji('💸')
+      );
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+
+    await interaction.reply({
+      content: `💸 Sending to: \`${address}\`\nAmount: ${amountStr}\n\nSelect which token:`,
+      components: [row],
+      ephemeral: true,
+    });
+
+    return true;
+  }
+
+  return false;
+}
+
+// Handle send token selection
+export async function handleSendTokenSelect(
+  interaction: StringSelectMenuInteraction
+): Promise<boolean> {
+  if (!interaction.customId.startsWith('send_token_')) return false;
+
+  const parts = interaction.customId.replace('send_token_', '').split('_');
+  const address = parts[0];
+  const amountStr = parts[1];
+  const selectedToken = interaction.values[0];
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    // Validate the Solana address
+    let recipientPubkey: PublicKey;
+    try {
+      recipientPubkey = new PublicKey(address);
+      // Verify it's a valid pubkey
+      if (!PublicKey.isOnCurve(recipientPubkey.toBytes())) {
+        throw new Error('Address is not on the ed25519 curve');
+      }
+    } catch {
+      await interaction.editReply({
+        content:
+          `${interaction.user} ❌ Invalid Solana address!\n\n` +
+          `Please provide a valid Solana wallet address.`,
+      });
+      return true;
+    }
+
+    // Get sender's wallet
+    const sender = await prisma.user.findUnique({
+      where: { discordId: interaction.user.id },
+    });
+
+    if (!sender) {
+      await interaction.editReply({
+        content: `${interaction.user} ❌ You don't have a wallet yet! Use \`/wallet create\` to create one.`,
+      });
+      return true;
+    }
+
+    // Prevent sending to self
+    if (recipientPubkey.toBase58() === sender.walletPubkey) {
+      await interaction.editReply({
+        content: `${interaction.user} ❌ You can't send funds to yourself!`,
+      });
+      return true;
+    }
+
+    // Parse amount
+    const parsedAmount = parseAmountInput(amountStr);
+
+    if (!parsedAmount.valid) {
+      await interaction.editReply({
+        content: `❌ ${parsedAmount.error}\n\nExamples:\n• $5\n• 0.5 SOL\n• all`,
+      });
+      return true;
+    }
+
+    // Determine token
+    const tokenMap: Record<string, { symbol: string; mint: string }> = {
+      SOL: { symbol: 'SOL', mint: TOKEN_MINTS.SOL },
+      USDC: { symbol: 'USDC', mint: TOKEN_MINTS.USDC },
+      USDT: { symbol: 'USDT', mint: TOKEN_MINTS.USDT },
+    };
+
+    const tokenSymbol = parsedAmount.token ? parsedAmount.token.toUpperCase() : selectedToken;
+    const selectedTokenData = tokenMap[tokenSymbol] || tokenMap['SOL'];
+    const tokenMint = selectedTokenData.mint;
+
+    // Calculate amount
+    let amountToken: number;
+    let usdValue: number;
+
+    if (parsedAmount.type === 'max') {
+      const balances = await balanceService.getBalances(sender.walletPubkey);
+      const feeBuffer = 0.00001;
+      const rentReserve = 0.001;
+
+      if (tokenSymbol === 'SOL') {
+        amountToken = Math.max(0, balances.sol - feeBuffer - rentReserve);
+      } else if (tokenSymbol === 'USDC') {
+        amountToken = balances.usdc;
+      } else {
+        amountToken = balances.usdt;
+      }
+
+      if (amountToken <= 0) {
+        await interaction.editReply({
+          content: `${interaction.user} ❌ Insufficient balance!`,
+        });
+        return true;
+      }
+
+      const price = await priceService.getTokenPrice(tokenMint);
+      usdValue = price ? amountToken * price.price : 0;
+    } else if (parsedAmount.type === 'usd') {
+      const conversion = await priceService.convertUsdToToken(
+        parsedAmount.value,
+        tokenMint,
+        tokenSymbol
+      );
+      if (!conversion) {
+        await interaction.editReply({ content: '❌ Price service unavailable.' });
+        return true;
+      }
+      amountToken = conversion.amountToken;
+      usdValue = parsedAmount.value;
+    } else {
+      amountToken = parsedAmount.value;
+      const price = await priceService.getTokenPrice(tokenMint);
+      usdValue = price ? amountToken * price.price : 0;
+    }
+
+    if (amountToken <= 0) {
+      await interaction.editReply({ content: '❌ Amount must be greater than 0!' });
+      return true;
+    }
+
+    // Check balance
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    const feeBuffer = 0.00002;
+    const rentReserve = 0.001;
+    const epsilon = 0.000001;
+
+    if (tokenSymbol === 'SOL') {
+      const requiredSol = amountToken + feeBuffer + rentReserve;
+      if (balances.sol + epsilon < requiredSol) {
+        await interaction.editReply({
+          content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL\n**Available:** ${balances.sol.toFixed(5)} SOL`,
+        });
+        return true;
+      }
+    } else {
+      const currentBal = tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
+      if (currentBal < amountToken) {
+        await interaction.editReply({
+          content: `${interaction.user} ❌ Insufficient ${tokenSymbol} balance!`,
+        });
+        return true;
+      }
+      if (balances.sol < feeBuffer) {
+        await interaction.editReply({ content: '❌ Insufficient SOL for gas fees!' });
+        return true;
+      }
+    }
+
+    // Check for rent exemption on new accounts
+    if (tokenSymbol === 'SOL' && amountToken < 0.001) {
+      try {
+        const recipientBalances = await balanceService.getBalances(recipientPubkey.toBase58());
+        if (recipientBalances.sol === 0) {
+          const minRent = 0.00089088;
+          if (amountToken < minRent) {
+            await interaction.editReply({
+              content:
+                `${interaction.user} ❌ Transaction rejected!\n\n` +
+                `The recipient wallet is new or empty.\n` +
+                `Solana requires a minimum of **${minRent} SOL** to activate a new wallet.`,
+            });
+            return true;
+          }
+        }
+      } catch {
+        // Ignore error checking recipient balance
+      }
+    }
+
+    // Execute transfer
+    const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
+
+    let signature: string;
+    try {
+      signature = await transactionService.transfer(
+        senderKeypair,
+        recipientPubkey.toBase58(),
+        amountToken,
+        tokenMint
+      );
+    } catch (error) {
+      console.error('Transaction failed:', error);
+      await interaction.editReply({
+        content: `${interaction.user} ❌ Transaction failed. Please check your balance and try again.`,
+      });
+      return true;
+    }
+
+    // Log to database
+    await prisma.transaction.create({
+      data: {
+        signature,
+        fromId: sender.discordId,
+        toId: null as unknown as string, // External transfer
+        toAddress: recipientPubkey.toBase58(),
+        fromAddress: sender.walletPubkey,
+        amountUsd: usdValue,
+        amountToken,
+        tokenMint,
+        usdRate: usdValue > 0 ? usdValue / amountToken : 0,
+        txType: 'WITHDRAWAL',
+        status: 'CONFIRMED',
+      },
+    });
+
+    logTransaction('SEND', {
+      fromId: sender.discordId,
+      toId: recipientPubkey.toBase58(),
+      amount: amountToken,
+      token: tokenSymbol,
+      signature,
+      status: 'SUCCESS',
+    });
+
+    // Send success message
+    const embed = new EmbedBuilder()
+      .setTitle('💸 Transfer Sent!')
+      .setDescription(
+        `${interaction.user} sent **${formatTokenAmount(amountToken)} ${tokenSymbol}** (~$${usdValue.toFixed(2)} USD) to\n` +
+          `\`\`\`\n${recipientPubkey.toBase58()}\n\`\`\`\n\n` +
+          `[View on Solscan](https://solscan.io/tx/${signature})`
+      )
+      .setColor(0x00ff00)
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
+
+    return true;
+  } catch (error) {
+    console.error('Error in send token select:', error);
+    await interaction.editReply({ content: '❌ An unexpected error occurred.' });
+    return true;
+  }
 }

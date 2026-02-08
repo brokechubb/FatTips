@@ -4,6 +4,10 @@ import {
   PermissionFlagsBits,
   EmbedBuilder,
   InteractionContextType,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logTransaction } from '../utils/logger';
@@ -34,14 +38,14 @@ export const data = new SlashCommandBuilder()
   .addStringOption((option) =>
     option
       .setName('address')
-      .setDescription('Solana wallet address (e.g., 9HMqaDgnbvy4VYi9VpNVb6u3xv4vqD5RG12cyxcsVRFY)')
-      .setRequired(true)
+      .setDescription('Solana wallet address - leave empty for form')
+      .setRequired(false)
   )
   .addStringOption((option) =>
     option
       .setName('amount')
       .setDescription('Amount to send (e.g., $5, 0.5 SOL, all, max)')
-      .setRequired(true)
+      .setRequired(false)
   )
   .addStringOption((option) =>
     option
@@ -66,10 +70,13 @@ export const withdrawData = new SlashCommandBuilder()
     InteractionContextType.PrivateChannel,
   ])
   .addStringOption((option) =>
-    option.setName('address').setDescription('Solana wallet address').setRequired(true)
+    option
+      .setName('address')
+      .setDescription('Solana wallet address - leave empty for form')
+      .setRequired(false)
   )
   .addStringOption((option) =>
-    option.setName('amount').setDescription('Amount to withdraw').setRequired(true)
+    option.setName('amount').setDescription('Amount to withdraw').setRequired(false)
   )
   .addStringOption((option) =>
     option
@@ -84,9 +91,21 @@ export const withdrawData = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  const address = interaction.options.getString('address', true);
-  const amountStr = interaction.options.getString('amount', true);
+  const address = interaction.options.getString('address');
+  const amountStr = interaction.options.getString('amount');
   const tokenPreference = interaction.options.getString('token') || 'SOL';
+
+  // If no address provided, show the form modal
+  if (!address) {
+    await showSendForm(interaction);
+    return;
+  }
+
+  // If address provided but no amount, show amount modal
+  if (address && !amountStr) {
+    await showSendAmountModal(interaction, address, tokenPreference);
+    return;
+  }
 
   await interaction.deferReply({ ephemeral: true });
 
@@ -108,8 +127,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    // Parse the amount
-    const parsedAmount = parseAmountInput(amountStr);
+    // Parse the amount (we know amountStr is defined at this point)
+    const parsedAmount = parseAmountInput(amountStr!);
 
     if (!parsedAmount.valid) {
       await interaction.editReply({
@@ -459,4 +478,56 @@ function formatTokenAmount(amount: number): string {
   if (amount < 1) return amount.toFixed(6);
   if (amount < 100) return amount.toFixed(4);
   return amount.toFixed(2);
+}
+
+// Helper function to show interactive send form
+async function showSendForm(interaction: ChatInputCommandInteraction) {
+  const modal = new ModalBuilder()
+    .setCustomId('send_form')
+    .setTitle(`${interaction.commandName === 'withdraw' ? 'Withdraw' : 'Send'} Funds 💸`);
+
+  const addressInput = new TextInputBuilder()
+    .setCustomId('address')
+    .setLabel('Recipient Address')
+    .setPlaceholder('Solana wallet address (e.g., 9HMqaDgnbvy4VYi9VpNVb6u3xv4vqD5RG12cyxcsVRFY)')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(50);
+
+  const amountInput = new TextInputBuilder()
+    .setCustomId('amount')
+    .setLabel('Amount')
+    .setPlaceholder('e.g., $5, 0.5 SOL, all, max')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  const firstRow = new ActionRowBuilder<TextInputBuilder>().addComponents(addressInput);
+  const secondRow = new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput);
+
+  modal.addComponents(firstRow, secondRow);
+
+  await interaction.showModal(modal);
+}
+
+// Helper function to show amount modal when address is provided but amount is missing
+async function showSendAmountModal(
+  interaction: ChatInputCommandInteraction,
+  address: string,
+  tokenPreference: string
+) {
+  const modal = new ModalBuilder()
+    .setCustomId(`send_amount_form_${address}_${tokenPreference}`)
+    .setTitle('Enter Amount 💸');
+
+  const amountInput = new TextInputBuilder()
+    .setCustomId('amount')
+    .setLabel('Amount')
+    .setPlaceholder('e.g., $5, 0.5 SOL, all, max')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  const row = new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput);
+  modal.addComponents(row);
+
+  await interaction.showModal(modal);
 }
