@@ -88,7 +88,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const amountStr = interaction.options.getString('amount', true);
   const tokenPreference = interaction.options.getString('token') || 'SOL';
 
-  await interaction.deferReply();
+  await interaction.deferReply({ ephemeral: true });
 
   try {
     // Validate the Solana address

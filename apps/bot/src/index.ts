@@ -8,6 +8,7 @@ import { AirdropService } from './services/airdrop';
 import { activityService } from './services/activity';
 import { handlePrefixCommand } from './handlers/prefixCommands';
 import { logger } from './utils/logger';
+import { handleTipSelectMenu, handleTipModal } from './handlers/tipInteractions';
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
@@ -127,6 +128,40 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.customId.startsWith('claim_airdrop_')) {
       const airdropId = interaction.customId.replace('claim_airdrop_', '');
       await airdropService.handleClaim(interaction, airdropId);
+    }
+    return;
+  }
+
+  // Handle Select Menus
+  if (interaction.isStringSelectMenu()) {
+    const handled = await handleTipSelectMenu(interaction);
+    if (handled) return;
+    return;
+  }
+
+  // Handle Modals
+  if (interaction.isModalSubmit()) {
+    const handled = await handleTipModal(interaction);
+    if (handled) return;
+    return;
+  }
+
+  // Handle Context Menu Commands
+  if (interaction.isUserContextMenuCommand()) {
+    const command = client.commands.get(interaction.commandName);
+    if (command && 'execute' in command) {
+      try {
+        await command.execute(interaction);
+      } catch (error) {
+        logger.error(`Error executing context menu ${interaction.commandName}:`, error);
+        Sentry.captureException(error, {
+          tags: {
+            command: interaction.commandName,
+            userId: interaction.user.id,
+            guildId: interaction.guild?.id,
+          },
+        });
+      }
     }
     return;
   }

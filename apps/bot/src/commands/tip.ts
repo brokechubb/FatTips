@@ -4,7 +4,10 @@ import {
   PermissionFlagsBits,
   EmbedBuilder,
   InteractionContextType,
-  TextChannel,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logTransaction } from '../utils/logger';
@@ -16,9 +19,6 @@ import {
   WalletService,
   BalanceService,
 } from 'fattips-solana';
-
-// Discord error codes
-const DISCORD_CANNOT_DM = 50007;
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
@@ -37,14 +37,14 @@ export const data = new SlashCommandBuilder()
   .addStringOption((option) =>
     option
       .setName('recipients')
-      .setDescription('User(s) to tip (e.g. @User1 @User2)')
-      .setRequired(true)
+      .setDescription('User(s) to tip (e.g. @User1 @User2) - leave empty for interactive form')
+      .setRequired(false)
   )
   .addStringOption((option) =>
     option
       .setName('amount')
       .setDescription('Amount to tip (e.g., $5, 0.5 SOL, 10 USDC)')
-      .setRequired(true)
+      .setRequired(false)
   )
   .addStringOption((option) =>
     option
@@ -69,10 +69,35 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  const recipientsStr = interaction.options.getString('recipients', true);
-  const amountStr = interaction.options.getString('amount', true);
+  const recipientsStr = interaction.options.getString('recipients');
+  const amountStr = interaction.options.getString('amount');
   const tokenPreference = interaction.options.getString('token') || 'SOL';
   const mode = interaction.options.getString('mode') || 'split';
+
+  // If no recipients provided, show interactive form
+  if (!recipientsStr) {
+    await showTipForm(interaction);
+    return;
+  }
+
+  // If recipients provided but no amount, show amount modal
+  if (recipientsStr && !amountStr) {
+    const mentionedIds = [...new Set([...recipientsStr.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]))];
+    const validRecipientIds = mentionedIds.filter(
+      (id) => id !== interaction.user.id && id !== interaction.client.user?.id
+    );
+
+    if (validRecipientIds.length === 0) {
+      await interaction.reply({
+        content: '❌ No valid recipients found! (You cannot tip yourself or the bot)',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await showAmountModal(interaction, validRecipientIds, tokenPreference, mode);
+    return;
+  }
 
   // Parse mentions from recipients string
   const mentionedIds = [...new Set([...recipientsStr.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]))];
@@ -101,8 +126,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
 
   try {
-    // Parse the amount
-    const parsedAmount = parseAmountInput(amountStr);
+    // Parse the amount (we know amountStr is defined at this point)
+    const parsedAmount = parseAmountInput(amountStr!);
 
     if (!parsedAmount.valid) {
       await interaction.editReply({
@@ -164,8 +189,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     // --- AMOUNT CALCULATION ---
-    let tokenSymbol: string;
-    let tokenMint: string;
     let totalAmountToken: number; // Total to be deducted
     let amountPerUser: number; // Amount each user receives
     let usdValuePerUser: number;
@@ -182,8 +205,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       preferredToken = parsedAmount.token; // Use hint from "$5 sol"
     }
     const selectedToken = tokenMap[preferredToken] || tokenMap['SOL'];
-    tokenSymbol = selectedToken.symbol;
-    tokenMint = selectedToken.mint;
+    const tokenSymbol = selectedToken.symbol;
+    const tokenMint = selectedToken.mint;
 
     // Calculate Amounts based on Input Type
     if (parsedAmount.type === 'max') {
@@ -290,10 +313,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const feeBuffer = 0.00002; // Slightly higher buffer for batch tx
     const rentReserve = 0.001;
+    const epsilon = 0.000001; // Tolerance for floating point precision issues
 
     if (tokenSymbol === 'SOL') {
       const requiredSol = totalAmountToken + feeBuffer + rentReserve;
-      if (balances.sol < requiredSol) {
+      // Use epsilon to handle floating point precision issues, especially for "max" amounts
+      if (balances.sol + epsilon < requiredSol) {
         await interaction.editReply({
           content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL\n**Available:** ${balances.sol.toFixed(5)} SOL`,
         });
@@ -325,12 +350,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     let signature: string;
     try {
-      // @ts-ignore - batchTransfer exists in updated package but types might lag in editor
       signature = await transactionService.batchTransfer(senderKeypair, transfers, tokenMint);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Batch Transaction failed:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       await interaction.editReply({
-        content: `❌ Transaction failed: ${error.message || 'Unknown error'}`,
+        content: `❌ Transaction failed: ${errorMessage}`,
       });
       return;
     }
@@ -408,7 +433,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           setTimeout(async () => {
             try {
               await sentMsg.edit('🔒 **Key removed for security.**');
-            } catch {}
+            } catch {
+              // Message might have been deleted, ignore
+            }
           }, 900000);
 
           // Send Guide Embed
@@ -425,7 +452,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         } else {
           await user.send(msg);
         }
-      } catch (error: any) {
+      } catch {
         // If this was a new wallet and DM failed, track for public notification
         const isNew = newWallets.find((w) => w.id === recipient.discordId);
         if (isNew) {
@@ -454,11 +481,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         // Ignore fallback errors
       }
     }
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error in tip command:', error);
     try {
       await interaction.editReply({ content: '❌ An unexpected error occurred.' });
-    } catch {}
+    } catch {
+      // Ignore edit errors
+    }
   }
 }
 
@@ -501,4 +530,55 @@ function formatTokenAmount(amount: number): string {
   if (amount < 1) return amount.toFixed(6);
   if (amount < 100) return amount.toFixed(4);
   return amount.toFixed(2);
+}
+
+// Helper function to show interactive tip form with recipient and amount inputs
+async function showTipForm(interaction: ChatInputCommandInteraction) {
+  const modal = new ModalBuilder().setCustomId('tip_form_recipients').setTitle('Send a Tip 💸');
+
+  const recipientsInput = new TextInputBuilder()
+    .setCustomId('recipients')
+    .setLabel('Recipients')
+    .setPlaceholder('@username1 @username2 (up to 10 users)')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(200);
+
+  const amountInput = new TextInputBuilder()
+    .setCustomId('amount')
+    .setLabel('Amount')
+    .setPlaceholder('e.g., $5, 0.5 SOL, 10 USDC, or max')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  const firstRow = new ActionRowBuilder<TextInputBuilder>().addComponents(recipientsInput);
+  const secondRow = new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput);
+
+  modal.addComponents(firstRow, secondRow);
+
+  await interaction.showModal(modal);
+}
+
+// Helper function to show amount modal when recipients are provided but amount is missing
+async function showAmountModal(
+  interaction: ChatInputCommandInteraction,
+  recipientIds: string[],
+  tokenPreference: string,
+  mode: string
+) {
+  const modal = new ModalBuilder()
+    .setCustomId(`tip_amount_form_${recipientIds.join(',')}_${tokenPreference}_${mode}`)
+    .setTitle('Enter Tip Amount 💸');
+
+  const amountInput = new TextInputBuilder()
+    .setCustomId('amount')
+    .setLabel('Amount')
+    .setPlaceholder('e.g., $5, 0.5 SOL, 10 USDC, or max')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  const row = new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput);
+  modal.addComponents(row);
+
+  await interaction.showModal(modal);
 }
