@@ -8,6 +8,8 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
+  MessageReaction,
+  User,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logger } from '../utils/logger';
@@ -20,7 +22,7 @@ import {
 } from 'fattips-solana';
 import { activityService } from '../services/activity';
 
-const DEFAULT_PREFIX = '%';
+const DEFAULT_PREFIX = 'f';
 const DISCORD_CANNOT_DM = 50007;
 
 // Cache for guild prefixes (refresh every 5 minutes)
@@ -168,24 +170,56 @@ export async function handlePrefixCommand(message: Message, client: Client) {
 async function handleHelp(message: Message, prefix: string) {
   const p = prefix; // shorthand
   const embed = new EmbedBuilder()
-    .setTitle('FatTips Commands')
-    .setDescription(`Tip Solana to anyone on Discord!\nPrefix: \`${prefix}\``)
+    .setTitle('💰 FatTips Commands')
+    .setDescription(
+      `Send crypto tips instantly on Discord!\n` +
+        `**Prefix:** \`${prefix}\` (or no prefix in DMs)\n\n` +
+        `💡 **Pro Tips:**\n` +
+        `• Reply to any message with \`${p}tip $5\` to tip the author\n` +
+        `• Amount can go anywhere: \`${p}tip $5 @user\` or \`${p}tip @user $5\``
+    )
     .setColor(0x00ff00)
     .addFields(
-      { name: `${p}help`, value: 'Show this help message', inline: true },
-      { name: `${p}balance`, value: 'Check your wallet balance', inline: true },
-      { name: `${p}wallet create`, value: 'Create a new wallet', inline: true },
-      { name: `${p}wallet export-key`, value: 'Export your private key (DM only)', inline: true },
-      { name: `${p}tip @user $5`, value: 'Tip a user $5 worth of SOL', inline: true },
-      { name: `${p}tip @user 0.1 SOL`, value: 'Tip a user 0.1 SOL', inline: true },
-      { name: `${p}rain $10 5`, value: 'Rain $10 on 5 active users', inline: true },
-      { name: `${p}airdrop $20 10m`, value: 'Create a 10 minute airdrop', inline: true },
-      { name: `${p}send <address> $10`, value: 'Send to external wallet', inline: true },
-      { name: `${p}history`, value: 'View your transaction history', inline: true },
-      { name: `${p}withdraw <address> max`, value: 'Withdraw all funds', inline: true },
-      { name: `${p}setprefix <new>`, value: 'Change prefix (Admin only)', inline: true }
+      {
+        name: '📚 Basics',
+        value:
+          `${p}help — Show commands\n` +
+          `${p}balance — Check wallet\n` +
+          `${p}history — Transactions`,
+        inline: true,
+      },
+      {
+        name: '💸 Tipping',
+        value:
+          `${p}tip @user $5 — Tip with USD\n` +
+          `${p}tip @user 0.1 SOL — Tip with crypto\n` +
+          `${p}tip $5 (reply) — Tip message author`,
+        inline: true,
+      },
+      {
+        name: '🎁 Community',
+        value: `${p}rain $10 5 — Rain on 5 users\n` + `${p}airdrop $20 10m — 10 min airdrop`,
+        inline: true,
+      },
+      {
+        name: '💳 Transfers',
+        value:
+          `${p}send <address> $10 — Send to wallet\n` + `${p}withdraw <address> max — Withdraw all`,
+        inline: true,
+      },
+      {
+        name: '🔐 Wallet',
+        value:
+          `${p}wallet create — Create wallet\n` +
+          `${p}wallet export-key — Show key (DMs only)\n` +
+          `${p}setprefix <new> — Change prefix`,
+        inline: true,
+      },
+      { name: '💎 Supported', value: 'SOL, USDC, USDT', inline: true }
     )
-    .setFooter({ text: 'Pro tip: You can also use /slash commands!' });
+    .setFooter({
+      text: '⚡ Also works with /slash commands! | Large tips (>$20) require confirmation',
+    });
 
   await message.reply({ embeds: [embed] });
 }
@@ -314,21 +348,45 @@ async function handleWallet(message: Message, args: string[], prefix: string) {
 
 // ============ TIP ============
 async function handleTip(message: Message, args: string[], client: Client, prefix: string) {
-  // Parse: %tip @user $5 or %tip @user 0.1 SOL
   const mentions = message.mentions.users.filter((u) => !u.bot && u.id !== message.author.id);
+  let amountArg: string | null = null;
 
-  if (mentions.size === 0) {
-    await message.reply(`Usage: \`${prefix}tip @user $5\` or \`${prefix}tip @user 0.1 SOL\``);
+  // Check for reply-to-tip feature
+  if (mentions.size === 0 && message.reference?.messageId) {
+    try {
+      const repliedMsg = await message.channel.messages.fetch(message.reference.messageId);
+      if (
+        repliedMsg.author &&
+        !repliedMsg.author.bot &&
+        repliedMsg.author.id !== message.author.id
+      ) {
+        message.mentions.users.set(repliedMsg.author.id, repliedMsg.author);
+        amountArg = args.join(' ');
+      }
+    } catch {
+      // Failed to fetch replied message
+    }
+  }
+
+  // Support flexible parsing - amount can be anywhere in args
+  if (mentions.size === 0 && message.mentions.users.size === 0) {
+    await message.reply(
+      `Usage: \`${prefix}tip @user $5\` or reply to a message with \`${prefix}tip $5\``
+    );
     return;
   }
 
-  // Find amount in args (skip mentions)
-  const amountArg = args.filter((a) => !a.startsWith('<@')).join(' ');
+  const targetUsers = mentions.size > 0 ? mentions : message.mentions.users;
+
+  // Find amount in args (skip mentions, amount can be anywhere)
+  if (!amountArg) {
+    amountArg = args.filter((a: string) => !a.startsWith('<@')).join(' ');
+  }
   const parsedAmount = parseAmountInput(amountArg);
 
   if (!parsedAmount.valid) {
     await message.reply(
-      `❌ ${parsedAmount.error}\nUsage: \`${prefix}tip @user $5\` or \`${prefix}tip @user 0.1 SOL\``
+      `❌ ${parsedAmount.error}\nUsage: \`${prefix}tip @user $5\` or \`${prefix}tip $5 @user\``
     );
     return;
   }
@@ -347,7 +405,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
   const recipientWallets = [];
   const newWallets: { id: string; key: string }[] = [];
 
-  for (const [recipientId, recipientUser] of mentions) {
+  for (const [recipientId, recipientUser] of targetUsers) {
     let recipient = await prisma.user.findUnique({
       where: { discordId: recipientId },
     });
@@ -408,6 +466,46 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
 
   const amountPerUser = amountToken / recipientWallets.length;
   const usdPerUser = usdValue / recipientWallets.length;
+
+  // Check for large amount confirmation (> $20)
+  if (usdValue > 20) {
+    const confirmMsg = await message.reply({
+      content:
+        `⚠️ **Large Transaction Warning**\n\n` +
+        `You're about to send **$${usdValue.toFixed(2)}** (${formatTokenAmount(amountToken)} ${tokenSymbol}) to ${recipientWallets.length} user(s).\n\n` +
+        `React with ✅ to confirm or ❌ to cancel.`,
+    });
+
+    await confirmMsg.react('✅');
+    await confirmMsg.react('❌');
+
+    const filter = (reaction: MessageReaction, user: User) => {
+      return ['✅', '❌'].includes(reaction.emoji.name ?? '') && user.id === message.author.id;
+    };
+
+    try {
+      const collected = await confirmMsg.awaitReactions({
+        filter,
+        max: 1,
+        time: 30000,
+        errors: ['time'],
+      });
+      const reaction = collected.first();
+
+      if (reaction?.emoji.name === '❌') {
+        await confirmMsg.edit({ content: '❌ Transaction cancelled.', embeds: [] });
+        return;
+      }
+
+      await confirmMsg.delete().catch(() => {});
+    } catch {
+      await confirmMsg.edit({
+        content: '⏰ Confirmation timed out. Transaction cancelled.',
+        embeds: [],
+      });
+      return;
+    }
+  }
 
   if (amountPerUser <= 0) {
     await message.reply('❌ Amount too small!');
