@@ -1166,7 +1166,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   }
 
   const amountArg = args[0];
-  const durationArg = args.find((a) => /^\d+[mhdw]$/i.test(a)) || args[1];
+  const durationArg = args.find((a) => /^\d+[smhdw]$/i.test(a)) || args[1];
   const maxWinnersArg = args.find((a) => /^\d+$/.test(a) && a !== amountArg.replace(/\D/g, ''));
   const tokenArg = args.find((a) => /^(SOL|USDC|USDT)$/i.test(a));
 
