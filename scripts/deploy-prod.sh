@@ -2,6 +2,8 @@
 set -e
 
 # Configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SERVER_USER="chubb"
 SERVER_HOST="codestats.gg"
 SERVER_PORT="1337"
@@ -10,6 +12,14 @@ REMOTE_DIR="/opt/FatTips"
 echo "🚀 Deploying FatTips to production (Local Build Strategy)..."
 
 # 0. Create database backup before deployment (SAFETY CRITICAL)
+echo "💾 Preparing backup script on remote..."
+# Ensure remote scripts dir exists
+ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST "mkdir -p $REMOTE_DIR/scripts"
+
+# Upload latest backup script
+scp -P $SERVER_PORT "$SCRIPT_DIR/backup-database.sh" $SERVER_USER@$SERVER_HOST:$REMOTE_DIR/scripts/
+ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST "chmod +x $REMOTE_DIR/scripts/backup-database.sh"
+
 echo "💾 Creating database backup before deployment..."
 ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST "cd $REMOTE_DIR && ./scripts/backup-database.sh --no-encrypt"
 
@@ -22,8 +32,7 @@ echo "✅ Backup created successfully. Proceeding with deployment..."
 
 # 0.5. Pull backup to local machine (offsite copy)
 echo "📥 Pulling backup to local machine for offsite storage..."
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOCAL_BACKUP_DIR="$(dirname "$SCRIPT_DIR")/backups/offsite"
+LOCAL_BACKUP_DIR="$PROJECT_ROOT/backups/offsite"
 mkdir -p "$LOCAL_BACKUP_DIR"
 
 # Get the latest backup filename from remote
@@ -48,7 +57,6 @@ else
 fi
 
 # Ensure we're in the project root for subsequent commands
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 echo "📂 Working directory for deployment: $(pwd)"
 
