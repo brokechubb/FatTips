@@ -1251,7 +1251,12 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
 
   try {
-    const solToSend = tokenSymbol === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
+    // For max, amountToken already has gas buffer subtracted, so we don't add it again
+    let solToSend = tokenSymbol === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
+    if (parsedAmount.type === 'max' && tokenSymbol === 'SOL') {
+      solToSend = amountToken;
+    }
+
     await transactionService.transfer(
       senderKeypair,
       ephemeralWallet.publicKey,
