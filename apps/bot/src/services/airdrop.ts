@@ -112,19 +112,23 @@ export class AirdropService {
         return;
       }
 
-      // 2. Check if user already claimed
-      const existing = await prisma.airdropParticipant.findUnique({
-        where: {
-          airdropId_userId: {
+      // 2. Check if user already claimed (with upsert to handle race conditions)
+      try {
+        await prisma.airdropParticipant.create({
+          data: {
             airdropId,
             userId: interaction.user.id,
+            status: 'PENDING',
+            shareAmount: 0, // Calculated at settlement
           },
-        },
-      });
-
-      if (existing) {
-        await interaction.editReply({ content: '❌ You already joined this airdrop!' });
-        return;
+        });
+      } catch (error: any) {
+        if (error.code === 'P2002') {
+          // Unique constraint violation - user already claimed
+          await interaction.editReply({ content: '❌ You already joined this airdrop!' });
+          return;
+        }
+        throw error;
       }
 
       // 3. Check if user has a wallet, create if not
@@ -329,7 +333,7 @@ export class AirdropService {
       );
       const tokenMint = airdrop.tokenMint;
       const feePerTx = 0.000005; // Standard Solana fee
-      const rentBuffer = 0.001; // Safety margin for rent exemption
+      const rentBuffer = 0.00089088; // Safety margin for rent exemption (matches actual minimum)
 
       let tokenSymbol = 'SOL';
       if (tokenMint === TOKEN_MINTS.USDC) tokenSymbol = 'USDC';
@@ -341,7 +345,7 @@ export class AirdropService {
           const balances = await this.balanceService.getBalances(
             walletKeypair.publicKey.toBase58()
           );
-          const feeBuffer = 0.001; // Increase buffer to ensure rent exemption
+          const feeBuffer = 0.00089088; // Ensure rent exemption
 
           // Refund Logic
           if (tokenMint === TOKEN_MINTS.SOL) {
