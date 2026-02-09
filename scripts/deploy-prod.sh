@@ -9,6 +9,17 @@ REMOTE_DIR="/opt/FatTips"
 
 echo "🚀 Deploying FatTips to production (Local Build Strategy)..."
 
+# 0. Create database backup before deployment (SAFETY CRITICAL)
+echo "💾 Creating database backup before deployment..."
+ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST "cd $REMOTE_DIR && ./scripts/backup-database.sh --no-encrypt"
+
+if [ $? -ne 0 ]; then
+  echo "❌ Backup failed! Aborting deployment for safety."
+  exit 1
+fi
+
+echo "✅ Backup created successfully. Proceeding with deployment..."
+
 # 1. Build Docker images locally
 echo "🏗️  Building Docker images locally..."
 # Explicitly build the images defined in docker-compose.yml
@@ -48,7 +59,7 @@ ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST << EOF
   cd $REMOTE_DIR
   
   # Ensure scripts are executable
-  chmod +x scripts/deploy-prod.sh
+  chmod +x scripts/*.sh
   
   # CLEANUP: Remove source code directories (now unused as we use pre-built images)
   echo "🧹 Removing unused source code..."
