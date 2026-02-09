@@ -4,6 +4,19 @@ import { prisma } from 'fattips-database';
 import { logger, logTransaction } from '../utils/logger';
 import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
 
+// Solana constants
+const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
+const FEE_BUFFERS = {
+  TINY: 0.00001, // SOL - for single transactions
+  STANDARD: 0.00002, // SOL - for most operations
+  BATCH: 0.000005, // SOL - per transaction in batch
+  AIRDROP_GAS: 0.003, // SOL - for ephemeral wallets
+};
+const RENT_RESERVES = {
+  STANDARD: MIN_RENT_EXEMPTION,
+  SAFETY: 0.001, // SOL - old value for compatibility
+};
+
 // Discord error codes
 const DISCORD_ERRORS = {
   CANNOT_DM_USER: 50007,
