@@ -125,26 +125,7 @@ export class AirdropService {
         return;
       }
 
-      // 2. Check if user already claimed (with upsert to handle race conditions)
-      try {
-        await prisma.airdropParticipant.create({
-          data: {
-            airdropId,
-            userId: interaction.user.id,
-            status: 'PENDING',
-            shareAmount: 0, // Calculated at settlement
-          },
-        });
-      } catch (error: any) {
-        if (error.code === 'P2002') {
-          // Unique constraint violation - user already claimed
-          await interaction.editReply({ content: '❌ You already joined this airdrop!' });
-          return;
-        }
-        throw error;
-      }
-
-      // 3. Check if user has a wallet, create if not
+      // 2. Check/Create user FIRST (before participant record)
       let user = await prisma.user.findUnique({
         where: { discordId: interaction.user.id },
       });
@@ -193,36 +174,38 @@ export class AirdropService {
               data: { seedDelivered: true },
             });
           }
-          // Note: We don't send private keys to public channels for security
-          // If DM fails, user can use /wallet export-key later
         } catch (walletError: any) {
-          // Only fail if wallet creation itself failed, not just DM
-          if (!user) {
-            logger.error('Failed to create wallet for airdrop claim:', {
-              userId: interaction.user.id,
-              error: walletError.message,
-            });
-            await interaction.editReply({
-              content: '❌ Failed to create wallet. Please try again.',
-            });
-            return;
-          }
+          logger.error('Failed to create wallet for airdrop claim:', {
+            userId: interaction.user.id,
+            error: walletError.message,
+          });
+          await interaction.editReply({
+            content: '❌ Failed to create wallet. Please try again.',
+          });
+          return;
         }
       }
 
-      // 4. Register Participant
-      // We don't verify wallet existence here to reduce friction.
-      // We'll create it during settlement if needed.
-      await prisma.airdropParticipant.create({
-        data: {
-          airdropId,
-          userId: interaction.user.id,
-          status: 'PENDING',
-          shareAmount: 0, // Calculated at settlement
-        },
-      });
+      // 3. Now create participant record (user exists at this point)
+      try {
+        await prisma.airdropParticipant.create({
+          data: {
+            airdropId,
+            userId: interaction.user.id,
+            status: 'PENDING',
+            shareAmount: 0, // Calculated at settlement
+          },
+        });
+      } catch (error: any) {
+        if (error.code === 'P2002') {
+          // Unique constraint violation - user already claimed
+          await interaction.editReply({ content: '❌ You already joined this airdrop!' });
+          return;
+        }
+        throw error;
+      }
 
-      // Update participant count and get updated airdrop
+      // 4. Update participant count and get updated airdrop
       const updatedAirdrop = await prisma.airdrop.update({
         where: { id: airdropId },
         data: { participantCount: { increment: 1 } },
