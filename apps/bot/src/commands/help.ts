@@ -65,8 +65,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         name: '🎁 Community',
         value:
           `\`${prefix}rain $10 5\` - Rain on 5 random active users.\n` +
-          `\`${prefix}airdrop $20 10m\` - Create a 10-minute airdrop pot.\n` +
-          `*Slash:* \`/airdrop amount:$20 duration:10m max-winners:5\`\n` +
+          `\`${prefix}airdrop $20 10s\` - Create a 10-second airdrop pot.\n` +
+          `*Slash:* \`/airdrop amount:$20 duration:10s max-winners:5\`\n` +
           'ℹ️ *On-chain network fees are automatically deducted from the total pot.*',
       },
       {

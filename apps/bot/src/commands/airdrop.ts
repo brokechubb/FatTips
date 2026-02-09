@@ -38,7 +38,10 @@ export const data = new SlashCommandBuilder()
       .setRequired(true)
   )
   .addStringOption((option) =>
-    option.setName('duration').setDescription('Duration (e.g., 10m, 1h, 24h)').setRequired(true)
+    option
+      .setName('duration')
+      .setDescription('Duration (e.g., 10s, 10m, 1h, 24h)')
+      .setRequired(true)
   )
   .addIntegerOption((option) =>
     option.setName('max-winners').setDescription('Max number of winners (optional)')
@@ -87,9 +90,9 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
   // 1. Parse Duration
   const durationMs = parseDuration(durationStr);
-  if (!durationMs || durationMs < 60000) {
+  if (!durationMs || durationMs < 10000) {
     await interaction.editReply({
-      content: '❌ Invalid duration. Must be at least 1 minute (e.g., `10m`, `1h`).',
+      content: '❌ Invalid duration. Must be at least 10 seconds (e.g., `10s`, `10m`, `1h`).',
     });
     return;
   }
@@ -307,10 +310,11 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
 // Helpers (reused from tip.ts logic, ideally shared)
 function parseDuration(str: string): number | null {
-  const match = str.match(/^(\d+)([mhdw])$/);
+  const match = str.match(/^(\d+)([smhdw])$/);
   if (!match) return null;
   const val = parseInt(match[1]);
   const unit = match[2];
+  if (unit === 's') return val * 1000;
   if (unit === 'm') return val * 60 * 1000;
   if (unit === 'h') return val * 60 * 60 * 1000;
   if (unit === 'd') return val * 24 * 60 * 60 * 1000;

@@ -187,7 +187,7 @@ async function handleHelp(message: Message, prefix: string) {
         value:
           `\`${p}tip @user $5\` • \`${p}tip 0.1 SOL\`\n` +
           `\`${p}rain $10 5\` (Active users)\n` +
-          `\`${p}airdrop $20 10m\``,
+          `\`${p}airdrop $20 10s\``,
       },
       {
         name: '💰 Wallet & Transfers',
@@ -1103,10 +1103,10 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     return;
   }
 
-  // Parse: %airdrop $10 10m or %airdrop 0.5 SOL 1h 10
+  // Parse: %airdrop $10 10m or %airdrop 0.5 SOL 1h 10 or %airdrop $10 10s
   if (args.length < 2) {
     await message.reply(
-      `Usage: \`${prefix}airdrop $10 10m\` or \`${prefix}airdrop 0.5 SOL 1h 10\` (amount, duration, optional max winners)`
+      `Usage: \`${prefix}airdrop $10 10s\` or \`${prefix}airdrop 0.5 SOL 1h 10\` (amount, duration, optional max winners)`
     );
     return;
   }
@@ -1128,8 +1128,10 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
 
   // Parse duration
   const durationMs = parseDuration(durationArg);
-  if (!durationMs || durationMs < 60000) {
-    await message.reply('❌ Invalid duration. Must be at least 1 minute (e.g., `10m`, `1h`).');
+  if (!durationMs || durationMs < 10000) {
+    await message.reply(
+      '❌ Invalid duration. Must be at least 10 seconds (e.g., `10s`, `10m`, `1h`).'
+    );
     return;
   }
 
@@ -1270,10 +1272,11 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
 
 // Helper: Parse duration string
 function parseDuration(str: string): number | null {
-  const match = str.match(/^(\d+)([mhdw])$/i);
+  const match = str.match(/^(\d+)([smhdw])$/i);
   if (!match) return null;
   const val = parseInt(match[1]);
   const unit = match[2].toLowerCase();
+  if (unit === 's') return val * 1000;
   if (unit === 'm') return val * 60 * 1000;
   if (unit === 'h') return val * 60 * 60 * 1000;
   if (unit === 'd') return val * 24 * 60 * 60 * 1000;
