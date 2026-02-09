@@ -14,6 +14,7 @@ import {
   handleBalanceHistory,
   handleBalanceWithdraw,
   handleWithdrawModal,
+  handleSendFormModal,
 } from './handlers/balanceInteractions';
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
@@ -171,6 +172,15 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isModalSubmit()) {
     if (interaction.customId === 'withdraw_modal') {
       await handleWithdrawModal(interaction);
+      return;
+    }
+
+    // Handle /send and /withdraw form modals
+    if (
+      interaction.customId === 'send_form' ||
+      interaction.customId.startsWith('send_amount_form_')
+    ) {
+      await handleSendFormModal(interaction);
       return;
     }
 

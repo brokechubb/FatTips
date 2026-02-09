@@ -222,20 +222,88 @@ async function handleBalance(message: Message, prefix: string) {
     return;
   }
 
-  const balances = await balanceService.getBalances(user.walletPubkey);
+  // Fetch balances from Solana with timeout
+  let balances = { sol: 0, usdc: 0, usdt: 0 };
+  try {
+    const balancePromise = balanceService.getBalances(user.walletPubkey);
+    const timeoutPromise = new Promise<typeof balances>((_, reject) =>
+      setTimeout(() => reject(new Error('Balance fetch timeout')), 10000)
+    );
+    balances = await Promise.race([balancePromise, timeoutPromise]);
+  } catch (error) {
+    logger.error('Error fetching balances from Solana:', error);
+    // Continue with zero balances
+  }
+
+  // Fetch SOL price for USD calculation
+  let solUsdValue = 0;
+  let showUsdValues = false;
+  try {
+    const solPrice = await priceService.getTokenPrice(TOKEN_MINTS.SOL);
+    if (solPrice) {
+      solUsdValue = balances.sol * solPrice.price;
+      showUsdValues = true;
+    }
+  } catch {
+    logger.warn('Price API unavailable, showing balances without USD values');
+  }
+
+  // Format balances
+  const solFormatted = BalanceService.formatBalance(balances.sol);
+  const usdcFormatted = BalanceService.formatBalance(balances.usdc);
+  const usdtFormatted = BalanceService.formatBalance(balances.usdt);
+
+  // Calculate total USD value
+  const totalUsd = solUsdValue + balances.usdc + balances.usdt;
+
+  let description = `\`${user.walletPubkey}\``;
+  if (showUsdValues) {
+    description += `\n\n**Total Value:** $${totalUsd.toFixed(2)} USD`;
+  }
 
   const embed = new EmbedBuilder()
     .setTitle('💰 Your Wallet')
-    .setDescription(`\`${user.walletPubkey}\``)
+    .setDescription(description)
     .addFields(
-      { name: 'SOL', value: `${balances.sol.toFixed(6)}`, inline: true },
-      { name: 'USDC', value: `${balances.usdc.toFixed(2)}`, inline: true },
-      { name: 'USDT', value: `${balances.usdt.toFixed(2)}`, inline: true }
+      {
+        name: 'SOL',
+        value: showUsdValues ? `${solFormatted} ($${solUsdValue.toFixed(2)})` : solFormatted,
+        inline: true,
+      },
+      { name: 'USDC', value: usdcFormatted, inline: true },
+      { name: 'USDT', value: usdtFormatted, inline: true }
     )
     .setColor(0x00ff00)
     .setTimestamp();
 
-  await message.reply({ embeds: [embed] });
+  // If in DM, reply directly
+  if (message.channel.type === ChannelType.DM) {
+    await message.reply({ embeds: [embed] });
+    return;
+  }
+
+  try {
+    await message.author.send({ embeds: [embed] });
+    const reply = await message.reply('✅ Sent your balance to your DMs!');
+
+    // Clean up messages after 5 seconds
+    setTimeout(() => {
+      reply.delete().catch(() => {});
+      if (message.deletable) {
+        message.delete().catch(() => {});
+      }
+    }, 5000);
+  } catch (error: any) {
+    if (error.code === DISCORD_CANNOT_DM) {
+      const reply = await message.reply(
+        '❌ I cannot DM you. Please enable DMs to check your balance privately.'
+      );
+      setTimeout(() => reply.delete().catch(() => {}), 10000);
+    } else {
+      logger.error('Error sending balance DM:', error);
+      await message.reply('❌ Failed to send balance. Please try again.');
+    }
+  }
 }
 
 // ============ WALLET ============
@@ -457,17 +525,19 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
     return;
   }
 
-  // Check balance
-  const balances = await balanceService.getBalances(sender.walletPubkey);
-  const required = tokenSymbol === 'SOL' ? amountToken + 0.002 : amountToken;
-  const available =
-    tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
+  // Check balance (skip for 'max' since we calculated based on actual balance)
+  if (parsedAmount.type !== 'max') {
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    const required = tokenSymbol === 'SOL' ? amountToken + 0.002 : amountToken;
+    const available =
+      tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
-  if (available < required) {
-    await message.reply(
-      `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
-    );
-    return;
+    if (available < required) {
+      await message.reply(
+        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
+      );
+      return;
+    }
   }
 
   // Execute transfer
@@ -599,9 +669,21 @@ async function handleSend(message: Message, args: string[], prefix: string) {
     return;
   }
 
-  const tokenSymbol = parsedAmount.token || 'SOL';
-  const tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS] || TOKEN_MINTS.SOL;
+  let tokenSymbol = parsedAmount.token || 'SOL';
+  let tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS] || TOKEN_MINTS.SOL;
   let amountToken: number;
+
+  // Smart detection: If withdrawing "all" without specifying token, check balances
+  if (parsedAmount.type === 'max' && !parsedAmount.token) {
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    // If SOL is too low for fees/rent (using 0.002 as safe buffer), try other tokens
+    if (balances.sol < 0.002) {
+      if (balances.usdc > 0) tokenSymbol = 'USDC';
+      else if (balances.usdt > 0) tokenSymbol = 'USDT';
+
+      tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS] || TOKEN_MINTS.SOL;
+    }
+  }
 
   if (parsedAmount.type === 'usd') {
     const conversion = await priceService.convertUsdToToken(
@@ -632,17 +714,19 @@ async function handleSend(message: Message, args: string[], prefix: string) {
     return;
   }
 
-  // Check balance
-  const balances = await balanceService.getBalances(sender.walletPubkey);
-  const required = tokenSymbol === 'SOL' ? amountToken + 0.002 : amountToken;
-  const available =
-    tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
+  // Check balance (skip for 'max' since we calculated based on actual balance)
+  if (parsedAmount.type !== 'max') {
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    const required = tokenSymbol === 'SOL' ? amountToken + 0.002 : amountToken;
+    const available =
+      tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
-  if (available < required) {
-    await message.reply(
-      `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
-    );
-    return;
+    if (available < required) {
+      await message.reply(
+        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
+      );
+      return;
+    }
   }
 
   const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
@@ -903,17 +987,19 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     return;
   }
 
-  // Check balance
-  const balances = await balanceService.getBalances(sender.walletPubkey);
-  const required = tokenSymbol === 'SOL' ? totalAmountToken + 0.002 : totalAmountToken;
-  const available =
-    tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
+  // Check balance (skip for 'max' since we calculated based on actual balance)
+  if (parsedAmount.type !== 'max') {
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    const required = tokenSymbol === 'SOL' ? totalAmountToken + 0.002 : totalAmountToken;
+    const available =
+      tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
-  if (available < required) {
-    await message.reply(
-      `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
-    );
-    return;
+    if (available < required) {
+      await message.reply(
+        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
+      );
+      return;
+    }
   }
 
   // Execute transfer

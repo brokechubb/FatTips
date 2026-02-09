@@ -95,8 +95,36 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
 
     let amountToken: number;
     let usdValue: number;
+    let skipBalanceCheck = false;
 
-    if (parsedAmount.type === 'usd') {
+    if (parsedAmount.type === 'max') {
+      // Handle max/all - calculate based on actual balance
+      const balances = await balanceService.getBalances(sender.walletPubkey);
+      const feeBuffer = 0.00002;
+      const rentReserve = 0.001;
+
+      if (tokenSymbol === 'SOL') {
+        amountToken = Math.max(0, balances.sol - feeBuffer - rentReserve);
+      } else if (tokenSymbol === 'USDC') {
+        amountToken = balances.usdc;
+      } else {
+        amountToken = balances.usdt;
+      }
+
+      if (amountToken <= 0) {
+        await interaction.editReply({
+          content:
+            `${interaction.user} ❌ Insufficient balance!\\n` +
+            `You have **${balances.sol.toFixed(6)} SOL**.\\n` +
+            `Required reserve: **${(feeBuffer + rentReserve).toFixed(5)} SOL** (to keep wallet active).`,
+        });
+        return true;
+      }
+
+      const price = await priceService.getTokenPrice(tokenMint);
+      usdValue = price ? amountToken * price.price : 0;
+      skipBalanceCheck = true;
+    } else if (parsedAmount.type === 'usd') {
       const conversion = await priceService.convertUsdToToken(
         parsedAmount.value,
         tokenMint,
@@ -119,30 +147,33 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
       return true;
     }
 
-    const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.00002;
-    const rentReserve = 0.001;
-    const epsilon = 0.000001;
+    // Skip balance check for 'max' since we calculated based on actual balance
+    if (!skipBalanceCheck) {
+      const balances = await balanceService.getBalances(sender.walletPubkey);
+      const feeBuffer = 0.00002;
+      const rentReserve = 0.001;
+      const epsilon = 0.000001;
 
-    if (tokenSymbol === 'SOL') {
-      const requiredSol = amountToken + feeBuffer + rentReserve;
-      if (balances.sol + epsilon < requiredSol) {
-        await interaction.editReply({
-          content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL\n**Available:** ${balances.sol.toFixed(5)} SOL`,
-        });
-        return true;
-      }
-    } else {
-      const currentBal = tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
-      if (currentBal < amountToken) {
-        await interaction.editReply({
-          content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${amountToken} ${tokenSymbol}\n**Available:** ${currentBal} ${tokenSymbol}`,
-        });
-        return true;
-      }
-      if (balances.sol < feeBuffer) {
-        await interaction.editReply({ content: '❌ Insufficient SOL for gas fees!' });
-        return true;
+      if (tokenSymbol === 'SOL') {
+        const requiredSol = amountToken + feeBuffer + rentReserve;
+        if (balances.sol + epsilon < requiredSol) {
+          await interaction.editReply({
+            content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL\n**Available:** ${balances.sol.toFixed(5)} SOL`,
+          });
+          return true;
+        }
+      } else {
+        const currentBal = tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
+        if (currentBal < amountToken) {
+          await interaction.editReply({
+            content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${amountToken} ${tokenSymbol}\n**Available:** ${currentBal} ${tokenSymbol}`,
+          });
+          return true;
+        }
+        if (balances.sol < feeBuffer) {
+          await interaction.editReply({ content: '❌ Insufficient SOL for gas fees!' });
+          return true;
+        }
       }
     }
 

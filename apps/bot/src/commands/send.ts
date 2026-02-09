@@ -171,19 +171,31 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         USDT: { symbol: 'USDT', mint: TOKEN_MINTS.USDT },
       };
 
-      // Determine which token to send max of
-      const preferredToken = parsedAmount.token
-        ? parsedAmount.token.toUpperCase()
-        : tokenPreference;
-      const selectedToken = tokenMap[preferredToken] || tokenMap['SOL'];
-
-      tokenSymbol = selectedToken.symbol;
-      tokenMint = selectedToken.mint;
-
       // Get balance to calculate max
       const balances = await balanceService.getBalances(sender.walletPubkey);
       const feeBuffer = 0.00001; // Tiny buffer for fee
       const rentReserve = 0.001; // Keep account rent-exempt (~0.00089 SOL)
+
+      // Determine which token to send max of
+      let preferredToken = parsedAmount.token ? parsedAmount.token.toUpperCase() : null;
+
+      // If token not specified in amount string (e.g. "all"), check command option
+      if (!preferredToken) {
+        preferredToken = interaction.options.getString('token')?.toUpperCase() || null;
+      }
+
+      // If still no token specified, auto-detect based on available balance
+      if (!preferredToken) {
+        if (balances.sol > feeBuffer + rentReserve) preferredToken = 'SOL';
+        else if (balances.usdc > 0) preferredToken = 'USDC';
+        else if (balances.usdt > 0) preferredToken = 'USDT';
+        else preferredToken = 'SOL';
+      }
+
+      const selectedToken = tokenMap[preferredToken] || tokenMap['SOL'];
+
+      tokenSymbol = selectedToken.symbol;
+      tokenMint = selectedToken.mint;
 
       if (tokenSymbol === 'SOL') {
         // Max SOL = balance - fees - rent (Safety Mode)
