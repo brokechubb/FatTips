@@ -14,14 +14,14 @@ echo "🚀 Deploying FatTips to production (Local Build Strategy)..."
 # 0. Create database backup before deployment (SAFETY CRITICAL)
 echo "💾 Preparing backup script on remote..."
 # Ensure remote scripts dir exists
-ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST "mkdir -p $REMOTE_DIR/scripts"
+ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST "mkdir -p $REMOTE_DIR/scripts"
 
 # Upload latest backup script
-scp -P $SERVER_PORT "$SCRIPT_DIR/backup-database.sh" $SERVER_USER@$SERVER_HOST:$REMOTE_DIR/scripts/
-ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST "chmod +x $REMOTE_DIR/scripts/backup-database.sh"
+scp -P $SERVER_PORT -o ConnectTimeout=30 "$SCRIPT_DIR/backup-database.sh" $SERVER_USER@$SERVER_HOST:$REMOTE_DIR/scripts/
 
 echo "💾 Creating database backup before deployment..."
-ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST "cd $REMOTE_DIR && ./scripts/backup-database.sh --no-encrypt"
+# Combine chmod and execution to reduce connections and potential hang
+ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST "chmod +x $REMOTE_DIR/scripts/backup-database.sh && cd $REMOTE_DIR && ./scripts/backup-database.sh --no-encrypt"
 
 if [ $? -ne 0 ]; then
   echo "❌ Backup failed! Aborting deployment for safety."

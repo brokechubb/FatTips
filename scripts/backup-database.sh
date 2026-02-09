@@ -82,7 +82,7 @@ log_info "Backup location: $BACKUP_DIR"
 
 # Create the backup using pg_dump
 log_info "Running pg_dump..."
-docker exec -t "$CONTAINER_NAME" pg_dump \
+docker exec "$CONTAINER_NAME" pg_dump \
   -U fattips_user \
   -d fattips \
   --no-owner \
