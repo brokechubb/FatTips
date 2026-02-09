@@ -21,6 +21,10 @@ import {
 } from 'fattips-solana';
 import { PublicKey } from '@solana/web3.js';
 
+// Solana constants
+const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
+const FEE_BUFFER = 0.00002; // SOL - standard fee buffer
+
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
@@ -174,7 +178,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       // Get balance to calculate max
       const balances = await balanceService.getBalances(sender.walletPubkey);
       const feeBuffer = 0.00001; // Tiny buffer for fee
-      const rentReserve = 0.001; // Keep account rent-exempt (~0.00089 SOL)
+      const rentReserve = MIN_RENT_EXEMPTION; // Keep account rent-exempt (~0.00089 SOL)
 
       // Determine which token to send max of
       let preferredToken = parsedAmount.token ? parsedAmount.token.toUpperCase() : null;
@@ -289,7 +293,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       try {
         const balances = await balanceService.getBalances(sender.walletPubkey);
         const feeBuffer = 0.00001; // Tiny buffer for fee
-        const rentReserve = 0.001; // Minimum to keep account alive
+        const rentReserve = MIN_RENT_EXEMPTION; // Minimum to keep account alive
 
         if (tokenSymbol === 'SOL') {
           const requiredSol = amountToken + feeBuffer + rentReserve;
@@ -332,7 +336,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       try {
         const recipientBalances = await balanceService.getBalances(recipientPubkey.toBase58());
         if (recipientBalances.sol === 0) {
-          const minRent = 0.00089088;
+          const minRent = MIN_RENT_EXEMPTION;
           if (amountToken < minRent) {
             await interaction.editReply({
               content:

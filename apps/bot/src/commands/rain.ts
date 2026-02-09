@@ -22,6 +22,10 @@ import { activityService } from '../services/activity';
 // Discord error codes
 const DISCORD_CANNOT_DM = 50007;
 
+// Solana constants
+const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
+const FEE_BUFFER = 0.00002; // SOL - standard fee buffer
+
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
@@ -180,7 +184,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       // Auto-detect based on available balance
       const balances = await balanceService.getBalances(sender.walletPubkey);
       const feeBuffer = 0.00001 * recipientWallets.length;
-      const rentReserve = 0.001;
+      const rentReserve = MIN_RENT_EXEMPTION;
 
       // Check which token has significant balance
       if (balances.sol > feeBuffer + rentReserve) {
@@ -204,7 +208,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (parsedAmount.type === 'max') {
       const balances = await balanceService.getBalances(sender.walletPubkey);
       const feeBuffer = 0.00001 * recipientWallets.length;
-      const rentReserve = 0.001;
+      const rentReserve = MIN_RENT_EXEMPTION;
 
       if (tokenSymbol === 'SOL') {
         totalAmountToken = Math.max(0, balances.sol - feeBuffer - rentReserve);
@@ -265,7 +269,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // 5. Check Balance
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const feeBuffer = 0.00002;
-    const rentReserve = 0.001;
+    const rentReserve = MIN_RENT_EXEMPTION;
 
     if (tokenSymbol === 'SOL') {
       const requiredSol = totalAmountToken + feeBuffer + rentReserve;

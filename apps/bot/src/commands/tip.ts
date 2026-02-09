@@ -16,6 +16,10 @@ import {
   BalanceService,
 } from 'fattips-solana';
 
+// Solana constants
+const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
+const FEE_BUFFER = 0.00002; // SOL - standard fee buffer
+
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
@@ -194,7 +198,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
       const balances = await balanceService.getBalances(sender.walletPubkey);
       const feeBuffer = 0.00001 * recipientWallets.length; // Approximate fee for batch
-      const rentReserve = 0.001;
+      const rentReserve = MIN_RENT_EXEMPTION;
 
       if (tokenSymbol === 'SOL') {
         totalAmountToken = Math.max(0, balances.sol - feeBuffer - rentReserve);
@@ -283,7 +287,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // Check Balance
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const feeBuffer = 0.00002; // Slightly higher buffer for batch tx
-    const rentReserve = 0.001;
+    const rentReserve = MIN_RENT_EXEMPTION;
     const epsilon = 0.000001; // Tolerance for floating point precision issues
 
     if (tokenSymbol === 'SOL') {

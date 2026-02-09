@@ -19,6 +19,10 @@ import {
 } from 'fattips-solana';
 import { logTransaction } from '../utils/logger';
 
+// Solana constants
+const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
+const FEE_BUFFER = 0.00002; // SOL - standard fee buffer
+
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
@@ -222,7 +226,7 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
       // Handle Max Withdrawal
       const balances = await balanceService.getBalances(sender.walletPubkey);
       const feeBuffer = 0.00001;
-      const rentReserve = 0.001;
+      const rentReserve = MIN_RENT_EXEMPTION;
 
       // Smart token detection if not specified
       let preferredToken = parsedAmount.token ? parsedAmount.token.toUpperCase() : null;
@@ -316,7 +320,7 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
     if (parsedAmount.type !== 'max') {
       const balances = await balanceService.getBalances(sender.walletPubkey);
       const feeBuffer = 0.00001;
-      const rentReserve = 0.001;
+      const rentReserve = MIN_RENT_EXEMPTION;
 
       if (tokenSymbol === 'SOL') {
         const requiredSol = amountToken + feeBuffer + rentReserve;
@@ -571,7 +575,7 @@ async function processSendTransaction(
     // Handle Max Withdrawal
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const feeBuffer = 0.00001;
-    const rentReserve = 0.001;
+    const rentReserve = MIN_RENT_EXEMPTION;
 
     // Smart token detection if not specified
     let preferredToken = parsedAmount.token ? parsedAmount.token.toUpperCase() : null;
@@ -665,7 +669,7 @@ async function processSendTransaction(
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const feeBuffer = 0.00001;
-    const rentReserve = 0.001;
+    const rentReserve = MIN_RENT_EXEMPTION;
 
     if (tokenSymbol === 'SOL') {
       const requiredSol = amountToken + feeBuffer + rentReserve;

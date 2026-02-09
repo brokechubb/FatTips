@@ -345,8 +345,8 @@ export class AirdropService {
         airdrop.keySalt
       );
       const tokenMint = airdrop.tokenMint;
-      const feePerTx = 0.000005; // Standard Solana fee
-      const rentBuffer = 0.00089088; // Safety margin for rent exemption (matches actual minimum)
+      const feePerTx = FEE_BUFFERS.BATCH; // Standard Solana fee per transaction
+      const rentBuffer = MIN_RENT_EXEMPTION; // Safety margin for rent exemption
 
       let tokenSymbol = 'SOL';
       if (tokenMint === TOKEN_MINTS.USDC) tokenSymbol = 'USDC';
@@ -358,7 +358,7 @@ export class AirdropService {
           const balances = await this.balanceService.getBalances(
             walletKeypair.publicKey.toBase58()
           );
-          const feeBuffer = 0.00089088; // Ensure rent exemption
+          const feeBuffer = MIN_RENT_EXEMPTION; // Ensure rent exemption
 
           // Refund Logic
           if (tokenMint === TOKEN_MINTS.SOL) {

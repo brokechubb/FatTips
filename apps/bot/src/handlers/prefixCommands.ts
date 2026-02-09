@@ -23,6 +23,11 @@ import { activityService } from '../services/activity';
 export const DEFAULT_PREFIX = 'f';
 const DISCORD_CANNOT_DM = 50007;
 
+// Solana constants
+const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
+const FEE_BUFFER = 0.00002; // SOL - standard fee buffer for transactions
+const PREFIX_FEE_BUFFER = 0.002; // SOL - legacy buffer for prefix commands (higher for safety)
+
 // Cache for guild prefixes (refresh every 5 minutes)
 const prefixCache = new Map<string, { prefix: string; expiresAt: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -501,7 +506,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
     usdValue = parsedAmount.value;
   } else if (parsedAmount.type === 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.002;
+    const feeBuffer = PREFIX_FEE_BUFFER;
     amountToken =
       tokenSymbol === 'SOL'
         ? Math.max(0, balances.sol - feeBuffer)
@@ -528,7 +533,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
   // Check balance (skip for 'max' since we calculated based on actual balance)
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const required = tokenSymbol === 'SOL' ? amountToken + 0.002 : amountToken;
+    const required = tokenSymbol === 'SOL' ? amountToken + PREFIX_FEE_BUFFER : amountToken;
     const available =
       tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
@@ -677,7 +682,7 @@ async function handleSend(message: Message, args: string[], prefix: string) {
   if (parsedAmount.type === 'max' && !parsedAmount.token) {
     const balances = await balanceService.getBalances(sender.walletPubkey);
     // If SOL is too low for fees/rent (using 0.002 as safe buffer), try other tokens
-    if (balances.sol < 0.002) {
+    if (balances.sol < PREFIX_FEE_BUFFER) {
       if (balances.usdc > 0) tokenSymbol = 'USDC';
       else if (balances.usdt > 0) tokenSymbol = 'USDT';
 
@@ -698,7 +703,7 @@ async function handleSend(message: Message, args: string[], prefix: string) {
     amountToken = conversion.amountToken;
   } else if (parsedAmount.type === 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.002;
+    const feeBuffer = PREFIX_FEE_BUFFER;
     amountToken =
       tokenSymbol === 'SOL'
         ? Math.max(0, balances.sol - feeBuffer)
@@ -717,7 +722,7 @@ async function handleSend(message: Message, args: string[], prefix: string) {
   // Check balance (skip for 'max' since we calculated based on actual balance)
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const required = tokenSymbol === 'SOL' ? amountToken + 0.002 : amountToken;
+    const required = tokenSymbol === 'SOL' ? amountToken + PREFIX_FEE_BUFFER : amountToken;
     const available =
       tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
@@ -950,7 +955,7 @@ async function handleRain(message: Message, args: string[], client: Client, pref
   if (parsedAmount.type === 'max' && !parsedAmount.token) {
     // Auto-detect based on available balance
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.002;
+    const feeBuffer = PREFIX_FEE_BUFFER;
 
     // Check which token has significant balance
     if (balances.sol > feeBuffer) {
@@ -982,10 +987,9 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     usdValue = parsedAmount.value;
   } else if (parsedAmount.type === 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.002;
     totalAmountToken =
       tokenSymbol === 'SOL'
-        ? Math.max(0, balances.sol - feeBuffer)
+        ? Math.max(0, balances.sol - PREFIX_FEE_BUFFER)
         : tokenSymbol === 'USDC'
           ? balances.usdc
           : balances.usdt;
@@ -1008,7 +1012,8 @@ async function handleRain(message: Message, args: string[], client: Client, pref
   // Check balance (skip for 'max' since we calculated based on actual balance)
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const required = tokenSymbol === 'SOL' ? totalAmountToken + 0.002 : totalAmountToken;
+    const required =
+      tokenSymbol === 'SOL' ? totalAmountToken + PREFIX_FEE_BUFFER : totalAmountToken;
     const available =
       tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
