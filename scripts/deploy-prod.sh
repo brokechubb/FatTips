@@ -20,6 +20,33 @@ fi
 
 echo "✅ Backup created successfully. Proceeding with deployment..."
 
+# 0.5. Pull backup to local machine (offsite copy)
+echo "📥 Pulling backup to local machine for offsite storage..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_BACKUP_DIR="$(dirname "$SCRIPT_DIR")/backups/offsite"
+mkdir -p "$LOCAL_BACKUP_DIR"
+
+# Get the latest backup filename from remote
+LATEST_BACKUP=$(ssh -p $SERVER_PORT $SERVER_USER@$SERVER_HOST "ls -t $REMOTE_DIR/backups/database/*.sql.gz 2>/dev/null | head -1")
+
+if [ -z "$LATEST_BACKUP" ]; then
+  echo "⚠️  Warning: Could not find backup file on remote. Continuing with deployment..."
+else
+  # Download the latest backup
+  scp -P $SERVER_PORT $SERVER_USER@$SERVER_HOST:"$LATEST_BACKUP" "$LOCAL_BACKUP_DIR/"
+  
+  if [ $? -eq 0 ]; then
+    echo "✅ Offsite backup saved to: $LOCAL_BACKUP_DIR/$(basename "$LATEST_BACKUP")"
+    
+    # Keep only last 10 backups locally
+    cd "$LOCAL_BACKUP_DIR"
+    ls -t *.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
+    echo "🧹 Cleaned up old local backups (keeping 10 most recent)"
+  else
+    echo "⚠️  Warning: Failed to download backup. Continuing with deployment..."
+  fi
+fi
+
 # 1. Build Docker images locally
 echo "🏗️  Building Docker images locally..."
 # Explicitly build the images defined in docker-compose.yml

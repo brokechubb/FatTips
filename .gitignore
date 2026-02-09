@@ -66,6 +66,12 @@ id_ed25519
 *.bak
 *.backup
 
+# Database backups (NEVER commit - contain sensitive data!)
+backups/
+*.sql.gz
+*.sql.gpg
+*.sql
+
 # Local development
 .dev/
 local/
