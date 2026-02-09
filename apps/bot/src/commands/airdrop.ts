@@ -207,7 +207,12 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   let fundingAmountToken = 0;
 
   if (tokenSymbol === 'SOL') {
-    fundingAmountSol = amountToken + GAS_BUFFER;
+    // For max, amountToken already has gas buffer subtracted, so we don't add it again
+    if (parsedAmount.type === 'max') {
+      fundingAmountSol = amountToken;
+    } else {
+      fundingAmountSol = amountToken + GAS_BUFFER;
+    }
   } else {
     fundingAmountSol = GAS_BUFFER; // Sender pays SOL gas for the bot wallet
     fundingAmountToken = amountToken;
