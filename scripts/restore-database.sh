@@ -15,10 +15,10 @@ NC='\033[0m' # No Color
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-BACKUP_DIR="${PROJECT_ROOT}/backups"
+BACKUP_DIR="${PROJECT_ROOT}/backups/database"
 DOCKER_CONTAINER="fattips-db"
 DB_NAME="fattips"
-DB_USER="fattips"
+DB_USER="fattips_user"
 
 # Function to print colored output
 log_info() {
