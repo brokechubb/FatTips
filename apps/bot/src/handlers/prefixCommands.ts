@@ -789,8 +789,7 @@ async function handleHistory(message: Message) {
 
   const lines = transactions.map((tx) => {
     const isSent = tx.fromId === message.author.id;
-    const arrow = isSent ? '→' : '←';
-    const other = isSent ? tx.toId || tx.toAddress?.slice(0, 8) : tx.fromId;
+    const arrow = isSent ? '📤' : '📥';
     const amount = Number(tx.amountToken).toFixed(4);
     const token =
       tx.tokenMint === TOKEN_MINTS.USDC
@@ -798,14 +797,46 @@ async function handleHistory(message: Message) {
         : tx.tokenMint === TOKEN_MINTS.USDT
           ? 'USDT'
           : 'SOL';
-    return `${arrow} ${amount} ${token} ${isSent ? 'to' : 'from'} ${other ? `<@${other}>` : 'external'}`;
+
+    // Get USD value
+    const usdValue = tx.amountUsd ? Number(tx.amountUsd).toFixed(2) : null;
+    const usdDisplay = usdValue && usdValue !== '0.00' ? `($${usdValue})` : '';
+
+    // Determine action type
+    let actionType = '';
+    if (tx.txType === 'TIP') {
+      actionType = isSent ? 'Sent tip' : 'Received tip';
+    } else if (tx.txType === 'WITHDRAWAL') {
+      actionType = 'Withdrawal';
+    } else if (tx.txType === 'DEPOSIT') {
+      actionType = 'Deposit';
+    } else if (tx.txType === 'AIRDROP_CLAIM') {
+      actionType = isSent ? 'Airdrop payout' : 'Airdrop win';
+    }
+
+    // Get counterparty
+    let counterparty = '';
+    if (tx.txType === 'TIP') {
+      const other = isSent ? tx.toId : tx.fromId;
+      counterparty = other ? ` ${isSent ? 'to' : 'from'} <@${other}>` : '';
+    } else if (tx.txType === 'WITHDRAWAL') {
+      const addr = tx.toAddress || tx.toId;
+      counterparty = addr ? ` to \`${addr.slice(0, 6)}...${addr.slice(-4)}\`` : ' to external';
+    } else if (tx.txType === 'DEPOSIT') {
+      counterparty = tx.fromId && tx.fromId !== 'SYSTEM' ? ` from <@${tx.fromId}>` : '';
+    }
+
+    const timeStr = tx.createdAt.toLocaleDateString();
+
+    return `${arrow} **${actionType}**${counterparty}\n> ${amount} ${token} ${usdDisplay} • ${timeStr}`;
   });
 
   const embed = new EmbedBuilder()
     .setTitle('📜 Transaction History')
-    .setDescription(lines.join('\n'))
+    .setDescription(lines.join('\n\n'))
     .setColor(0x00aaff)
-    .setFooter({ text: 'Last 10 transactions' });
+    .setFooter({ text: 'Last 10 transactions' })
+    .setTimestamp();
 
   await message.reply({ embeds: [embed] });
 }

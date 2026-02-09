@@ -68,31 +68,57 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const isSender = tx.fromId === user.discordId;
       const typeEmoji = isSender ? '📤' : '📥';
       const amount = Number(tx.amountToken).toFixed(4);
-      // Determine token symbol roughly from mint (simplified)
+
+      // Determine token symbol
       let symbol = 'SOL';
-      if (tx.tokenMint.startsWith('EPj')) symbol = 'USDC';
-      if (tx.tokenMint.startsWith('Es9')) symbol = 'USDT';
+      if (tx.tokenMint?.startsWith('EPj')) symbol = 'USDC';
+      else if (tx.tokenMint?.startsWith('Es9')) symbol = 'USDT';
 
       const date = tx.createdAt.toLocaleDateString();
       const time = tx.createdAt.toLocaleTimeString();
 
+      // Get USD value (handle null/undefined)
+      const usdValue = tx.amountUsd ? Number(tx.amountUsd).toFixed(2) : null;
+      const usdDisplay = usdValue && usdValue !== '0.00' ? `($${usdValue})` : '';
+
+      // Determine action and counterparty
       let action = '';
+      let counterparty = '';
+
       if (tx.txType === 'TIP') {
-        action = isSender ? `Sent tip to <@${tx.toId}>` : `Received tip from <@${tx.fromId}>`;
+        if (isSender) {
+          action = 'Sent tip';
+          counterparty = tx.toId ? `to <@${tx.toId}>` : 'to external';
+        } else {
+          action = 'Received tip';
+          counterparty = tx.fromId ? `from <@${tx.fromId}>` : 'from external';
+        }
       } else if (tx.txType === 'WITHDRAWAL') {
-        const toAddr = (tx as any).toAddress;
-        action = `Withdrawal to \`${toAddr?.slice(0, 4)}...${toAddr?.slice(-4)}\``;
+        action = 'Withdrew';
+        const toAddr = (tx as any).toAddress || tx.toId;
+        counterparty = toAddr
+          ? `to \`${toAddr.slice(0, 6)}...${toAddr.slice(-4)}\``
+          : 'to external';
       } else if (tx.txType === 'DEPOSIT') {
-        action = 'Deposit';
+        action = 'Deposited';
+        counterparty = tx.fromId && tx.fromId !== 'SYSTEM' ? `from <@${tx.fromId}>` : '';
+      } else if (tx.txType === 'AIRDROP_CLAIM') {
+        action = isSender ? 'Airdrop payout' : 'Airdrop win';
+        counterparty = '';
       }
 
-      description +=
-        `${typeEmoji} **${action}**\n` +
-        `> **${amount} ${symbol}** (~$${Number(tx.amountUsd).toFixed(2)})\n` +
-        `> [Solscan](https://solscan.io/tx/${tx.signature}) • ${date} ${time}\n\n`;
+      // Build the transaction line
+      const txLine = `${typeEmoji} **${action}** ${counterparty}`.trim();
+      const amountLine = `${amount} ${symbol} ${usdDisplay}`.trim();
+      const linkLine = tx.signature
+        ? `[View on Solscan](https://solscan.io/tx/${tx.signature})`
+        : '';
+      const timeLine = `${date} at ${time}`;
+
+      description += `${txLine}\n> ${amountLine}\n> ${linkLine} • ${timeLine}\n\n`;
     }
 
-    embed.setDescription(description);
+    embed.setDescription(description || 'No transactions to display.');
 
     await interaction.editReply({ embeds: [embed] });
   } catch (error) {
