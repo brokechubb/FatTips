@@ -944,8 +944,26 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     return;
   }
 
-  // Calculate amounts
-  const tokenSymbol = parsedAmount.token || 'SOL';
+  // Smart token detection for max
+  let tokenSymbol = parsedAmount.token || 'SOL';
+
+  if (parsedAmount.type === 'max' && !parsedAmount.token) {
+    // Auto-detect based on available balance
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    const feeBuffer = 0.002;
+
+    // Check which token has significant balance
+    if (balances.sol > feeBuffer) {
+      tokenSymbol = 'SOL';
+    } else if (balances.usdc > 0) {
+      tokenSymbol = 'USDC';
+    } else if (balances.usdt > 0) {
+      tokenSymbol = 'USDT';
+    } else {
+      tokenSymbol = 'SOL';
+    }
+  }
+
   const tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS] || TOKEN_MINTS.SOL;
   let totalAmountToken: number;
   let usdValue: number;
@@ -1148,13 +1166,47 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     return;
   }
 
-  // Calculate amounts
-  const tokenSymbol = parsedAmount.token || 'SOL';
+  // Smart token detection for max
+  let tokenSymbol = parsedAmount.token || 'SOL';
+
+  if (parsedAmount.type === 'max' && !parsedAmount.token) {
+    // Auto-detect based on available balance
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    const gasBuffer = 0.003;
+
+    // Check which token has significant balance
+    if (balances.sol > gasBuffer) {
+      tokenSymbol = 'SOL';
+    } else if (balances.usdc > 0) {
+      tokenSymbol = 'USDC';
+    } else if (balances.usdt > 0) {
+      tokenSymbol = 'USDT';
+    } else {
+      tokenSymbol = 'SOL';
+    }
+  }
+
   const tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS] || TOKEN_MINTS.SOL;
   let amountToken: number;
   let usdValue: number;
 
-  if (parsedAmount.type === 'usd') {
+  if (parsedAmount.type === 'max') {
+    // Calculate max amount
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    const gasBuffer = 0.003;
+
+    if (tokenSymbol === 'SOL') {
+      amountToken = Math.max(0, balances.sol - gasBuffer);
+    } else if (tokenSymbol === 'USDC') {
+      amountToken = balances.usdc;
+    } else {
+      amountToken = balances.usdt;
+    }
+
+    // Estimate USD
+    const price = await priceService.getTokenPrice(tokenMint);
+    usdValue = price ? amountToken * price.price : 0;
+  } else if (parsedAmount.type === 'usd') {
     const conversion = await priceService.convertUsdToToken(
       parsedAmount.value,
       tokenMint,
@@ -1167,7 +1219,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     amountToken = conversion.amountToken;
     usdValue = parsedAmount.value;
   } else {
-    amountToken = parsedAmount.value;
+    amountToken = parsedAmount.value || 0;
     const price = await priceService.getTokenPrice(tokenMint);
     usdValue = price ? amountToken * price.price : 0;
   }
@@ -1176,20 +1228,22 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   const ephemeralWallet = walletService.createEncryptedWallet();
   const GAS_BUFFER = 0.003;
 
-  // Check balance
-  const balances = await balanceService.getBalances(sender.walletPubkey);
-  const requiredSol = tokenSymbol === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
+  // Check balance (skip for max since we calculated based on actual balance)
+  if (parsedAmount.type !== 'max') {
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    const requiredSol = tokenSymbol === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
 
-  if (balances.sol < requiredSol) {
-    await message.reply(`❌ Insufficient SOL! Need ${requiredSol.toFixed(4)} SOL.`);
-    return;
-  }
-
-  if (tokenSymbol !== 'SOL') {
-    const tokenBal = tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
-    if (tokenBal < amountToken) {
-      await message.reply(`❌ Insufficient ${tokenSymbol}! Need ${amountToken}.`);
+    if (balances.sol < requiredSol) {
+      await message.reply(`❌ Insufficient SOL! Need ${requiredSol.toFixed(4)} SOL.`);
       return;
+    }
+
+    if (tokenSymbol !== 'SOL') {
+      const tokenBal = tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
+      if (tokenBal < amountToken) {
+        await message.reply(`❌ Insufficient ${tokenSymbol}! Need ${amountToken}.`);
+        return;
+      }
     }
   }
 

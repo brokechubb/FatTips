@@ -173,8 +173,29 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       USDT: { symbol: 'USDT', mint: TOKEN_MINTS.USDT },
     };
 
-    let preferredToken = parsedAmount.token ? parsedAmount.token.toUpperCase() : tokenPreference;
+    // Smart token detection for max
+    let preferredToken = parsedAmount.token ? parsedAmount.token.toUpperCase() : null;
+
+    if (parsedAmount.type === 'max' && !preferredToken) {
+      // Auto-detect based on available balance
+      const balances = await balanceService.getBalances(sender.walletPubkey);
+      const feeBuffer = 0.00001 * recipientWallets.length;
+      const rentReserve = 0.001;
+
+      // Check which token has significant balance
+      if (balances.sol > feeBuffer + rentReserve) {
+        preferredToken = 'SOL';
+      } else if (balances.usdc > 0) {
+        preferredToken = 'USDC';
+      } else if (balances.usdt > 0) {
+        preferredToken = 'USDT';
+      } else {
+        preferredToken = 'SOL';
+      }
+    }
+
     if (parsedAmount.type === 'usd' && parsedAmount.token) preferredToken = parsedAmount.token;
+    if (!preferredToken) preferredToken = tokenPreference;
 
     const selectedToken = tokenMap[preferredToken] || tokenMap['SOL'];
     tokenSymbol = selectedToken.symbol;
