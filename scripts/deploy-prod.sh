@@ -38,8 +38,9 @@ else
   if [ $? -eq 0 ]; then
     echo "✅ Offsite backup saved to: $LOCAL_BACKUP_DIR/$(basename "$LATEST_BACKUP")"
     
-    # Keep only last 10 backups locally (use subshell to avoid changing directory)
-    (cd "$LOCAL_BACKUP_DIR" && ls -t *.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm -f)
+    # Keep only last 10 backups locally
+    # List full paths sorted by time (newest first), skip first 10, remove the rest
+    ls -t "$LOCAL_BACKUP_DIR"/*.sql.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
     echo "🧹 Cleaned up old local backups (keeping 10 most recent)"
   else
     echo "⚠️  Warning: Failed to download backup. Continuing with deployment..."
@@ -47,7 +48,9 @@ else
 fi
 
 # Ensure we're in the project root for subsequent commands
-cd "$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_ROOT"
+echo "📂 Working directory for deployment: $(pwd)"
 
 # 1. Build Docker images locally
 echo "🏗️  Building Docker images locally..."
