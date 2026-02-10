@@ -18,6 +18,7 @@ import {
   ConversionResult,
 } from 'fattips-solana';
 import { logTransaction } from '../utils/logger';
+import { transactionQueue } from '../queues/transaction.queue';
 
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
@@ -225,7 +226,7 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
     if (parsedAmount.type === 'max') {
       // Handle Max Withdrawal
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00001;
+      const feeBuffer = 0.00002;
       const rentReserve = MIN_RENT_EXEMPTION;
 
       // Smart token detection if not specified
@@ -319,7 +320,7 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
     // Check Balances (skip for max since we calculated based on actual balance)
     if (parsedAmount.type !== 'max') {
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00001;
+      const feeBuffer = 0.00002;
       const rentReserve = MIN_RENT_EXEMPTION;
 
       if (tokenSymbol === 'SOL') {
@@ -328,7 +329,7 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
           await interaction.editReply({
             content:
               `${interaction.user} ❌ Insufficient funds!\n` +
-              `**Required:** ${requiredSol.toFixed(5)} SOL\n` +
+              `**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n` +
               `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
               `Try using \`all\` to withdraw everything.`,
           });
@@ -349,48 +350,23 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
       }
     }
 
-    // Execute Transfer
-    const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
-    const signature = await transactionService.transfer(
-      senderKeypair,
-      recipientPubkey.toBase58(),
-      amountToken,
-      tokenMint
-    );
+    // Send processing message
+    await interaction.editReply({ content: '⏳ Processing transaction...' });
+    const processingMsg = await interaction.fetchReply();
 
-    // Record Transaction
-    await prisma.transaction.create({
-      data: {
-        signature,
-        fromId: sender.discordId,
-        toAddress: recipientPubkey.toBase58(),
-        amountUsd: usdValue,
-        amountToken,
-        tokenMint,
-        usdRate: usdValue > 0 ? usdValue / amountToken : 0,
-        txType: 'WITHDRAWAL',
-        status: 'CONFIRMED',
-      },
+    // Add to Queue
+    await transactionQueue.add('withdrawal', {
+      type: 'WITHDRAWAL',
+      senderDiscordId: sender.discordId,
+      toAddress: recipientPubkey.toBase58(),
+      amountPerUser: amountToken,
+      tokenMint,
+      tokenSymbol,
+      usdValuePerUser: usdValue,
+      channelId: interaction.channelId!,
+      messageId: processingMsg.id,
     });
 
-    logTransaction('SEND', {
-      fromId: sender.discordId,
-      toId: recipientPubkey.toBase58(),
-      amount: amountToken,
-      token: tokenSymbol,
-      signature,
-      status: 'SUCCESS',
-    });
-
-    const embed = new EmbedBuilder()
-      .setTitle('📤 Withdrawal Successful')
-      .setDescription(
-        `Sent **${formatTokenAmount(amountToken)} ${tokenSymbol}** (~$${usdValue.toFixed(2)}) to:\n\`${addressStr}\`\n\n[View on Solscan](https://solscan.io/tx/${signature})`
-      )
-      .setColor(0x00ff00)
-      .setTimestamp();
-
-    await interaction.editReply({ embeds: [embed] });
     return true;
   } catch (error) {
     console.error('Error handling withdraw modal:', error);
@@ -574,7 +550,7 @@ async function processSendTransaction(
   if (parsedAmount.type === 'max') {
     // Handle Max Withdrawal
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.00001;
+    const feeBuffer = 0.00002;
     const rentReserve = MIN_RENT_EXEMPTION;
 
     // Smart token detection if not specified
@@ -668,7 +644,7 @@ async function processSendTransaction(
   // Check Balances (skip for max since we calculated based on actual balance)
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.00001;
+    const feeBuffer = 0.00002;
     const rentReserve = MIN_RENT_EXEMPTION;
 
     if (tokenSymbol === 'SOL') {
@@ -677,7 +653,7 @@ async function processSendTransaction(
         await interaction.editReply({
           content:
             `${interaction.user} ❌ Insufficient funds!\n` +
-            `**Required:** ${requiredSol.toFixed(5)} SOL\n` +
+            `**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n` +
             `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
             `Try using \`all\` to send everything.`,
         });
@@ -699,7 +675,7 @@ async function processSendTransaction(
   }
 
   // Execute Transfer
-  const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
+  const senderKeypair = await walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
   const signature = await transactionService.transfer(
     senderKeypair,
     recipientPubkey.toBase58(),

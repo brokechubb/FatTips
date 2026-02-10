@@ -177,7 +177,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
       // Get balance to calculate max
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00001; // Tiny buffer for fee
+      const feeBuffer = 0.00002; // Fixed fee buffer for single signature transaction
       const rentReserve = MIN_RENT_EXEMPTION; // Keep account rent-exempt (~0.00089 SOL)
 
       // Determine which token to send max of
@@ -292,7 +292,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (parsedAmount.type !== 'max') {
       try {
         const balances = await balanceService.getBalances(sender.walletPubkey);
-        const feeBuffer = 0.00001; // Tiny buffer for fee
+        const feeBuffer = 0.00002; // Fixed fee buffer for single signature transaction
         const rentReserve = MIN_RENT_EXEMPTION; // Minimum to keep account alive
 
         if (tokenSymbol === 'SOL') {
@@ -301,7 +301,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             await interaction.editReply({
               content:
                 `${interaction.user} ❌ Insufficient funds! You need to leave a small amount of SOL for rent and fees.\n\n` +
-                `**Required:** ${requiredSol.toFixed(5)} SOL\n` +
+                `**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n` +
                 `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
                 `Try sending a smaller amount or use \`all\` to send everything.`,
             });
@@ -359,7 +359,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // --- TRANSACTION EXECUTION ---
 
     // 1. Get sender's keypair
-    const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
+    const senderKeypair = await walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
 
     // 2. Execute transfer
     let signature: string;

@@ -19,6 +19,7 @@ import {
   BalanceService,
 } from 'fattips-solana';
 import { activityService } from '../services/activity';
+import { transactionQueue } from '../queues/transaction.queue';
 
 export const DEFAULT_PREFIX = 'f';
 const DISCORD_CANNOT_DM = 50007;
@@ -26,7 +27,7 @@ const DISCORD_CANNOT_DM = 50007;
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
 const FEE_BUFFER = 0.00002; // SOL - standard fee buffer for transactions
-const PREFIX_FEE_BUFFER = 0.002; // SOL - legacy buffer for prefix commands (higher for safety)
+const PREFIX_FEE_BUFFER = 0.00002; // SOL - consistent fee buffer for prefix commands
 
 // Cache for guild prefixes (refresh every 5 minutes)
 const prefixCache = new Map<string, { prefix: string; expiresAt: number }>();
@@ -110,7 +111,7 @@ export async function handlePrefixCommand(message: Message, client: Client) {
   let commandName: string | undefined;
   let args: string[] = [];
 
-  if (message.content.startsWith(prefix)) {
+  if (message.content.toLowerCase().startsWith(prefix.toLowerCase())) {
     // Normal command with prefix
     args = message.content.slice(prefix.length).trim().split(/\s+/);
     commandName = args.shift()?.toLowerCase();
@@ -325,7 +326,7 @@ async function handleWallet(message: Message, args: string[], prefix: string) {
       return;
     }
 
-    const wallet = walletService.createEncryptedWallet();
+    const wallet = await walletService.createEncryptedWallet();
     await prisma.user.create({
       data: {
         discordId: message.author.id,
@@ -387,7 +388,7 @@ async function handleWallet(message: Message, args: string[], prefix: string) {
       return;
     }
 
-    const privateKey = walletService.decryptPrivateKey(user.encryptedPrivkey, user.keySalt);
+    const privateKey = await walletService.decryptPrivateKey(user.encryptedPrivkey, user.keySalt);
 
     const dmMsg = await message.reply(
       `🔐 **Your Private Key:**\n\`\`\`${privateKey}\`\`\`\n` +
@@ -469,15 +470,13 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
     });
 
     if (!recipient) {
-      const wallet = walletService.createEncryptedWallet();
+      const wallet = await walletService.createEncryptedWallet();
       recipient = await prisma.user.create({
         data: {
           discordId: recipientId,
           walletPubkey: wallet.publicKey,
           encryptedPrivkey: wallet.encryptedPrivateKey,
           keySalt: wallet.keySalt,
-          encryptedMnemonic: wallet.encryptedMnemonic,
-          mnemonicSalt: wallet.mnemonicSalt,
           seedDelivered: false,
         },
       });
@@ -509,7 +508,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
     const feeBuffer = PREFIX_FEE_BUFFER;
     amountToken =
       tokenSymbol === 'SOL'
-        ? Math.max(0, balances.sol - feeBuffer)
+        ? Math.max(0, balances.sol - feeBuffer - MIN_RENT_EXEMPTION)
         : tokenSymbol === 'USDC'
           ? balances.usdc
           : balances.usdt;
@@ -533,110 +532,66 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
   // Check balance (skip for 'max' since we calculated based on actual balance)
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const required = tokenSymbol === 'SOL' ? amountToken + PREFIX_FEE_BUFFER : amountToken;
+    const required =
+      tokenSymbol === 'SOL' ? amountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION : amountToken;
     const available =
       tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
     if (available < required) {
       await message.reply(
-        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
+        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol} (incl. rent exemption), have ${available.toFixed(4)}`
       );
       return;
     }
   }
 
-  // Execute transfer
-  const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
-  const transfers = recipientWallets.map((r) => ({
-    recipient: r.walletPubkey,
-    amount: amountPerUser,
-  }));
+  // Send processing message
+  const processingMsg = await message.reply('⏳ Processing transaction...');
 
-  let signature: string;
-  try {
-    signature = await transactionService.batchTransfer(senderKeypair, transfers, tokenMint);
-  } catch (error: any) {
-    await message.reply(`❌ Transaction failed: ${error.message || 'Unknown error'}`);
-    return;
-  }
+  // Add to Queue
+  await transactionQueue.add('tip', {
+    type: 'TIP',
+    senderDiscordId: sender.discordId,
+    senderUsername: message.author.username,
+    recipientDiscordIds: recipientWallets.map((r) => r.discordId),
+    amountPerUser,
+    tokenMint,
+    tokenSymbol,
+    usdValuePerUser: usdPerUser,
+    channelId: message.channel.id,
+    messageId: processingMsg.id,
+  });
 
-  // Log transactions
-  for (let i = 0; i < recipientWallets.length; i++) {
-    const recipient = recipientWallets[i];
-    const batchSignature = recipientWallets.length > 1 ? `${signature}:${i}` : signature;
-    await prisma.transaction.create({
-      data: {
-        signature: batchSignature,
-        fromId: sender.discordId,
-        toId: recipient.discordId,
-        amountUsd: usdPerUser,
-        amountToken: amountPerUser,
-        tokenMint,
-        usdRate: usdPerUser > 0 ? usdPerUser / amountPerUser : 0,
-        txType: 'TIP',
-        status: 'CONFIRMED',
-      },
-    });
-  }
-
-  // Reply with success
-  const userMentions = recipientWallets.map((r) => `<@${r.discordId}>`).join(', ');
-  const embed = new EmbedBuilder()
-    .setTitle('💸 Tip Sent!')
-    .setDescription(
-      `**${message.author}** tipped ${userMentions}\n\n` +
-        `**Amount:** ${formatTokenAmount(amountPerUser)} ${tokenSymbol} (~$${usdPerUser.toFixed(2)}) each\n` +
-        `[View on Solscan](https://solscan.io/tx/${signature})`
-    )
-    .setColor(0x00ff00)
-    .setTimestamp();
-
-  await message.reply({ embeds: [embed] });
-
-  // Send DMs to recipients
-  const failedDMs: string[] = [];
-  for (const recipient of recipientWallets) {
+  // Handle New Wallets (Send Keys immediately)
+  for (const newWallet of newWallets) {
     try {
-      const user = await client.users.fetch(recipient.discordId);
-      const isNew = newWallets.find((w) => w.id === recipient.discordId);
+      const user = await client.users.fetch(newWallet.id);
+      const msg =
+        `🎉 **Welcome to FatTips!**\n` +
+        `You have a pending tip of **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** coming!\n\n` +
+        `**🔐 Your Private Key:**\n\`\`\`\n${newWallet.key}\n\`\`\`\n*Self-destructs in 15m.*`;
 
-      let msg = `🎉 You received **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** (~$${usdPerUser.toFixed(2)}) from ${message.author.username}!`;
+      const sentMsg = await user.send(msg);
+      setTimeout(async () => {
+        try {
+          await sentMsg.edit('🔒 **Key removed for security.**');
+        } catch {}
+      }, 900000);
 
-      if (isNew) {
-        msg += `\n\n**🔐 New Wallet Key:**\n\`\`\`\n${isNew.key}\n\`\`\`\n*Self-destructs in 15m.*`;
-        const sentMsg = await user.send(msg);
+      // Send Guide
+      const guideEmbed = new EmbedBuilder()
+        .setTitle('🚀 Getting Started')
+        .setDescription('You just received crypto! Use `/balance` to check it.')
+        .setColor(0x00aaff);
+      await user.send({ embeds: [guideEmbed] });
 
-        setTimeout(async () => {
-          try {
-            await sentMsg.edit('🔒 **Key removed for security.**');
-          } catch {}
-        }, 900000);
-
-        await prisma.user.update({
-          where: { discordId: recipient.discordId },
-          data: { seedDelivered: true },
-        });
-      } else {
-        await user.send(msg);
-      }
-    } catch (error: any) {
-      const isNew = newWallets.find((w) => w.id === recipient.discordId);
-      if (isNew) {
-        failedDMs.push(recipient.discordId);
-      }
+      await prisma.user.update({
+        where: { discordId: newWallet.id },
+        data: { seedDelivered: true },
+      });
+    } catch (error) {
+      // Failed to DM key
     }
-  }
-
-  // Public fallback for failed DMs
-  if (failedDMs.length > 0 && message.channel.isTextBased()) {
-    const mentions = failedDMs.map((id) => `<@${id}>`).join(' ');
-    const installLink = `https://discord.com/oauth2/authorize?client_id=${client.user?.id}`;
-    await (message.channel as TextChannel)
-      .send(
-        `💰 ${mentions} — You just received a tip from ${message.author} and a new wallet was created for you!\n` +
-          `To access your wallet: **[Install FatTips](${installLink})** → then use \`${prefix}help\` for help`
-      )
-      .catch(() => {});
   }
 }
 
@@ -681,7 +636,7 @@ async function handleSend(message: Message, args: string[], prefix: string) {
   // Smart detection: If withdrawing "all" without specifying token, check balances
   if (parsedAmount.type === 'max' && !parsedAmount.token) {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    // If SOL is too low for fees/rent (using 0.002 as safe buffer), try other tokens
+    // If SOL is too low for fees/rent (using 0.00002 as safe buffer), try other tokens
     if (balances.sol < PREFIX_FEE_BUFFER) {
       if (balances.usdc > 0) tokenSymbol = 'USDC';
       else if (balances.usdt > 0) tokenSymbol = 'USDT';
@@ -706,7 +661,7 @@ async function handleSend(message: Message, args: string[], prefix: string) {
     const feeBuffer = PREFIX_FEE_BUFFER;
     amountToken =
       tokenSymbol === 'SOL'
-        ? Math.max(0, balances.sol - feeBuffer)
+        ? Math.max(0, balances.sol - feeBuffer - MIN_RENT_EXEMPTION)
         : tokenSymbol === 'USDC'
           ? balances.usdc
           : balances.usdt;
@@ -722,54 +677,34 @@ async function handleSend(message: Message, args: string[], prefix: string) {
   // Check balance (skip for 'max' since we calculated based on actual balance)
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const required = tokenSymbol === 'SOL' ? amountToken + PREFIX_FEE_BUFFER : amountToken;
+    const required =
+      tokenSymbol === 'SOL' ? amountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION : amountToken;
     const available =
       tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
     if (available < required) {
       await message.reply(
-        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
+        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol} (incl. rent exemption), have ${available.toFixed(4)}`
       );
       return;
     }
   }
 
-  const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
+  // Send processing message
+  const processingMsg = await message.reply('⏳ Processing transaction...');
 
-  let signature: string;
-  try {
-    signature = await transactionService.transfer(senderKeypair, address, amountToken, tokenMint);
-  } catch (error: any) {
-    await message.reply(`❌ Transaction failed: ${error.message || 'Unknown error'}`);
-    return;
-  }
-
-  // Log transaction
-  await prisma.transaction.create({
-    data: {
-      signature,
-      fromId: sender.discordId,
-      toAddress: address,
-      amountUsd: 0,
-      amountToken,
-      tokenMint,
-      usdRate: 0,
-      txType: 'WITHDRAWAL',
-      status: 'CONFIRMED',
-    },
+  // Add to Queue
+  await transactionQueue.add('withdrawal', {
+    type: 'WITHDRAWAL',
+    senderDiscordId: sender.discordId,
+    toAddress: address,
+    amountPerUser: amountToken,
+    tokenMint,
+    tokenSymbol,
+    usdValuePerUser: 0, // Not calculated for withdrawal here
+    channelId: message.channel.id,
+    messageId: processingMsg.id,
   });
-
-  const embed = new EmbedBuilder()
-    .setTitle('✅ Sent!')
-    .setDescription(
-      `**Amount:** ${formatTokenAmount(amountToken)} ${tokenSymbol}\n` +
-        `**To:** \`${address}\`\n\n` +
-        `[View on Solscan](https://solscan.io/tx/${signature})`
-    )
-    .setColor(0x00ff00)
-    .setTimestamp();
-
-  await message.reply({ embeds: [embed] });
 }
 
 // ============ HISTORY ============
@@ -906,7 +841,7 @@ async function handleRain(message: Message, args: string[], client: Client, pref
   // Parse: %rain $10 5 or %rain 0.5 SOL 10
   if (args.length < 1) {
     await message.reply(
-      `Usage: \`${prefix}rain $10 5\` (rain $10 on 5 users) or \`${prefix}rain 0.5 SOL\` (rain 0.5 SOL on 5 users)`
+      `Usage: \`${prefix}rain $10 5\` (rain $10 on 5 users) or \`${prefix}rain 0.5 SOL 10\` (rain 0.5 SOL on 5 users)`
     );
     return;
   }
@@ -960,7 +895,7 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     });
 
     if (!recipient) {
-      const wallet = walletService.createEncryptedWallet();
+      const wallet = await walletService.createEncryptedWallet();
       recipient = await prisma.user.create({
         data: {
           discordId: recipientId,
@@ -1020,7 +955,7 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     const balances = await balanceService.getBalances(sender.walletPubkey);
     totalAmountToken =
       tokenSymbol === 'SOL'
-        ? Math.max(0, balances.sol - PREFIX_FEE_BUFFER)
+        ? Math.max(0, balances.sol - PREFIX_FEE_BUFFER - MIN_RENT_EXEMPTION)
         : tokenSymbol === 'USDC'
           ? balances.usdc
           : balances.usdt;
@@ -1044,109 +979,67 @@ async function handleRain(message: Message, args: string[], client: Client, pref
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const required =
-      tokenSymbol === 'SOL' ? totalAmountToken + PREFIX_FEE_BUFFER : totalAmountToken;
+      tokenSymbol === 'SOL'
+        ? totalAmountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION
+        : totalAmountToken;
     const available =
       tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
     if (available < required) {
       await message.reply(
-        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
+        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol} (incl. rent exemption), have ${available.toFixed(4)}`
       );
       return;
     }
   }
 
-  // Execute transfer
-  const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
-  const transfers = recipientWallets.map((r) => ({
-    recipient: r.walletPubkey,
-    amount: amountPerUser,
-  }));
+  // Send processing message
+  const processingMsg = await message.reply('⏳ Making it rain...');
 
-  let signature: string;
-  try {
-    signature = await transactionService.batchTransfer(senderKeypair, transfers, tokenMint);
-  } catch (error: any) {
-    await message.reply(`❌ Transaction failed: ${error.message || 'Unknown error'}`);
-    return;
-  }
+  // Add to Queue
+  await transactionQueue.add('rain', {
+    type: 'RAIN',
+    senderDiscordId: sender.discordId,
+    senderUsername: message.author.username,
+    recipientDiscordIds: recipientWallets.map((r) => r.discordId),
+    amountPerUser,
+    tokenMint,
+    tokenSymbol,
+    usdValuePerUser: usdPerUser,
+    channelId: message.channel.id,
+    messageId: processingMsg.id,
+  });
 
-  // Log transactions
-  for (let i = 0; i < recipientWallets.length; i++) {
-    const recipient = recipientWallets[i];
-    const batchSignature = recipientWallets.length > 1 ? `${signature}:${i}` : signature;
-    await prisma.transaction.create({
-      data: {
-        signature: batchSignature,
-        fromId: sender.discordId,
-        toId: recipient.discordId,
-        amountUsd: usdPerUser,
-        amountToken: amountPerUser,
-        tokenMint,
-        usdRate: usdPerUser > 0 ? usdPerUser / amountPerUser : 0,
-        txType: 'TIP',
-        status: 'CONFIRMED',
-      },
-    });
-  }
-
-  // Reply with success
-  const winnerMentions = recipientWallets.map((r) => `<@${r.discordId}>`).join(', ');
-  const embed = new EmbedBuilder()
-    .setTitle('🌧️ Making it Rain!')
-    .setDescription(
-      `**${message.author}** made it rain on **${recipientWallets.length} active users**!\n\n` +
-        `**Total Rain:** ${formatTokenAmount(totalAmountToken)} ${tokenSymbol}\n` +
-        `**Each User Gets:** ${formatTokenAmount(amountPerUser)} ${tokenSymbol} (~$${usdPerUser.toFixed(2)})\n\n` +
-        `**Lucky Winners:**\n${winnerMentions}\n\n` +
-        `[View on Solscan](https://solscan.io/tx/${signature})`
-    )
-    .setColor(0x00aaff)
-    .setTimestamp();
-
-  await message.reply({ embeds: [embed] });
-
-  // Send DMs (same pattern as tip)
-  const failedDMs: string[] = [];
-  for (const recipient of recipientWallets) {
+  // Handle New Wallets (Send Keys immediately)
+  for (const newWallet of newWallets) {
     try {
-      const user = await client.users.fetch(recipient.discordId);
-      const isNew = newWallets.find((w) => w.id === recipient.discordId);
+      const user = await client.users.fetch(newWallet.id);
+      const msg =
+        `🎉 **You're about to get rained on!**\n` +
+        `You have a pending tip of **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** coming!\n\n` +
+        `**🔐 Your Private Key:**\n\`\`\`\n${newWallet.key}\n\`\`\`\n*Self-destructs in 15m.*`;
 
-      let msg = `🌧️ **It's Raining!** You caught **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** (~$${usdPerUser.toFixed(2)}) from ${message.author.username}!`;
+      const sentMsg = await user.send(msg);
+      setTimeout(async () => {
+        try {
+          await sentMsg.edit('🔒 **Key removed for security.**');
+        } catch {}
+      }, 900000);
 
-      if (isNew) {
-        msg += `\n\n**🔐 New Wallet Key:**\n\`\`\`\n${isNew.key}\n\`\`\`\n*Self-destructs in 15m.*`;
-        const sentMsg = await user.send(msg);
-        setTimeout(async () => {
-          try {
-            await sentMsg.edit('🔒 **Key removed for security.**');
-          } catch {}
-        }, 900000);
-        await prisma.user.update({
-          where: { discordId: recipient.discordId },
-          data: { seedDelivered: true },
-        });
-      } else {
-        await user.send(msg);
-      }
-    } catch (error: any) {
-      const isNew = newWallets.find((w) => w.id === recipient.discordId);
-      if (isNew) {
-        failedDMs.push(recipient.discordId);
-      }
+      // Send Guide
+      const guideEmbed = new EmbedBuilder()
+        .setTitle('🚀 Getting Started')
+        .setDescription('You just received crypto! Use `/balance` to check it.')
+        .setColor(0x00aaff);
+      await user.send({ embeds: [guideEmbed] });
+
+      await prisma.user.update({
+        where: { discordId: newWallet.id },
+        data: { seedDelivered: true },
+      });
+    } catch (error) {
+      // Failed to DM key
     }
-  }
-
-  if (failedDMs.length > 0 && message.channel.isTextBased()) {
-    const mentions = failedDMs.map((id) => `<@${id}>`).join(' ');
-    const installLink = `https://discord.com/oauth2/authorize?client_id=${client.user?.id}`;
-    await (message.channel as TextChannel)
-      .send(
-        `💰 ${mentions} — You just received a tip from ${message.author} and a new wallet was created for you!\n` +
-          `To access your wallet: **[Install FatTips](${installLink})** → then use \`${prefix}help\` for help`
-      )
-      .catch(() => {});
   }
 }
 
@@ -1261,7 +1154,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   }
 
   // Create ephemeral wallet
-  const ephemeralWallet = walletService.createEncryptedWallet();
+  const ephemeralWallet = await walletService.createEncryptedWallet();
   const GAS_BUFFER = 0.003;
 
   // Check balance (skip for max since we calculated based on actual balance)
@@ -1284,7 +1177,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   }
 
   // Fund ephemeral wallet
-  const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
+  const senderKeypair = await walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
 
   try {
     // For max, amountToken already has gas buffer subtracted, so we don't add it again
