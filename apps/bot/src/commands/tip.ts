@@ -384,7 +384,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (newWallets.length > 0) {
       embed.addFields({
         name: '🆕 New Wallets Created',
-        value: `Created wallets for ${newWallets.length} new users. Check DMs!`,
+        value: `Created wallets for ${newWallets.length} new users.\nCheck DMs! Use \`/balance\` to see your funds.`,
       });
     }
 

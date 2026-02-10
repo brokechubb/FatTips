@@ -133,7 +133,7 @@ export class AirdropService {
       let newWalletCreated = false;
       if (!user) {
         try {
-          const newWallet = this.walletService.createEncryptedWallet();
+          const newWallet = await this.walletService.createEncryptedWallet();
           user = await prisma.user.create({
             data: {
               discordId: interaction.user.id,
@@ -323,7 +323,7 @@ export class AirdropService {
       const winnerCount = participants.length;
 
       // 2. Distribute Funds
-      const walletKeypair = this.walletService.getKeypair(
+      const walletKeypair = await this.walletService.getKeypair(
         airdrop.encryptedPrivkey,
         airdrop.keySalt
       );
@@ -450,10 +450,30 @@ export class AirdropService {
           // For Tokens: We distribute the token amount, but we must check if we have SOL for gas
           if (balances.sol < totalEstimatedFees) {
             console.error(
-              `[AIRDROP] CRITICAL: Not enough SOL for gas fees! Need ${totalEstimatedFees}, Have ${balances.sol}`
+              `[AIRDROP] CRITICAL: Not enough SOL for gas fees! Need ${totalEstimatedFees}, Have ${balances.sol}. Aborting settlement.`
             );
-            // In a real prod env, the bot might subsidize this or fail gracefully.
-            // For now, we proceed but expect failures.
+            // Abort settlement if we can't pay gas
+            // We'll mark it as SETTLED but with 0 success to prevent infinite retries
+            await prisma.airdrop.update({
+              where: { id: airdrop.id },
+              data: {
+                status: 'SETTLED',
+                amountClaimed: 0,
+                settledAt: new Date(),
+              },
+            });
+
+            // Notify about failure
+            await this.endAirdropMessage(
+              client,
+              airdrop,
+              0,
+              0,
+              tokenSymbol,
+              [],
+              'Settlement failed: Insufficient SOL for gas fees.'
+            );
+            return;
           }
           // For tokens, we usually distribute exactly what was promised or what's in the wallet
           const tokenBal = tokenMint === TOKEN_MINTS.USDC ? balances.usdc : balances.usdt;
@@ -461,6 +481,30 @@ export class AirdropService {
         }
       } catch (err) {
         console.error('Failed to fetch realtime balance for settlement, using DB value', err);
+      }
+
+      // Safety check: If distributable amount is 0, abort
+      if (distributableAmount <= 0) {
+        console.warn(`[AIRDROP] No funds to distribute for ${airdrop.id}. Marking settled.`);
+        await prisma.airdrop.update({
+          where: { id: airdrop.id },
+          data: {
+            status: 'SETTLED',
+            amountClaimed: 0,
+            settledAt: new Date(),
+          },
+        });
+
+        await this.endAirdropMessage(
+          client,
+          airdrop,
+          0,
+          0,
+          tokenSymbol,
+          [],
+          'Settlement failed: Airdrop wallet is empty.'
+        );
+        return;
       }
 
       const share = distributableAmount / winners.length;
@@ -475,7 +519,7 @@ export class AirdropService {
 
           if (!user) {
             // Create wallet for winner
-            const newWallet = this.walletService.createEncryptedWallet();
+            const newWallet = await this.walletService.createEncryptedWallet();
             user = await prisma.user.create({
               data: {
                 discordId: winner.userId,
@@ -612,7 +656,8 @@ export class AirdropService {
     winnerCount: number,
     shareAmount: number,
     tokenSymbol: string,
-    winners: any[] = []
+    winners: any[] = [],
+    errorMessage?: string
   ) {
     if (!airdrop.messageId || !airdrop.channelId) {
       // No message to update - notify creator via DM instead
@@ -622,7 +667,8 @@ export class AirdropService {
         winnerCount,
         shareAmount,
         tokenSymbol,
-        winners
+        winners,
+        errorMessage
       );
       return;
     }
@@ -643,20 +689,32 @@ export class AirdropService {
         throw new Error('No embed found');
       }
 
-      const isRefund = winnerCount === 0;
+      const isRefund = winnerCount === 0 && !errorMessage && winners.length === 0;
+      const isFailure = !!errorMessage;
+
+      let title = '✅ Airdrop Settled';
+      if (isRefund) title = '🛑 Airdrop Expired';
+      if (isFailure) title = '⚠️ Settlement Failed';
+
+      let description = `**${winnerCount} winners** claimed this airdrop!\nEach received **${shareAmount.toFixed(4)} ${tokenSymbol}**.`;
+      if (isRefund) {
+        description = `This airdrop ended with no participants.\nFunds have been refunded to the creator.`;
+      } else if (isFailure) {
+        description = `**Settlement Failed**\n${errorMessage}\n\nPlease contact support if this persists.`;
+      }
+
+      let color = 0x000000; // Black for settled
+      if (isRefund) color = 0xed4245; // Red for expired
+      if (isFailure) color = 0xffaa00; // Orange for failure
 
       const newEmbed = new EmbedBuilder(oldEmbed.data)
-        .setTitle(isRefund ? '🛑 Airdrop Expired' : '✅ Airdrop Settled')
-        .setDescription(
-          isRefund
-            ? `This airdrop ended with no participants.\nFunds have been refunded to the creator.`
-            : `**${winnerCount} winners** claimed this airdrop!\nEach received **${shareAmount.toFixed(4)} ${tokenSymbol}**.`
-        )
-        .setColor(isRefund ? 0xed4245 : 0x000000) // Red or Black
+        .setTitle(title)
+        .setDescription(description)
+        .setColor(color)
         .setTimestamp(new Date());
 
       // Add winners list if applicable
-      if (!isRefund && winners.length > 0) {
+      if (!isRefund && !isFailure && winners.length > 0) {
         let winnersText = winners.map((w) => `<@${w.userId}>`).join(', ');
 
         // Truncate if too long (Discord field limit is 1024)
@@ -690,7 +748,8 @@ export class AirdropService {
           winnerCount,
           shareAmount,
           tokenSymbol,
-          winners
+          winners,
+          errorMessage
         );
       } else {
         logger.warn(`Failed to update airdrop message ${airdrop.messageId}:`, {
@@ -710,9 +769,11 @@ export class AirdropService {
     winnerCount: number,
     shareAmount: number,
     tokenSymbol: string,
-    winners: any[] = []
+    winners: any[] = [],
+    errorMessage?: string
   ) {
-    const isRefund = winnerCount === 0;
+    const isRefund = winnerCount === 0 && !errorMessage && winners.length === 0;
+    const isFailure = !!errorMessage;
 
     let message: string;
     if (isRefund) {
@@ -720,6 +781,12 @@ export class AirdropService {
         `🛑 **Airdrop Expired**\n\n` +
         `Your airdrop ended with no participants.\n` +
         `Funds have been refunded to your wallet.`;
+    } else if (isFailure) {
+      message =
+        `⚠️ **Airdrop Settlement Failed**\n\n` +
+        `Your airdrop could not be settled automatically.\n` +
+        `**Reason:** ${errorMessage}\n\n` +
+        `Please contact support.`;
     } else {
       const winnerMentions = winners
         .slice(0, 10)

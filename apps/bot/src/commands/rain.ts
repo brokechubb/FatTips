@@ -357,6 +357,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       )
       .setTimestamp();
 
+    if (newWallets.length > 0) {
+      embed.addFields({
+        name: '🆕 New Wallets Created',
+        value: `Created wallets for ${newWallets.length} lucky users!\nCheck your DMs! Use \`/balance\` to see your funds.`,
+      });
+    }
+
     await interaction.editReply({ embeds: [embed] });
 
     // DMs (with fallback for users who have DMs disabled)

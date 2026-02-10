@@ -90,13 +90,17 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
   // 1. Parse Duration
   const durationMs = parseDuration(durationStr);
+
   if (!durationMs || durationMs < 10000) {
     await interaction.editReply({
       content: '❌ Invalid duration. Must be at least 10 seconds (e.g., `10s`, `10m`, `1h`).',
     });
     return;
   }
-  const expiresAt = new Date(Date.now() + durationMs);
+
+  // Use interaction timestamp to ensure sync with Discord's clock (avoids server drift)
+  const startTime = interaction.createdTimestamp;
+  const expiresAt = new Date(startTime + durationMs);
 
   // 2. Parse Amount
   const parsedAmount = parseAmountInput(amountStr);
@@ -196,7 +200,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   }
 
   // 5. Generate Ephemeral Wallet
-  const ephemeralWallet = walletService.createEncryptedWallet();
+  const ephemeralWallet = await walletService.createEncryptedWallet();
 
   // 6. Fund Ephemeral Wallet
   // We need to send: Amount + Gas Fees for distribution
@@ -242,7 +246,10 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
   // Execute Funding Transaction
   try {
-    const creatorKeypair = walletService.getKeypair(creator.encryptedPrivkey, creator.keySalt);
+    const creatorKeypair = await walletService.getKeypair(
+      creator.encryptedPrivkey,
+      creator.keySalt
+    );
 
     // Transfer SOL if needed
     if (fundingAmountSol > 0) {
@@ -358,16 +365,24 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
 // Helpers (reused from tip.ts logic, ideally shared)
 function parseDuration(str: string): number | null {
-  const match = str.match(/^(\d+)([smhdw])$/);
+  // Allow spaces, decimals, case-insensitive
+  // Example: "10m", "10 m", "0.5h"
+  const match = str.trim().match(/^(\d+(?:\.\d+)?)\s*([smhdw])$/i);
   if (!match) return null;
-  const val = parseInt(match[1]);
-  const unit = match[2];
-  if (unit === 's') return val * 1000;
-  if (unit === 'm') return val * 60 * 1000;
-  if (unit === 'h') return val * 60 * 60 * 1000;
-  if (unit === 'd') return val * 24 * 60 * 60 * 1000;
-  if (unit === 'w') return val * 7 * 24 * 60 * 60 * 1000;
-  return null;
+
+  const val = parseFloat(match[1]);
+  const unit = match[2].toLowerCase();
+
+  // Safety cap for val to prevent overflow (though unlikely)
+  if (val < 0) return null;
+
+  let multiplier = 1000; // seconds
+  if (unit === 'm') multiplier *= 60;
+  if (unit === 'h') multiplier *= 60 * 60;
+  if (unit === 'd') multiplier *= 24 * 60 * 60;
+  if (unit === 'w') multiplier *= 7 * 24 * 60 * 60;
+
+  return Math.floor(val * multiplier);
 }
 
 function parseAmountInput(input: string) {
