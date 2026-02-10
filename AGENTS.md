@@ -202,9 +202,25 @@ docs/           # Documentation
 3. **Use absolute imports** with package names (e.g., `@fattips/database`)
 4. **Test thoroughly** before deploying
 5. **Financial precision**: Use `Decimal` type, never floating-point math
-6. **Security**: Never log private keys or seed phrases
+6. **Security**: Never log private keys or seed phrases. See [Security Best Practices](#security-best-practices).
+
+## Security Best Practices
+
+1. **Private Keys**:
+   - **NEVER** transmit private keys or seed phrases via Discord DMs (they are not E2EE).
+   - **NEVER** log private keys or seed phrases.
+   - Users must export keys only via secure, ephemeral interactions or a web dashboard.
+2. **Custodial Management**:
+   - The master encryption key (`MASTER_ENCRYPTION_KEY`) is critical infrastructure. Rotate it periodically.
+   - Ensure the `.env` file is strictly protected.
+3. **Transaction Safety**:
+   - Always include `ComputeBudgetProgram` priority fees to prevent dropped transactions.
+   - Use batching for multiple transfers to stay within transaction size limits.
+   - **Queues**: Heavy transactions (tips, rains) are processed via BullMQ/Redis to prevent blocking the bot.
 
 ## Testing
+
+Currently minimal testing setup. When adding tests:
 
 Currently minimal testing setup. When adding tests:
 

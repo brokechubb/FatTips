@@ -16,6 +16,7 @@ import {
   WalletService,
   BalanceService,
 } from 'fattips-solana';
+import { transactionQueue } from '../queues/transaction.queue';
 
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
@@ -73,7 +74,7 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
     let newWalletKey: string | null = null;
 
     if (!recipient) {
-      const wallet = walletService.createEncryptedWallet();
+      const wallet = await walletService.createEncryptedWallet();
       recipient = await prisma.user.create({
         data: {
           discordId: targetUserId,
@@ -181,89 +182,59 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
       }
     }
 
-    const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
+    // Send processing message
+    await interaction.editReply({ content: '⏳ Processing transaction...' });
+    const processingMsg = await interaction.fetchReply();
 
-    const signature = await transactionService.transfer(
-      senderKeypair,
-      recipient.walletPubkey,
-      amountToken,
-      tokenMint
-    );
-
-    await prisma.transaction.create({
-      data: {
-        signature,
-        fromId: sender.discordId,
-        toId: recipient.discordId,
-        amountUsd: usdValue,
-        amountToken,
-        tokenMint,
-        usdRate: usdValue > 0 ? usdValue / amountToken : 0,
-        txType: 'TIP',
-        status: 'CONFIRMED',
-      },
+    // Add to Queue
+    await transactionQueue.add('tip', {
+      type: 'TIP',
+      senderDiscordId: sender.discordId,
+      senderUsername: interaction.user.username,
+      recipientDiscordIds: [recipient.discordId],
+      amountPerUser: amountToken,
+      tokenMint,
+      tokenSymbol,
+      usdValuePerUser: usdValue,
+      channelId: interaction.channelId!,
+      messageId: processingMsg.id,
     });
-
-    logTransaction('TIP', {
-      fromId: sender.discordId,
-      toId: recipient.discordId,
-      amount: amountToken,
-      token: tokenSymbol,
-      signature,
-      status: 'SUCCESS',
-    });
-
-    const targetUser = await interaction.client.users.fetch(targetUserId);
-    const embed = new EmbedBuilder()
-      .setTitle('💸 Tip Sent!')
-      .setDescription(
-        `**${interaction.user}** tipped **${targetUser}**!\n\n` +
-          `**Amount:** ${formatTokenAmount(amountToken)} ${tokenSymbol} (~$${usdValue.toFixed(2)})\n\n` +
-          `[View on Solscan](https://solscan.io/tx/${signature})`
-      )
-      .setColor(0x00ff00)
-      .setTimestamp();
 
     if (newWalletKey) {
-      embed.addFields({
-        name: '🆕 New Wallet Created',
-        value: 'A new wallet was created for the recipient. Check their DMs!',
-      });
-    }
+      const targetUser = await interaction.client.users.fetch(targetUserId);
+      const guideEmbed = new EmbedBuilder()
+        .setTitle('🆕 New Wallet Created')
+        .setDescription(
+          `A new wallet was created for you to receive this tip!\n\n` +
+            `**🔐 Private Key:**\n\`\`\`\n${newWalletKey}\n\`\`\`\n*Self-destructs in 15m.*`
+        )
+        .setColor(0x00aaff)
+        .setFooter({ text: 'Save this key now!' });
 
-    await interaction.editReply({ embeds: [embed] });
-
-    // Send DM to recipient
-    try {
-      let msg = `🎉 You received **${formatTokenAmount(amountToken)} ${tokenSymbol}** (~$${usdValue.toFixed(2)}) from ${interaction.user.username}!`;
-
-      if (newWalletKey) {
-        msg += `\n\n**🔐 New Wallet Key:**\n\`\`\`\n${newWalletKey}\n\`\`\`\n*Self-destructs in 15m.*`;
-        const sentMsg = await targetUser.send(msg);
-
+      try {
+        const sentMsg = await targetUser.send({ embeds: [guideEmbed] });
         setTimeout(async () => {
           try {
-            await sentMsg.edit('🔒 **Key removed for security.**');
+            await sentMsg.edit({
+              embeds: [
+                new EmbedBuilder()
+                  .setTitle('🆕 New Wallet Created')
+                  .setDescription('🔒 **Key removed for security.**')
+                  .setColor(0x00aaff),
+              ],
+            });
           } catch {
             // Message might have been deleted, ignore
           }
         }, 900000);
 
-        const guideEmbed = new EmbedBuilder()
-          .setTitle('🚀 Welcome to FatTips')
-          .setDescription('You just received crypto! Use `/balance` to check it.')
-          .setColor(0x00aaff);
-        await targetUser.send({ embeds: [guideEmbed] });
-
         await prisma.user.update({
           where: { discordId: targetUserId },
           data: { seedDelivered: true },
         });
-      } else {
-        await targetUser.send(msg);
+      } catch (e) {
+        console.error('Failed to DM new wallet key:', e);
       }
-    } catch {
-      // DM failed, ignore
     }
 
     return true;

@@ -113,9 +113,9 @@ For power users and servers that prefer classic text commands, FatTips supports 
 We are building FatTips to be the most robust social payment layer on Solana.
 
 - **Phase 1-4 (Completed):** Core bot, wallet generation, encryption, tipping, external transfers, and history.
-- **Phase 5 (In Progress):** **Airdrops System.** Create "first come, first served" or "random lottery" drops in channels.
-- **Phase 6:** **Settlement System.** Unclaimed tips and airdrops are automatically reclaimed or settled after 90 days to prevent dust accumulation.
-- **Phase 7:** **Web Dashboard.** Visual portfolio tracking, leaderboards, and detailed exportable transaction history for taxes.
+- **Phase 5 (Completed):** **Airdrops System.** Create "first come, first serve" or random "rain" drops in channels.
+- **Phase 6:** **Settlement System.** Unclaimed tips and airdrops are automatically reclaimed or settled to prevent dust accumulation.
+- **Phase 7:** **Web Dashboard.** Visual portfolio tracking, leaderboards, and detailed exportable transaction history.
 - **Phase 8:** **Mobile App Integration.** (Long term goal).
 
 ---

@@ -2,6 +2,9 @@ import { Keypair, PublicKey } from '@solana/web3.js';
 import * as bip39 from 'bip39';
 import * as crypto from 'crypto';
 import bs58 from 'bs58';
+import { promisify } from 'util';
+
+const pbkdf2Async = promisify(crypto.pbkdf2);
 
 const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
@@ -30,9 +33,9 @@ export class WalletService {
   /**
    * Generate a new Solana wallet with mnemonic
    */
-  generateWallet(): { keypair: Keypair; mnemonic: string } {
+  async generateWallet(): Promise<{ keypair: Keypair; mnemonic: string }> {
     const mnemonic = bip39.generateMnemonic();
-    const seed = bip39.mnemonicToSeedSync(mnemonic);
+    const seed = await bip39.mnemonicToSeed(mnemonic);
     const keypair = Keypair.fromSeed(seed.subarray(0, 32));
 
     return { keypair, mnemonic };
@@ -41,20 +44,20 @@ export class WalletService {
   /**
    * Restore a wallet from mnemonic
    */
-  restoreWalletFromMnemonic(mnemonic: string): Keypair {
-    const seed = bip39.mnemonicToSeedSync(mnemonic);
+  async restoreWalletFromMnemonic(mnemonic: string): Promise<Keypair> {
+    const seed = await bip39.mnemonicToSeed(mnemonic);
     return Keypair.fromSeed(seed.subarray(0, 32));
   }
 
   /**
    * Encrypt a private key using AES-256-GCM
    */
-  encryptPrivateKey(privateKey: Buffer): { encrypted: string; salt: string } {
+  async encryptPrivateKey(privateKey: Buffer): Promise<{ encrypted: string; salt: string }> {
     const salt = crypto.randomBytes(SALT_LENGTH);
     const iv = crypto.randomBytes(IV_LENGTH);
 
     // Derive key using PBKDF2
-    const derivedKey = crypto.pbkdf2Sync(this.masterKey, salt, 100000, 32, 'sha256');
+    const derivedKey = (await pbkdf2Async(this.masterKey, salt, 100000, 32, 'sha256')) as Buffer;
 
     const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, derivedKey, iv);
     const encrypted = Buffer.concat([cipher.update(privateKey), cipher.final()]);
@@ -72,7 +75,7 @@ export class WalletService {
   /**
    * Decrypt a private key
    */
-  decryptPrivateKey(encryptedData: string, salt: string): Buffer {
+  async decryptPrivateKey(encryptedData: string, salt: string): Promise<Buffer> {
     const data = Buffer.from(encryptedData, 'base64');
     const saltBuffer = Buffer.from(salt, 'base64');
 
@@ -82,7 +85,13 @@ export class WalletService {
     const encrypted = data.subarray(SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
 
     // Derive key
-    const derivedKey = crypto.pbkdf2Sync(this.masterKey, saltBuffer, 100000, 32, 'sha256');
+    const derivedKey = (await pbkdf2Async(
+      this.masterKey,
+      saltBuffer,
+      100000,
+      32,
+      'sha256'
+    )) as Buffer;
 
     const decipher = crypto.createDecipheriv(ENCRYPTION_ALGORITHM, derivedKey, iv);
     decipher.setAuthTag(tag);
@@ -95,17 +104,19 @@ export class WalletService {
   /**
    * Create a new wallet with full encryption
    */
-  createEncryptedWallet(): WalletData & { mnemonic: string; privateKeyBase58: string } {
-    const { keypair, mnemonic } = this.generateWallet();
+  async createEncryptedWallet(): Promise<
+    WalletData & { mnemonic: string; privateKeyBase58: string }
+  > {
+    const { keypair, mnemonic } = await this.generateWallet();
     const privateKey = keypair.secretKey;
     const privateKeyBase58 = bs58.encode(privateKey);
 
-    const { encrypted, salt } = this.encryptPrivateKey(Buffer.from(privateKey));
+    const { encrypted, salt } = await this.encryptPrivateKey(Buffer.from(privateKey));
 
     // Encrypt mnemonic separately
     const mnemonicBuffer = Buffer.from(mnemonic, 'utf8');
     const { encrypted: encryptedMnemonic, salt: mnemonicSalt } =
-      this.encryptPrivateKey(mnemonicBuffer);
+      await this.encryptPrivateKey(mnemonicBuffer);
 
     return {
       publicKey: keypair.publicKey.toBase58(),
@@ -121,24 +132,24 @@ export class WalletService {
   /**
    * Decrypt the mnemonic
    */
-  decryptMnemonic(encryptedMnemonic: string, salt: string): string {
-    const decrypted = this.decryptPrivateKey(encryptedMnemonic, salt);
+  async decryptMnemonic(encryptedMnemonic: string, salt: string): Promise<string> {
+    const decrypted = await this.decryptPrivateKey(encryptedMnemonic, salt);
     return decrypted.toString('utf8');
   }
 
   /**
    * Get keypair from encrypted data
    */
-  getKeypair(encryptedPrivateKey: string, salt: string): Keypair {
-    const decrypted = this.decryptPrivateKey(encryptedPrivateKey, salt);
+  async getKeypair(encryptedPrivateKey: string, salt: string): Promise<Keypair> {
+    const decrypted = await this.decryptPrivateKey(encryptedPrivateKey, salt);
     return Keypair.fromSecretKey(decrypted);
   }
 
   /**
    * Export private key as Base58 string (Phantom style)
    */
-  exportPrivateKey(encryptedPrivateKey: string, salt: string): string {
-    const decrypted = this.decryptPrivateKey(encryptedPrivateKey, salt);
+  async exportPrivateKey(encryptedPrivateKey: string, salt: string): Promise<string> {
+    const decrypted = await this.decryptPrivateKey(encryptedPrivateKey, salt);
     return bs58.encode(decrypted);
   }
 

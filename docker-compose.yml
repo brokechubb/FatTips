@@ -61,9 +61,13 @@ services:
       - NODE_ENV=production
       # Override DATABASE_URL to use internal Docker network hostname
       - DATABASE_URL=postgresql://fattips_user:${POSTGRES_PASSWORD}@postgres:5432/fattips
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     volumes:
       # Mount logs directory to host for persistence and easy access
       - ./logs/bot:/app/apps/bot/logs

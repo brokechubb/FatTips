@@ -16,11 +16,13 @@
     "@sentry/profiling-node": "^10.38.0",
     "@solana/spl-token": "^0.3.9",
     "@solana/web3.js": "^1.87.0",
+    "bullmq": "^5.67.3",
     "discord.js": "^14.14.0",
     "dotenv": "^16.3.0",
     "fattips-database": "workspace:*",
     "fattips-shared": "workspace:*",
     "fattips-solana": "workspace:*",
+    "ioredis": "^5.9.2",
     "winston": "^3.19.0"
   },
   "devDependencies": {

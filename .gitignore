@@ -84,3 +84,4 @@ volumes/
 .vercel
 .netlify
 fattips_dump.sql
+nogit/

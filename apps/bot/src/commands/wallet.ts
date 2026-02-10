@@ -74,7 +74,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     }
 
     // Generate new wallet
-    const wallet = walletService.createEncryptedWallet();
+    const wallet = await walletService.createEncryptedWallet();
 
     // Save to database
     await prisma.user.create({
@@ -89,30 +89,10 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
       },
     });
 
-    // Try to DM the seed phrase
+    // Try to DM the welcome guide
     let dmSuccess = false;
     try {
-      const dmEmbed = new EmbedBuilder()
-        .setTitle('🔐 Your FatTips Wallet Private Key')
-        .setDescription(
-          '**IMPORTANT: Keep this safe!**\n\n' +
-            'This is your wallet private key. Anyone with access to this string can access your funds.\n\n' +
-            '```\n' +
-            wallet.privateKeyBase58 +
-            '\n```\n\n' +
-            '**Tips:**\n' +
-            '• Write this down or store it in a password manager\n' +
-            '• Never share this with anyone\n' +
-            '• You can use this key to import your wallet into **Phantom** or **Solflare** (Select "Import Private Key")\n\n' +
-            '⚠️ **This message will self-destruct in 15 minutes for your security.**'
-        )
-        .setColor(0xff6b6b)
-        .setFooter({ text: 'Auto-deleting sensitive info in 15m' })
-        .setTimestamp();
-
-      const dmMessage = await interaction.user.send({ embeds: [dmEmbed] });
-
-      // Send a separate persistent guide message
+      // Send a persistent guide message
       const guideEmbed = new EmbedBuilder()
         .setTitle('🚀 Getting Started with FatTips')
         .setDescription('FatTips is a non-custodial wallet. Here is how to use it:')
@@ -136,28 +116,15 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
           {
             name: '🔐 Security',
             value:
-              'The private key above allows you to import this wallet anywhere. **It will self-destruct in 15 minutes.** If you miss it, use `/wallet action:export-key` to see it again.',
+              'Your wallet is encrypted. To view your private key for import into other wallets, use `/wallet action:export-key` in a secure environment. Never share your key!',
           }
         );
 
       await interaction.user.send({ embeds: [guideEmbed] });
 
-      // Auto-remove private key after 15 minutes
-      setTimeout(async () => {
-        try {
-          await dmMessage.edit({
-            content:
-              '🔒 **Private key removed for security.**\nUse `/wallet action:export-key` to view it again.',
-            embeds: [],
-          });
-        } catch {
-          // Message might already be deleted or channel closed
-        }
-      }, 900000); // 15 minutes
-
       dmSuccess = true;
 
-      // Update seed delivered status
+      // Update seed delivered status (marking as delivered since instructions were sent)
       await prisma.user.update({
         where: { discordId: interaction.user.id },
         data: { seedDelivered: true },
@@ -184,14 +151,13 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     if (!dmSuccess) {
       embed.addFields({
         name: '⚠️ Important',
-        value:
-          "I couldn't send you a DM with your private key. Please enable DMs from server members and run `/wallet action:export-key` to receive your private key.",
+        value: "I couldn't send you a DM with instructions. Please enable DMs from server members.",
         inline: false,
       });
     } else {
       embed.addFields({
-        name: '🔐 Private Key',
-        value: 'Check your DMs for your private key. Keep it safe!',
+        name: 'ℹ️ Wallet Access',
+        value: 'Check your DMs for instructions on how to use your wallet.',
         inline: false,
       });
     }
@@ -268,7 +234,7 @@ async function handleExport(interaction: ChatInputCommandInteraction) {
     }
 
     // Decrypt the mnemonic
-    const mnemonic = walletService.decryptMnemonic(user.encryptedMnemonic, user.mnemonicSalt);
+    const mnemonic = await walletService.decryptMnemonic(user.encryptedMnemonic, user.mnemonicSalt);
 
     // Send the mnemonic via DM
     const dmEmbed = new EmbedBuilder()
@@ -355,7 +321,10 @@ async function handleExportKey(interaction: ChatInputCommandInteraction) {
     }
 
     // Decrypt the private key
-    const privateKeyBase58 = walletService.exportPrivateKey(user.encryptedPrivkey, user.keySalt);
+    const privateKeyBase58 = await walletService.exportPrivateKey(
+      user.encryptedPrivkey,
+      user.keySalt
+    );
 
     // Send the private key via DM
     const dmEmbed = new EmbedBuilder()

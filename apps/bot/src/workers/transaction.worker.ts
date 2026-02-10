@@ -1,0 +1,228 @@
+import { Worker, Job } from 'bullmq';
+import { Client, TextChannel, EmbedBuilder } from 'discord.js';
+import { prisma } from 'fattips-database';
+import { TransactionService, WalletService, TOKEN_MINTS } from 'fattips-solana';
+import IORedis from 'ioredis';
+import { REDIS_CONNECTION_OPTS, TransferJobData } from '../queues/transaction.queue';
+
+const connection = new IORedis({
+  ...REDIS_CONNECTION_OPTS,
+  maxRetriesPerRequest: null,
+});
+
+// Services
+const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
+const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
+
+export function initTransactionWorker(client: Client) {
+  const worker = new Worker<TransferJobData>(
+    'transactions',
+    async (job: Job<TransferJobData>) => {
+      const {
+        type,
+        senderDiscordId,
+        senderUsername,
+        recipientDiscordIds,
+        toAddress,
+        amountPerUser,
+        tokenMint,
+        tokenSymbol,
+        usdValuePerUser,
+        channelId,
+        messageId,
+      } = job.data;
+
+      console.log(`[Worker] Processing job ${job.id}: ${type} from ${senderDiscordId}`);
+
+      try {
+        // 1. Get Sender Wallet
+        const sender = await prisma.user.findUnique({
+          where: { discordId: senderDiscordId },
+        });
+
+        if (!sender) {
+          throw new Error('Sender wallet not found');
+        }
+
+        // 2. Prepare Recipients or Target Address
+        const recipientWallets = [];
+        let targetPubkey = '';
+
+        if (type === 'WITHDRAWAL') {
+          if (!toAddress) throw new Error('Withdrawal job missing toAddress');
+          targetPubkey = toAddress;
+        } else {
+          // TIP or RAIN
+          if (!recipientDiscordIds || recipientDiscordIds.length === 0) {
+            throw new Error('No recipients provided');
+          }
+
+          for (const recipientId of recipientDiscordIds) {
+            const recipient = await prisma.user.findUnique({
+              where: { discordId: recipientId },
+            });
+            if (recipient) {
+              recipientWallets.push(recipient);
+            }
+          }
+
+          if (recipientWallets.length === 0) {
+            throw new Error('No valid internal recipients found');
+          }
+        }
+
+        // 3. Execute Transfer
+        const senderKeypair = await walletService.getKeypair(
+          sender.encryptedPrivkey,
+          sender.keySalt
+        );
+
+        let signature: string;
+
+        if (type === 'WITHDRAWAL') {
+          // Withdrawal to external address
+          signature = await transactionService.transfer(
+            senderKeypair,
+            targetPubkey,
+            amountPerUser,
+            tokenMint
+          );
+        } else if (recipientWallets.length === 1 && type !== 'RAIN') {
+          // Single internal transfer
+          signature = await transactionService.transfer(
+            senderKeypair,
+            recipientWallets[0].walletPubkey,
+            amountPerUser,
+            tokenMint
+          );
+        } else {
+          // Batch transfer (Rain or Multi-tip)
+          const transfers = recipientWallets.map((r) => ({
+            recipient: r.walletPubkey,
+            amount: amountPerUser,
+          }));
+          signature = await transactionService.batchTransfer(senderKeypair, transfers, tokenMint);
+        }
+
+        // 4. Log Transactions
+        if (type === 'WITHDRAWAL') {
+          await prisma.transaction.create({
+            data: {
+              signature,
+              fromId: sender.discordId,
+              toAddress: targetPubkey,
+              amountUsd: usdValuePerUser,
+              amountToken: amountPerUser,
+              tokenMint,
+              usdRate: usdValuePerUser > 0 ? usdValuePerUser / amountPerUser : 0,
+              txType: 'WITHDRAWAL',
+              status: 'CONFIRMED',
+            },
+          });
+        } else {
+          for (let i = 0; i < recipientWallets.length; i++) {
+            const recipient = recipientWallets[i];
+            const batchSignature = recipientWallets.length > 1 ? `${signature}:${i}` : signature;
+
+            await prisma.transaction.create({
+              data: {
+                signature: batchSignature,
+                fromId: sender.discordId,
+                toId: recipient.discordId,
+                amountUsd: usdValuePerUser,
+                amountToken: amountPerUser,
+                tokenMint,
+                usdRate: usdValuePerUser > 0 ? usdValuePerUser / amountPerUser : 0,
+                txType: type === 'RAIN' ? 'TIP' : type,
+                status: 'CONFIRMED',
+              },
+            });
+          }
+        }
+
+        // 5. Notify Discord
+        if (channelId && messageId) {
+          try {
+            const channel = (await client.channels.fetch(channelId)) as TextChannel;
+            if (channel) {
+              const originalMsg = await channel.messages.fetch(messageId);
+              let embed: EmbedBuilder;
+
+              if (type === 'WITHDRAWAL') {
+                embed = new EmbedBuilder()
+                  .setTitle('📤 Withdrawal Successful')
+                  .setDescription(
+                    `Sent **${amountPerUser.toFixed(4)} ${tokenSymbol}** (~$${usdValuePerUser.toFixed(2)}) to:\n\`${targetPubkey}\`\n\n[View on Solscan](https://solscan.io/tx/${signature})`
+                  )
+                  .setColor(0x00ff00)
+                  .setTimestamp();
+              } else {
+                const userMentions = recipientWallets.map((r) => `<@${r.discordId}>`).join(', ');
+                const title = type === 'RAIN' ? '🌧️ Making it Rain!' : '💸 Tip Sent!';
+
+                embed = new EmbedBuilder()
+                  .setTitle(title)
+                  .setDescription(
+                    `**<@${senderDiscordId}>** sent ${userMentions}\n\n` +
+                      `**Amount:** ${amountPerUser.toFixed(4)} ${tokenSymbol} (~$${usdValuePerUser.toFixed(2)}) each\n` +
+                      `[View on Solscan](https://solscan.io/tx/${signature})`
+                  )
+                  .setColor(0x00ff00)
+                  .setTimestamp();
+              }
+
+              // If it was a "Processing..." message, edit it. Otherwise reply.
+              if (originalMsg.author.id === client.user?.id) {
+                await originalMsg.edit({ content: '', embeds: [embed] });
+              } else {
+                await originalMsg.reply({ embeds: [embed] });
+              }
+            }
+          } catch (discordError) {
+            console.error('Failed to send Discord notification:', discordError);
+          }
+        }
+
+        // 6. Notify Recipients (DM) - Only for internal transfers
+        if (type !== 'WITHDRAWAL') {
+          for (const recipient of recipientWallets) {
+            try {
+              const user = await client.users.fetch(recipient.discordId);
+              const msg = `💸 You received **${amountPerUser.toFixed(4)} ${tokenSymbol}** (~$${usdValuePerUser.toFixed(2)}) from ${senderUsername || 'a user'}!`;
+              await user.send(msg);
+            } catch (e) {
+              console.error(`Failed to DM user ${recipient.discordId}`);
+            }
+          }
+        }
+      } catch (error: any) {
+        console.error(`Job ${job.id} failed:`, error);
+
+        // Notify failure
+        if (channelId && messageId) {
+          try {
+            const channel = (await client.channels.fetch(channelId)) as TextChannel;
+            if (channel) {
+              await channel.send(
+                `❌ Transaction failed for <@${senderDiscordId}>: ${error.message}`
+              );
+            }
+          } catch {}
+        }
+
+        throw error;
+      }
+    },
+    { connection }
+  );
+
+  worker.on('completed', (job) => {
+    console.log(`[Worker] Job ${job.id} completed!`);
+  });
+
+  worker.on('failed', (job, err) => {
+    console.error(`[Worker] Job ${job?.id} failed: ${err.message}`);
+  });
+
+  return worker;
+}

@@ -18,6 +18,7 @@ ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST "mkdir -p $RE
 
 # Upload latest backup script
 scp -P $SERVER_PORT -o ConnectTimeout=30 "$SCRIPT_DIR/backup-database.sh" $SERVER_USER@$SERVER_HOST:$REMOTE_DIR/scripts/
+scp -P $SERVER_PORT -o ConnectTimeout=30 "$SCRIPT_DIR/cleanup.sh" $SERVER_USER@$SERVER_HOST:$REMOTE_DIR/scripts/
 
 echo "💾 Creating database backup before deployment..."
 # Combine chmod and execution to reduce connections and potential hang

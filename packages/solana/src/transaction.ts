@@ -6,6 +6,7 @@ import {
   sendAndConfirmTransaction,
   Keypair,
   LAMPORTS_PER_SOL,
+  ComputeBudgetProgram,
 } from '@solana/web3.js';
 import {
   createTransferInstruction,
@@ -51,6 +52,9 @@ export class TransactionService {
     mintAddress: string
   ): Promise<string> {
     const transaction = new Transaction();
+
+    // Add priority fee to ensure transaction processing
+    transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }));
 
     // Case 1: SOL Batch Transfer
     if (mintAddress === TOKEN_MINTS.SOL) {
@@ -117,13 +121,15 @@ export class TransactionService {
     recipientPubkey: PublicKey,
     amountSol: number
   ): Promise<string> {
-    const transaction = new Transaction().add(
-      SystemProgram.transfer({
-        fromPubkey: senderKeypair.publicKey,
-        toPubkey: recipientPubkey,
-        lamports: Math.round(amountSol * LAMPORTS_PER_SOL),
-      })
-    );
+    const transaction = new Transaction()
+      .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }))
+      .add(
+        SystemProgram.transfer({
+          fromPubkey: senderKeypair.publicKey,
+          toPubkey: recipientPubkey,
+          lamports: Math.round(amountSol * LAMPORTS_PER_SOL),
+        })
+      );
 
     return sendAndConfirmTransaction(this.connection, transaction, [senderKeypair]);
   }
@@ -144,6 +150,9 @@ export class TransactionService {
     const recipientAta = await getAssociatedTokenAddress(mintPubkey, recipientPubkey);
 
     const transaction = new Transaction();
+
+    // Add priority fee to ensure transaction processing
+    transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }));
 
     // Check if recipient has ATA, if not create it (funded by sender)
     try {

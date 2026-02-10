@@ -16,6 +16,7 @@ import {
   handleWithdrawModal,
   handleSendFormModal,
 } from './handlers/balanceInteractions';
+import { initTransactionWorker } from './workers/transaction.worker';
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
@@ -122,6 +123,10 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN!
 
 client.once('clientReady', () => {
   logger.info(`Bot logged in as ${client.user?.tag}`);
+
+  // Initialize Transaction Worker
+  initTransactionWorker(client);
+  logger.info('Transaction worker initialized');
 
   // Schedule airdrop settlement (every 10 seconds for responsiveness)
   setInterval(() => {
