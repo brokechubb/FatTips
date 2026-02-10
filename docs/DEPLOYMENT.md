@@ -36,7 +36,7 @@ FatTips is privacy-focused and **does NOT require** any privileged intents.
 
 - **Presence Intent:** OFF
 - **Server Members Intent:** OFF
-- **Message Content Intent:** OFF
+- **Message Content Intent:** ON (Required for prefix commands like `ftip`)
 
 ### 3. Installation Contexts
 

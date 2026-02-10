@@ -93,6 +93,19 @@ Keep track of your spending and earnings.
 
 FatTips supports **Discord User Apps**. You can install the bot to your personal account and use it in **ANY** server or DM, even if the bot hasn't been invited there. This makes your wallet truly portable across Discord.
 
+### 7. Prefix Commands ⚡
+
+For power users and servers that prefer classic text commands, FatTips supports prefix commands.
+**Default Prefix:** `f` (e.g., `ftip`, `fbalance`)
+
+- `ftip @user $5` — Tip instantly
+- `ftip $5` (Reply to message) — Tip the message author
+- `frain $10 5` — Rain on 5 active users
+- `fairdrop $10 30m` — Create an airdrop
+- `fbalance` — Check funds
+- `fdeposit` — Show deposit address
+- `fsetprefix <new>` — Change server prefix (Admin only)
+
 ---
 
 ## 🗺️ Roadmap & Future Plans

@@ -38,6 +38,18 @@ The Discord bot is the primary user interface for FatTips.
 - `/leaderboard` - View top tippers
 - `/withdraw <amount> <address>` - Withdraw to external wallet
 
+### Prefix Commands
+
+The default prefix is `f`.
+
+- `ftip @user $5` - Tip user
+- `frain $10 5` - Rain on 5 active users
+- `fairdrop $10 1h` - Create airdrop
+- `fbalance` - Check balance
+- `fdeposit` - Show deposit address
+- `fhistory` - View history
+- `fsetprefix` - Change prefix (Admin)
+
 ## Development
 
 ```bash
