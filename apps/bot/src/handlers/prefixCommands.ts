@@ -632,6 +632,7 @@ async function handleSend(message: Message, args: string[], prefix: string) {
   let tokenSymbol = parsedAmount.token || 'SOL';
   let tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS] || TOKEN_MINTS.SOL;
   let amountToken: number;
+  let usdValue: number = 0;
 
   // Smart detection: If withdrawing "all" without specifying token, check balances
   if (parsedAmount.type === 'max' && !parsedAmount.token) {
@@ -656,17 +657,29 @@ async function handleSend(message: Message, args: string[], prefix: string) {
       return;
     }
     amountToken = conversion.amountToken;
+    usdValue = parsedAmount.value;
   } else if (parsedAmount.type === 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const feeBuffer = PREFIX_FEE_BUFFER;
-    amountToken =
-      tokenSymbol === 'SOL'
-        ? Math.max(0, balances.sol - feeBuffer - MIN_RENT_EXEMPTION)
-        : tokenSymbol === 'USDC'
-          ? balances.usdc
-          : balances.usdt;
+
+    if (tokenSymbol === 'SOL') {
+      // For MAX withdrawal, we allow closing the account by transferring everything minus fixed fee.
+      // We will skip priority fees for this closing transaction to ensure exact math.
+      // Fixed fee = 0.000005 SOL (5000 lamports)
+      const CLOSING_FEE = 0.000005;
+      amountToken = Math.max(0, balances.sol - CLOSING_FEE);
+    } else if (tokenSymbol === 'USDC') {
+      amountToken = balances.usdc;
+    } else {
+      amountToken = balances.usdt;
+    }
+
+    const price = await priceService.getTokenPrice(tokenMint);
+    usdValue = price ? amountToken * price.price : 0;
   } else {
     amountToken = parsedAmount.value;
+    const price = await priceService.getTokenPrice(tokenMint);
+    usdValue = price ? amountToken * price.price : 0;
   }
 
   if (amountToken <= 0) {
@@ -704,6 +717,7 @@ async function handleSend(message: Message, args: string[], prefix: string) {
     usdValuePerUser: 0, // Not calculated for withdrawal here
     channelId: message.channel.id,
     messageId: processingMsg.id,
+    skipPriorityFee: parsedAmount.type === 'max' && tokenSymbol === 'SOL',
   });
 }
 

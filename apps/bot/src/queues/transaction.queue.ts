@@ -27,6 +27,7 @@ export interface TransferJobData {
   channelId?: string;
   messageId?: string; // Original message to reply to/edit
   replyToUserId?: string; // DM fallback
+  skipPriorityFee?: boolean; // For closing accounts (exact math)
 }
 
 export const transactionQueue = new Queue<TransferJobData>('transactions', {

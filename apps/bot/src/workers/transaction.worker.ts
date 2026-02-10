@@ -85,7 +85,8 @@ export function initTransactionWorker(client: Client) {
             senderKeypair,
             targetPubkey,
             amountPerUser,
-            tokenMint
+            tokenMint,
+            { priorityFee: !job.data.skipPriorityFee }
           );
         } else if (recipientWallets.length === 1 && type !== 'RAIN') {
           // Single internal transfer

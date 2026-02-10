@@ -250,7 +250,11 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
       tokenMint = selectedToken.mint;
 
       if (tokenSymbol === 'SOL') {
-        amountToken = Math.max(0, balances.sol - feeBuffer - rentReserve);
+        // For MAX withdrawal, we allow closing the account by transferring everything minus fixed fee.
+        // We will skip priority fees for this closing transaction to ensure exact math.
+        // Fixed fee = 0.000005 SOL (5000 lamports)
+        const CLOSING_FEE = 0.000005;
+        amountToken = Math.max(0, balances.sol - CLOSING_FEE);
       } else if (tokenSymbol === 'USDC') {
         amountToken = balances.usdc;
       } else {
@@ -262,8 +266,7 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
           content:
             `${interaction.user} ❌ Insufficient balance!\n` +
             `You have **${balances.sol.toFixed(6)} SOL**.\n` +
-            `Required reserve: **${(feeBuffer + rentReserve).toFixed(5)} SOL** (to keep wallet active).\n` +
-            `You can only withdraw funds above this amount.`,
+            `Minimum needed for transaction fee: **0.000005 SOL**.\n`,
         });
         return true;
       }
@@ -331,7 +334,15 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
               `${interaction.user} ❌ Insufficient funds!\n` +
               `**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n` +
               `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
-              `Try using \`all\` to withdraw everything.`,
+              `Try using \`all\` to send everything.`,
+          });
+          return true;
+        }
+
+        // Safety check for dust transfers that might fail rent exemption on destination
+        if (amountToken < MIN_RENT_EXEMPTION) {
+          await interaction.editReply({
+            content: `❌ Amount too small! Minimum SOL transfer is ${MIN_RENT_EXEMPTION} SOL to ensure recipient meets rent requirements.`,
           });
           return true;
         }
@@ -365,6 +376,7 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
       usdValuePerUser: usdValue,
       channelId: interaction.channelId!,
       messageId: processingMsg.id,
+      skipPriorityFee: parsedAmount.type === 'max' && tokenSymbol === 'SOL',
     });
 
     return true;
@@ -574,7 +586,11 @@ async function processSendTransaction(
     tokenMint = selectedToken.mint;
 
     if (tokenSymbol === 'SOL') {
-      amountToken = Math.max(0, balances.sol - feeBuffer - rentReserve);
+      // For MAX withdrawal, we allow closing the account by transferring everything minus fixed fee.
+      // We will skip priority fees for this closing transaction to ensure exact math.
+      // Fixed fee = 0.000005 SOL (5000 lamports)
+      const CLOSING_FEE = 0.000005;
+      amountToken = Math.max(0, balances.sol - CLOSING_FEE);
     } else if (tokenSymbol === 'USDC') {
       amountToken = balances.usdc;
     } else {
@@ -586,8 +602,7 @@ async function processSendTransaction(
         content:
           `${interaction.user} ❌ Insufficient balance!\n` +
           `You have **${balances.sol.toFixed(6)} SOL**.\n` +
-          `Required reserve: **${(feeBuffer + rentReserve).toFixed(5)} SOL** (to keep wallet active).\n` +
-          `You can only withdraw funds above this amount.`,
+          `Minimum needed for transaction fee: **0.000005 SOL**.\n`,
       });
       return;
     }
@@ -659,6 +674,14 @@ async function processSendTransaction(
         });
         return;
       }
+
+      // Safety check for dust transfers that might fail rent exemption on destination
+      if (amountToken < MIN_RENT_EXEMPTION) {
+        await interaction.editReply({
+          content: `❌ Amount too small! Minimum SOL transfer is ${MIN_RENT_EXEMPTION} SOL to ensure recipient meets rent requirements.`,
+        });
+        return;
+      }
     } else {
       const currentBal = tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
       if (currentBal < amountToken) {
@@ -674,46 +697,21 @@ async function processSendTransaction(
     }
   }
 
-  // Execute Transfer
-  const senderKeypair = await walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
-  const signature = await transactionService.transfer(
-    senderKeypair,
-    recipientPubkey.toBase58(),
-    amountToken,
-    tokenMint
-  );
+  // Send processing message
+  await interaction.editReply({ content: '⏳ Processing transaction...' });
+  const processingMsg = await interaction.fetchReply();
 
-  // Record Transaction
-  await prisma.transaction.create({
-    data: {
-      signature,
-      fromId: sender.discordId,
-      toAddress: recipientPubkey.toBase58(),
-      amountUsd: usdValue,
-      amountToken,
-      tokenMint,
-      usdRate: usdValue > 0 ? usdValue / amountToken : 0,
-      txType: 'WITHDRAWAL',
-      status: 'CONFIRMED',
-    },
+  // Add to Queue
+  await transactionQueue.add('withdrawal', {
+    type: 'WITHDRAWAL',
+    senderDiscordId: sender.discordId,
+    toAddress: recipientPubkey.toBase58(),
+    amountPerUser: amountToken,
+    tokenMint,
+    tokenSymbol,
+    usdValuePerUser: usdValue,
+    channelId: interaction.channelId!,
+    messageId: processingMsg.id,
+    skipPriorityFee: parsedAmount.type === 'max' && tokenSymbol === 'SOL',
   });
-
-  logTransaction('SEND', {
-    fromId: sender.discordId,
-    toId: recipientPubkey.toBase58(),
-    amount: amountToken,
-    token: tokenSymbol,
-    signature,
-    status: 'SUCCESS',
-  });
-
-  const embed = new EmbedBuilder()
-    .setTitle('📤 Transfer Successful')
-    .setDescription(
-      `Sent **${formatTokenAmount(amountToken)} ${tokenSymbol}** (~$${usdValue.toFixed(2)}) to:\n\`${recipientPubkey.toBase58()}\`\n\n[View on Solscan](https://solscan.io/tx/${signature})`
-    )
-    .setColor(0x00ff00)
-    .setTimestamp();
-
-  await interaction.editReply({ embeds: [embed] });
 }

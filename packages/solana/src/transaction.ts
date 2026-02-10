@@ -30,17 +30,18 @@ export class TransactionService {
     senderKeypair: Keypair,
     recipientPubkeyStr: string,
     amount: number,
-    mintAddress: string
+    mintAddress: string,
+    options: { priorityFee?: boolean } = { priorityFee: true }
   ): Promise<string> {
     const recipientPubkey = new PublicKey(recipientPubkeyStr);
 
     // Case 1: SOL Transfer
     if (mintAddress === TOKEN_MINTS.SOL) {
-      return this.transferSol(senderKeypair, recipientPubkey, amount);
+      return this.transferSol(senderKeypair, recipientPubkey, amount, options);
     }
 
     // Case 2: SPL Token Transfer (USDC, USDT)
-    return this.transferSplToken(senderKeypair, recipientPubkey, amount, mintAddress);
+    return this.transferSplToken(senderKeypair, recipientPubkey, amount, mintAddress, options);
   }
 
   /**
@@ -49,12 +50,15 @@ export class TransactionService {
   async batchTransfer(
     senderKeypair: Keypair,
     transfers: { recipient: string; amount: number }[],
-    mintAddress: string
+    mintAddress: string,
+    options: { priorityFee?: boolean } = { priorityFee: true }
   ): Promise<string> {
     const transaction = new Transaction();
 
     // Add priority fee to ensure transaction processing
-    transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }));
+    if (options.priorityFee) {
+      transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }));
+    }
 
     // Case 1: SOL Batch Transfer
     if (mintAddress === TOKEN_MINTS.SOL) {
@@ -119,17 +123,22 @@ export class TransactionService {
   private async transferSol(
     senderKeypair: Keypair,
     recipientPubkey: PublicKey,
-    amountSol: number
+    amountSol: number,
+    options: { priorityFee?: boolean } = { priorityFee: true }
   ): Promise<string> {
-    const transaction = new Transaction()
-      .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }))
-      .add(
-        SystemProgram.transfer({
-          fromPubkey: senderKeypair.publicKey,
-          toPubkey: recipientPubkey,
-          lamports: Math.round(amountSol * LAMPORTS_PER_SOL),
-        })
-      );
+    const transaction = new Transaction();
+
+    if (options.priorityFee) {
+      transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }));
+    }
+
+    transaction.add(
+      SystemProgram.transfer({
+        fromPubkey: senderKeypair.publicKey,
+        toPubkey: recipientPubkey,
+        lamports: Math.round(amountSol * LAMPORTS_PER_SOL),
+      })
+    );
 
     return sendAndConfirmTransaction(this.connection, transaction, [senderKeypair]);
   }
@@ -141,7 +150,8 @@ export class TransactionService {
     senderKeypair: Keypair,
     recipientPubkey: PublicKey,
     amountTokens: number,
-    mintAddress: string
+    mintAddress: string,
+    options: { priorityFee?: boolean } = { priorityFee: true }
   ): Promise<string> {
     const mintPubkey = new PublicKey(mintAddress);
 
@@ -152,7 +162,9 @@ export class TransactionService {
     const transaction = new Transaction();
 
     // Add priority fee to ensure transaction processing
-    transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }));
+    if (options.priorityFee) {
+      transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }));
+    }
 
     // Check if recipient has ATA, if not create it (funded by sender)
     try {
