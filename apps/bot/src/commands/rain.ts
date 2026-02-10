@@ -132,7 +132,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       if (!recipient) {
         // Auto-create wallet
         try {
-          const wallet = walletService.createEncryptedWallet();
+          const wallet = await walletService.createEncryptedWallet();
           recipient = await prisma.user.create({
             data: {
               discordId: recipientId,
@@ -183,7 +183,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (parsedAmount.type === 'max' && !preferredToken) {
       // Auto-detect based on available balance
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00001 * recipientWallets.length;
+      const feeBuffer = 0.00002;
       const rentReserve = MIN_RENT_EXEMPTION;
 
       // Check which token has significant balance
@@ -207,7 +207,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (parsedAmount.type === 'max') {
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00001 * recipientWallets.length;
+      const feeBuffer = 0.00002;
       const rentReserve = MIN_RENT_EXEMPTION;
 
       if (tokenSymbol === 'SOL') {
@@ -275,7 +275,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const requiredSol = totalAmountToken + feeBuffer + rentReserve;
       if (balances.sol < requiredSol) {
         await interaction.editReply({
-          content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL\n**Available:** ${balances.sol.toFixed(5)} SOL`,
+          content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n**Available:** ${balances.sol.toFixed(5)} SOL`,
         });
         return;
       }
@@ -294,7 +294,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     // 6. Execute Batch Transfer
-    const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
+    const senderKeypair = await walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
     const transfers = recipientWallets.map((r) => ({
       recipient: r.walletPubkey,
       amount: amountPerUser,

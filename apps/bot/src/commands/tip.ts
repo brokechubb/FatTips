@@ -135,7 +135,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       if (!recipient) {
         // Auto-create wallet
         try {
-          const wallet = walletService.createEncryptedWallet();
+          const wallet = await walletService.createEncryptedWallet();
           recipient = await prisma.user.create({
             data: {
               discordId: recipientId,
@@ -197,7 +197,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
 
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00001 * recipientWallets.length; // Approximate fee for batch
+      const feeBuffer = 0.00002; // Fixed fee buffer for single signature transaction
       const rentReserve = MIN_RENT_EXEMPTION;
 
       if (tokenSymbol === 'SOL') {
@@ -295,7 +295,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       // Use epsilon to handle floating point precision issues, especially for "max" amounts
       if (balances.sol + epsilon < requiredSol) {
         await interaction.editReply({
-          content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL\n**Available:** ${balances.sol.toFixed(5)} SOL`,
+          content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n**Available:** ${balances.sol.toFixed(5)} SOL`,
         });
         return;
       }
@@ -315,7 +315,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     // --- EXECUTE BATCH TRANSFER ---
-    const senderKeypair = walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
+    const senderKeypair = await walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
 
     // Prepare transfers array
     const transfers = recipientWallets.map((r) => ({
@@ -401,23 +401,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         let msg = `🎉 You received **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** (~$${usdValuePerUser.toFixed(2)}) from ${interaction.user.username}!`;
 
         if (isNew) {
-          msg += `\n\n**🔐 New Wallet Key:**\n\`\`\`\n${isNew.key}\n\`\`\`\n*Self-destructs in 15m.*`;
-          const sentMsg = await user.send(msg);
-
-          // Cleanup timer
-          setTimeout(async () => {
-            try {
-              await sentMsg.edit('🔒 **Key removed for security.**');
-            } catch {
-              // Message might have been deleted, ignore
-            }
-          }, 900000);
+          await user.send(msg);
 
           // Send Guide Embed
           const guideEmbed = new EmbedBuilder()
             .setTitle('🚀 Welcome to FatTips')
             .setDescription('You just received crypto! Use `/balance` to check it.')
-            .setColor(0x00aaff);
+            .setColor(0x00aaff)
+            .addFields({
+              name: '🔐 Access Your Wallet',
+              value:
+                'To view your private key for import into Phantom/Solflare, use `/wallet action:export-key` in a secure environment.',
+            });
           await user.send({ embeds: [guideEmbed] });
 
           await prisma.user.update({
