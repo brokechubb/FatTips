@@ -35,7 +35,7 @@ app.use('/api/keys', apiKeyRoutes);
 
 // Authenticated Routes
 app.use('/api/users', requireAuth, userRoutes);
-app.use('/api/wallet', requireAuth, walletRoutes);
+app.use('/api/wallet', walletRoutes); // Auth handled internally (create is open, others require auth)
 app.use('/api/balance', requireAuth, balanceRoutes);
 app.use('/api/send', requireAuth, sendRoutes);
 app.use('/api/transactions', requireAuth, transactionRoutes);
