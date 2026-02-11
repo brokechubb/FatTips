@@ -41,6 +41,9 @@ importers:
       helmet:
         specifier: ^7.1.0
         version: 7.2.0
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.9.2
       morgan:
         specifier: ^1.10.1
         version: 1.10.1
@@ -145,6 +148,10 @@ importers:
         version: 5.9.3
 
   packages/shared:
+    dependencies:
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.9.2
     devDependencies:
       '@types/node':
         specifier: ^20.10.0

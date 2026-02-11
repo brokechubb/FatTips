@@ -18,6 +18,7 @@
     "fattips-database": "workspace:^",
     "fattips-solana": "workspace:^",
     "helmet": "^7.1.0",
+    "ioredis": "^5.4.1",
     "morgan": "^1.10.1",
     "zod": "^4.3.6"
   },

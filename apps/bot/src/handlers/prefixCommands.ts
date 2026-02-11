@@ -1032,7 +1032,7 @@ async function handleHistory(message: Message) {
     return;
   }
 
-  const lines = transactions.map((tx) => {
+  const lines = transactions.map((tx: any) => {
     const isSent = tx.fromId === message.author.id;
     const arrow = isSent ? '📤' : '📥';
     const amount = Number(tx.amountToken).toFixed(4);

@@ -17,6 +17,7 @@ import {
   handleSendFormModal,
 } from './handlers/balanceInteractions';
 import { initTransactionWorker } from './workers/transaction.worker';
+import { AirdropEventHandler } from './handlers/airdrop-events';
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
@@ -127,6 +128,10 @@ client.once('clientReady', () => {
   // Initialize Transaction Worker
   initTransactionWorker(client);
   logger.info('Transaction worker initialized');
+
+  // Initialize Airdrop Event Handler (for API-created airdrops)
+  new AirdropEventHandler(client);
+  logger.info('Airdrop event handler initialized');
 
   // Schedule airdrop settlement (every 10 seconds for responsiveness)
   setInterval(() => {

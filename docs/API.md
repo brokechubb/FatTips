@@ -330,9 +330,12 @@ Content-Type: application/json
   "token": "SOL",
   "duration": "10m",
   "maxWinners": 5,
-  "amountType": "token" // or "usd"
+  "amountType": "token", // or "usd"
+  "channelId": "123456789012345678" // Discord channel ID for airdrop post (optional)
 }
 ```
+
+**Note:** If `channelId` is provided, the FatTips bot will automatically post the airdrop message to that Discord channel with a Claim button.
 
 Response:
 

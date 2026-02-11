@@ -7,6 +7,7 @@ import {
   PriceService,
   TOKEN_MINTS,
 } from 'fattips-solana';
+import { eventBus, EVENTS } from '../services/event-bus';
 
 const router: Router = Router();
 
@@ -40,6 +41,7 @@ interface CreateAirdropRequest {
   duration: string;
   maxWinners?: number;
   amountType?: 'token' | 'usd';
+  channelId?: string; // Discord channel ID to post the airdrop message
 }
 
 router.post('/create', async (req, res) => {
@@ -50,6 +52,7 @@ router.post('/create', async (req, res) => {
     duration,
     maxWinners,
     amountType = 'token',
+    channelId,
   } = req.body as CreateAirdropRequest;
 
   try {
@@ -146,9 +149,24 @@ router.post('/create', async (req, res) => {
         tokenMint,
         maxParticipants: maxWinners || null,
         expiresAt,
-        channelId: 'api',
+        channelId: channelId || 'api',
       },
     });
+
+    // Publish airdrop created event for Discord bot to post message
+    if (channelId) {
+      await eventBus.publish(EVENTS.AIRDROP_CREATED, {
+        airdropId: airdrop.id,
+        channelId,
+        creatorId: creator.discordId,
+        creatorUsername: '', // Username will be fetched by the bot
+        potSize: amountToken,
+        token,
+        totalUsd: usdValue,
+        expiresAt: expiresAt.toISOString(),
+        maxWinners: maxWinners || null,
+      });
+    }
 
     res.json({
       success: true,
