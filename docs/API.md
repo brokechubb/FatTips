@@ -331,11 +331,27 @@ Content-Type: application/json
   "duration": "10m",
   "maxWinners": 5,
   "amountType": "token", // or "usd"
-  "channelId": "123456789012345678" // Discord channel ID for airdrop post (optional)
+  "channelId": "123456789012345678" // Discord channel ID (optional)
 }
 ```
 
-**Note:** If `channelId` is provided, the FatTips bot will automatically post the airdrop message to that Discord channel with a Claim button.
+**Discord Integration:**
+
+When `channelId` is provided, the FatTips bot automatically posts an airdrop embed to that Discord channel with a Claim button. The bot must be in the server and have permission to send messages in the channel.
+
+**How it works:**
+
+1. API creates the airdrop record in the database
+2. API publishes an `AIRDROP_CREATED` event via Redis pub/sub
+3. FatTips bot receives the event and posts the embed to the specified channel
+4. Users click "Claim" → their Discord ID is recorded
+5. When airdrop ends, tokens are distributed proportionally
+
+**Requirements for Discord posting:**
+
+- FatTips bot must be a member of the server
+- Bot needs `Send Messages` and `Embed Links` permissions in the channel
+- `channelId` must be a valid text channel ID (enable Developer Mode in Discord to copy IDs)
 
 Response:
 
@@ -620,6 +636,76 @@ Response:
   }
 ]
 ```
+
+---
+
+## Discord Integration
+
+### How API-Created Airdrops Work with Discord
+
+When Jakey creates an airdrop via the API with a `channelId`, the FatTips bot automatically posts an embed to that Discord channel:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  🎉 Crypto Airdrop!                                          │
+│                                                             │
+│  A pot of 10.00 SOL (~$$1,500) has been dropped!           │
+│                                                             │
+│  Click **Claim** to enter.                                   │
+│  ⏳ Ends: in 1 hour                                         │
+│                                                             │
+│  Pot Size: 10.00 SOL  │  Max Winners: Unlimited            │
+└─────────────────────────────────────────────────────────────┘
+                    [💰 Claim]
+```
+
+**Flow:**
+
+1. Jakey calls `POST /api/airdrops/create` with `channelId`
+2. API creates airdrop record → publishes Redis event
+3. FatTips bot receives event → posts embed with Claim button
+4. Users click Claim → their Discord ID is recorded
+5. At expiry, tokens are distributed to all claimants
+
+### Jakey Trivia Integration Example
+
+```javascript
+// Jakey runs trivia, then creates an airdrop for winners
+async function runTrivia(triviaChannelId) {
+  // 1. Ask question, collect answers, pick winner...
+  const winners = ['winner1', 'winner2', 'winner3'];
+
+  // 2. Create airdrop that posts to Discord
+  const response = await fetch('https://codestats.gg/api/airdrops/create', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': process.env.FATTIPS_API_KEY,
+    },
+    body: JSON.stringify({
+      creatorDiscordId: process.env.JAKEY_DISCORD_ID,
+      amount: 5,
+      token: 'SOL',
+      duration: '1h',
+      maxWinners: winners.length,
+      amountType: 'token',
+      channelId: triviaChannelId, // Posts airdrop to this channel
+    }),
+  });
+
+  const result = await response.json();
+  console.log(`Airdrop posted! ID: ${result.airdropId}`);
+
+  // 3. Winners click Claim button in Discord
+  // 4. When timer ends, tokens are distributed automatically
+}
+```
+
+**Requirements:**
+
+- FatTips bot must be in the server
+- Bot needs `Send Messages` and `Embed Links` permissions
+- `channelId` must be a valid Discord text channel ID
 
 ---
 
