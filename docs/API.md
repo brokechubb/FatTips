@@ -7,13 +7,118 @@
 
 ## Authentication
 
-All API endpoints require authentication via API key.
+Each API key is tied to a specific Discord user and can only access that user's wallet.
+
+### Getting an API Key
+
+```http
+POST /api/keys/create
+Content-Type: application/json
+
+{
+  "discordId": "123456789",
+  "name": "Jakey Bot"
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "apiKey": "ft_abc123...",
+  "discordId": "123456789",
+  "name": "Jakey Bot",
+  "createdAt": "2024-01-15T12:00:00.000Z"
+}
+```
+
+**Important:** The API key is only shown once. Store it securely.
+
+### Using the API Key
 
 Include in header:
 
 ```
-X-API-Key: your_api_key_here
+X-API-Key: ft_abc123...
 ```
+
+### Security
+
+- Each API key is bound to one Discord user
+- The key can only access its own wallet
+- Attempting to access another user's wallet returns 403 Forbidden
+- Keys can be listed and revoked at any time
+
+---
+
+### API Keys
+
+#### Create API Key
+
+```http
+POST /api/keys/create
+Content-Type: application/json
+
+{
+  "discordId": "123456789",
+  "name": "Jakey Bot"
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "apiKey": "ft_abc123def456...",
+  "discordId": "123456789",
+  "name": "Jakey Bot",
+  "createdAt": "2024-01-15T12:00:00.000Z"
+}
+```
+
+**Note:** Store the API key securely - it is only shown once.
+
+#### List API Keys
+
+```http
+GET /api/keys?discordId=123456789
+```
+
+Response:
+
+```json
+{
+  "keys": [
+    {
+      "id": "uuid",
+      "key": "ft_abc123...",
+      "name": "Jakey Bot",
+      "lastUsedAt": "2024-01-15T12:00:00.000Z",
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "isExpired": false
+    }
+  ]
+}
+```
+
+#### Revoke API Key
+
+```http
+DELETE /api/keys/:key
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "API key revoked"
+}
+```
+
+---
 
 ## Endpoints
 
@@ -689,7 +794,18 @@ When Jakey creates an airdrop via the API with a `channelId`, the FatTips bot au
 
 ```json
 {
-  "error": "Unauthorized"
+  "error": "Invalid API key"
+}
+```
+
+### 403 Forbidden
+
+Returned when trying to access another user's wallet:
+
+```json
+{
+  "error": "This API key can only access its own wallet",
+  "yourDiscordId": "123456789"
 }
 ```
 

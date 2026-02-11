@@ -13,6 +13,7 @@ import airdropRoutes from './routes/airdrops';
 import swapRoutes from './routes/swap';
 import rainRoutes from './routes/rain';
 import leaderboardRoutes from './routes/leaderboard';
+import apiKeyRoutes from './routes/api-keys';
 
 dotenv.config();
 
@@ -22,13 +23,15 @@ const PORT = process.env.PORT || 3001;
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
-// Use 'combined' format in production for fail2ban compatibility (includes IP address)
 const logFormat = process.env.NODE_ENV === 'production' ? 'combined' : 'dev';
 app.use(morgan(logFormat));
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// API keys management (no auth - for initial setup)
+app.use('/api/keys', apiKeyRoutes);
 
 // Authenticated Routes
 app.use('/api/users', requireAuth, userRoutes);

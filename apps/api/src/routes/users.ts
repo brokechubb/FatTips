@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { prisma } from 'fattips-database';
+import { requireOwnership, requireAuth } from '../middleware/auth';
 
 const router: Router = Router();
+
+router.use(requireAuth);
+router.use(requireOwnership);
 
 router.get('/:discordId', async (req, res) => {
   const { discordId } = req.params;

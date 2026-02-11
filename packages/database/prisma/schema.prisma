@@ -121,3 +121,17 @@ model GuildSettings {
 
   @@index([prefix])
 }
+
+model ApiKey {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  discordId   String
+  name        String   @default("Default")
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  revokedAt   DateTime?
+
+  @@index([discordId])
+  @@index([key])
+}

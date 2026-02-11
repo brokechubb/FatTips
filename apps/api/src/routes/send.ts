@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { prisma } from 'fattips-database';
 import {
   WalletService,
@@ -7,6 +7,7 @@ import {
   PriceService,
   TOKEN_MINTS,
 } from 'fattips-solana';
+import { requireAuth } from '../middleware/auth';
 
 const router: Router = Router();
 
@@ -14,6 +15,10 @@ const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
+
+interface AuthenticatedRequest extends Request {
+  discordId?: string;
+}
 
 interface SendRequest {
   fromDiscordId: string;
@@ -38,14 +43,9 @@ async function getTokenMint(token: string): Promise<string> {
 async function calculateAmounts(
   amount: number,
   token: string,
-  amountType: 'token' | 'usd',
-  isMax: boolean
+  amountType: 'token' | 'usd'
 ): Promise<{ amountToken: number; usdValue: number; tokenMint: string }> {
   const tokenMint = await getTokenMint(token);
-
-  if (isMax) {
-    return { amountToken: amount, usdValue: 0, tokenMint };
-  }
 
   if (amountType === 'usd') {
     const conversion = await priceService.convertUsdToToken(amount, tokenMint, token);
@@ -65,7 +65,10 @@ async function calculateAmounts(
   return { amountToken: amount, usdValue, tokenMint };
 }
 
-router.post('/tip', async (req, res) => {
+router.use(requireAuth);
+
+// Tip endpoint - sender must own the wallet
+router.post('/tip', async (req: AuthenticatedRequest, res: Response) => {
   const {
     fromDiscordId,
     toDiscordId,
@@ -73,6 +76,12 @@ router.post('/tip', async (req, res) => {
     token,
     amountType = 'token',
   } = req.body as SendRequest;
+
+  // Verify the API key owner is the sender
+  if (fromDiscordId !== req.discordId) {
+    res.status(403).json({ error: 'API key can only send from its own wallet' });
+    return;
+  }
 
   try {
     const sender = await prisma.user.findUnique({
@@ -103,12 +112,7 @@ router.post('/tip', async (req, res) => {
       });
     }
 
-    const { amountToken, usdValue, tokenMint } = await calculateAmounts(
-      amount,
-      token,
-      amountType,
-      false
-    );
+    const { amountToken, usdValue, tokenMint } = await calculateAmounts(amount, token, amountType);
 
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const feeBuffer = 0.00002;
@@ -170,7 +174,7 @@ router.post('/tip', async (req, res) => {
   }
 });
 
-router.post('/batch-tip', async (req, res) => {
+router.post('/batch-tip', async (req: AuthenticatedRequest, res: Response) => {
   const {
     fromDiscordId,
     recipients,
@@ -178,6 +182,11 @@ router.post('/batch-tip', async (req, res) => {
     token,
     amountType = 'token',
   } = req.body as BatchSendRequest;
+
+  if (fromDiscordId !== req.discordId) {
+    res.status(403).json({ error: 'API key can only send from its own wallet' });
+    return;
+  }
 
   try {
     const sender = await prisma.user.findUnique({
@@ -218,8 +227,7 @@ router.post('/batch-tip', async (req, res) => {
     const { amountToken, usdValue, tokenMint } = await calculateAmounts(
       totalAmount,
       token,
-      amountType,
-      false
+      amountType
     );
     const amountPerUser = amountToken / recipientWallets.length;
 
@@ -298,8 +306,13 @@ router.post('/batch-tip', async (req, res) => {
   }
 });
 
-router.post('/withdraw', async (req, res) => {
+router.post('/withdraw', async (req: AuthenticatedRequest, res: Response) => {
   const { discordId, destinationAddress, amount, token } = req.body;
+
+  if (discordId !== req.discordId) {
+    res.status(403).json({ error: 'API key can only withdraw from its own wallet' });
+    return;
+  }
 
   try {
     const user = await prisma.user.findUnique({
@@ -312,7 +325,7 @@ router.post('/withdraw', async (req, res) => {
     }
 
     const tokenMint = await getTokenMint(token);
-    const { amountToken, usdValue } = await calculateAmounts(amount || 0, token, 'token', !amount);
+    const { amountToken, usdValue } = await calculateAmounts(amount || 0, token, 'token');
 
     const balances = await balanceService.getBalances(user.walletPubkey);
     const feeBuffer = 0.00002;

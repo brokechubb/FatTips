@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { prisma } from 'fattips-database';
 import {
   WalletService,
@@ -7,6 +7,7 @@ import {
   PriceService,
   TOKEN_MINTS,
 } from 'fattips-solana';
+import { requireAuth } from '../middleware/auth';
 
 const router: Router = Router();
 
@@ -14,6 +15,10 @@ const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
+
+interface AuthenticatedRequest extends Request {
+  discordId?: string;
+}
 
 async function getTokenMint(token: string): Promise<string> {
   return TOKEN_MINTS[token as keyof typeof TOKEN_MINTS];
@@ -23,11 +28,13 @@ interface RainRequest {
   creatorDiscordId: string;
   amount: number;
   token: 'SOL' | 'USDC' | 'USDT';
-  winners: string[]; // Array of Discord IDs to rain on
+  winners: string[];
   amountType?: 'token' | 'usd';
 }
 
-router.post('/create', async (req, res) => {
+router.use(requireAuth);
+
+router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
   const {
     creatorDiscordId,
     amount,
@@ -35,6 +42,11 @@ router.post('/create', async (req, res) => {
     winners,
     amountType = 'token',
   } = req.body as RainRequest;
+
+  if (creatorDiscordId !== req.discordId) {
+    res.status(403).json({ error: 'API key can only rain from its own wallet' });
+    return;
+  }
 
   try {
     if (!winners || winners.length === 0) {

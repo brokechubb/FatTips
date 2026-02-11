@@ -1,17 +1,15 @@
 import { Router } from 'express';
 import { prisma } from 'fattips-database';
 import { WalletService } from 'fattips-solana';
+import { requireAuth, requireOwnership } from '../middleware/auth';
 
 const router: Router = Router();
 
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
 
-interface CreateWalletRequest {
-  discordId: string;
-}
-
+// Wallet creation - no auth required (used for initial setup)
 router.post('/create', async (req, res) => {
-  const { discordId } = req.body as CreateWalletRequest;
+  const { discordId } = req.body as { discordId: string };
 
   try {
     if (!discordId) {
@@ -46,14 +44,18 @@ router.post('/create', async (req, res) => {
       success: true,
       discordId,
       walletPubkey: wallet.publicKey,
-      privateKey: wallet.privateKeyBase58, // Return raw key for API consumer to handle securely
-      mnemonic: wallet.mnemonic, // Return mnemonic if available
+      privateKey: wallet.privateKeyBase58,
+      mnemonic: wallet.mnemonic,
     });
   } catch (error) {
     console.error('Error creating wallet:', error);
     res.status(500).json({ error: 'Failed to create wallet' });
   }
 });
+
+// All routes below require authentication and ownership
+router.use(requireAuth);
+router.use(requireOwnership);
 
 router.get('/:discordId', async (req, res) => {
   const { discordId } = req.params;

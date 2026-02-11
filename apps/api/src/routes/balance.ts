@@ -1,9 +1,13 @@
 import { Router } from 'express';
 import { prisma } from 'fattips-database';
 import { BalanceService } from 'fattips-solana';
+import { requireAuth, requireOwnership } from '../middleware/auth';
 
 const router: Router = Router();
 const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
+
+router.use(requireAuth);
+router.use(requireOwnership);
 
 router.get('/:discordId', async (req, res) => {
   const { discordId } = req.params;

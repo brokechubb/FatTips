@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { prisma } from 'fattips-database';
 import {
   WalletService,
@@ -8,6 +8,7 @@ import {
   TOKEN_MINTS,
 } from 'fattips-solana';
 import { eventBus, EVENTS } from '../services/event-bus';
+import { requireAuth } from '../middleware/auth';
 
 const router: Router = Router();
 
@@ -15,6 +16,10 @@ const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
+
+interface AuthenticatedRequest extends Request {
+  discordId?: string;
+}
 
 async function getTokenMint(token: string): Promise<string> {
   return TOKEN_MINTS[token as keyof typeof TOKEN_MINTS];
@@ -44,7 +49,9 @@ interface CreateAirdropRequest {
   channelId?: string; // Discord channel ID to post the airdrop message
 }
 
-router.post('/create', async (req, res) => {
+router.use(requireAuth);
+
+router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
   const {
     creatorDiscordId,
     amount,
@@ -54,6 +61,11 @@ router.post('/create', async (req, res) => {
     amountType = 'token',
     channelId,
   } = req.body as CreateAirdropRequest;
+
+  if (creatorDiscordId !== req.discordId) {
+    res.status(403).json({ error: 'API key can only create airdrops from its own wallet' });
+    return;
+  }
 
   try {
     const durationMs = parseDuration(duration);
