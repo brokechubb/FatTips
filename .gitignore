@@ -86,3 +86,4 @@ volumes/
 fattips_dump.sql
 nogit/
 .env
+.megamemory/
