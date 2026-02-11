@@ -12,9 +12,14 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "outDir": "./dist",
-    "rootDir": "./src"
+    "composite": true,
+    "baseUrl": "."
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "references": [
+    { "path": "./packages/database" },
+    { "path": "./packages/shared" },
+    { "path": "./packages/solana" },
+    { "path": "./apps/api" },
+    { "path": "./apps/bot" }
+  ]
 }

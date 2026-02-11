@@ -1,0 +1,11 @@
+[fattips-api]
+enabled = true
+backend = systemd
+journalmatch = _TAG=fattips-api
+filter = fattips-api
+port = 3001
+action = nftables[name=fattips-api, port=3001]
+maxretry = 5
+findtime = 600
+bantime = 3600
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 174.60.154.227

@@ -186,7 +186,22 @@ export class AirdropService {
         }
       }
 
-      // 3. Now create participant record (user exists at this point)
+      // 3. Check if user already joined this airdrop
+      const existingParticipant = await prisma.airdropParticipant.findUnique({
+        where: {
+          airdropId_userId: {
+            airdropId,
+            userId: interaction.user.id,
+          },
+        },
+      });
+
+      if (existingParticipant) {
+        await interaction.editReply({ content: '❌ You already joined this airdrop!' });
+        return;
+      }
+
+      // 4. Now create participant record (user exists at this point)
       try {
         await prisma.airdropParticipant.create({
           data: {
@@ -198,14 +213,14 @@ export class AirdropService {
         });
       } catch (error: any) {
         if (error.code === 'P2002') {
-          // Unique constraint violation - user already claimed
+          // Unique constraint violation - user already claimed (race condition)
           await interaction.editReply({ content: '❌ You already joined this airdrop!' });
           return;
         }
         throw error;
       }
 
-      // 4. Update participant count and get updated airdrop
+      // 5. Update participant count and get updated airdrop
       const updatedAirdrop = await prisma.airdrop.update({
         where: { id: airdropId },
         data: { participantCount: { increment: 1 } },

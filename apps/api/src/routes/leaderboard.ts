@@ -26,23 +26,25 @@ router.get('/top-tippers', async (req, res) => {
     });
 
     // Fetch user details for these IDs
-    const userIds = topTippers.map((t) => t.fromId).filter((id): id is string => id !== null);
+    const userIds = topTippers
+      .map((t: any) => t.fromId)
+      .filter((id: any): id is string => id !== null);
     const users = await prisma.user.findMany({
       where: { discordId: { in: userIds } },
-      select: { discordId: true, walletPubkey: true }, // Add username if stored in DB later
+      select: { discordId: true, walletPubkey: true },
     });
 
     const result = topTippers
-      .map((t) => {
+      .map((t: any) => {
         if (!t.fromId) return null;
-        const user = users.find((u) => u.discordId === t.fromId);
+        const user = users.find((u: any) => u.discordId === t.fromId);
         return {
           discordId: t.fromId,
           wallet: user?.walletPubkey,
           totalTippedUsd: t._sum.amountUsd,
         };
       })
-      .filter((r) => r !== null);
+      .filter((r: any) => r !== null);
 
     res.json(result);
   } catch (error) {
@@ -74,23 +76,25 @@ router.get('/top-receivers', async (req, res) => {
       },
     });
 
-    const userIds = topReceivers.map((t) => t.toId).filter((id): id is string => id !== null);
+    const userIds = topReceivers
+      .map((t: any) => t.toId)
+      .filter((id: any): id is string => id !== null);
     const users = await prisma.user.findMany({
       where: { discordId: { in: userIds } },
       select: { discordId: true, walletPubkey: true },
     });
 
     const result = topReceivers
-      .map((t) => {
+      .map((t: any) => {
         if (!t.toId) return null;
-        const user = users.find((u) => u.discordId === t.toId);
+        const user = users.find((u: any) => u.discordId === t.toId);
         return {
           discordId: t.toId,
           wallet: user?.walletPubkey,
           totalReceivedUsd: t._sum.amountUsd,
         };
       })
-      .filter((r) => r !== null);
+      .filter((r: any) => r !== null);
 
     res.json(result);
   } catch (error) {

@@ -289,6 +289,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     // Check sender balance (skip if MAX since we calculated it based on balance)
+    let isAdjusted = false;
     if (parsedAmount.type !== 'max') {
       try {
         const balances = await balanceService.getBalances(sender.walletPubkey);
@@ -298,14 +299,30 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         if (tokenSymbol === 'SOL') {
           const requiredSol = amountToken + feeBuffer + rentReserve;
           if (balances.sol < requiredSol) {
-            await interaction.editReply({
-              content:
-                `${interaction.user} ❌ Insufficient funds! You need to leave a small amount of SOL for rent and fees.\n\n` +
-                `**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n` +
-                `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
-                `Try sending a smaller amount or use \`all\` to send everything.`,
-            });
-            return;
+            // Auto-adjust logic
+            const maxPossible = Math.max(0, balances.sol - feeBuffer - rentReserve);
+
+            if (maxPossible > 0) {
+              amountToken = maxPossible;
+              isAdjusted = true;
+
+              // Recalculate USD value
+              try {
+                const price = await priceService.getTokenPrice(tokenMint);
+                usdValue = price ? amountToken * price.price : 0;
+              } catch {
+                usdValue = 0;
+              }
+            } else {
+              await interaction.editReply({
+                content:
+                  `${interaction.user} ❌ Insufficient funds! You need to leave a small amount of SOL for rent and fees.\n\n` +
+                  `**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n` +
+                  `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
+                  `Try sending a smaller amount or use \`all\` to send everything.`,
+              });
+              return;
+            }
           }
         } else {
           // For SPL tokens (USDC/USDT)
@@ -416,6 +433,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       )
       .setColor(0x00ff00)
       .setTimestamp();
+
+    if (isAdjusted) {
+      embed.setFooter({
+        text: '⚠️ Amount automatically adjusted to fit available balance (minus rent/fees)',
+      });
+    }
 
     await interaction.editReply({ embeds: [embed] });
   } catch (error: any) {

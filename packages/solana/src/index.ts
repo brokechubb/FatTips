@@ -18,6 +18,8 @@ export * from './wallet';
 export * from './balance';
 export * from './price';
 export * from './transaction';
+export * from './swap';
+export * from './swap';
 
 // Re-export TOKEN_MINTS explicitly from price
 export { TOKEN_MINTS } from './price';

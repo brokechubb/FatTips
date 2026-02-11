@@ -153,6 +153,7 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
     }
 
     // Skip balance check for 'max' since we calculated based on actual balance
+    let isAdjusted = false;
     if (!skipBalanceCheck) {
       const balances = await balanceService.getBalances(sender.walletPubkey);
       const feeBuffer = 0.00002;
@@ -162,10 +163,26 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
       if (tokenSymbol === 'SOL') {
         const requiredSol = amountToken + feeBuffer + rentReserve;
         if (balances.sol + epsilon < requiredSol) {
-          await interaction.editReply({
-            content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL\n**Available:** ${balances.sol.toFixed(5)} SOL`,
-          });
-          return true;
+          // Auto-adjust logic
+          const maxPossible = Math.max(0, balances.sol - feeBuffer - rentReserve);
+
+          if (maxPossible > 0) {
+            amountToken = maxPossible;
+            isAdjusted = true;
+
+            // Recalculate USD value
+            try {
+              const price = await priceService.getTokenPrice(tokenMint);
+              usdValue = price ? amountToken * price.price : 0;
+            } catch {
+              usdValue = 0;
+            }
+          } else {
+            await interaction.editReply({
+              content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL\n**Available:** ${balances.sol.toFixed(5)} SOL`,
+            });
+            return true;
+          }
         }
       } else {
         const currentBal = tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
@@ -183,7 +200,10 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
     }
 
     // Send processing message
-    await interaction.editReply({ content: '⏳ Processing transaction...' });
+    const msgContent = isAdjusted
+      ? '⏳ Processing transaction... (Amount automatically adjusted to fit available balance)'
+      : '⏳ Processing transaction...';
+    await interaction.editReply({ content: msgContent });
     const processingMsg = await interaction.fetchReply();
 
     // Add to Queue

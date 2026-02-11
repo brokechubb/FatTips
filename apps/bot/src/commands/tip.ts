@@ -289,15 +289,35 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const feeBuffer = 0.00002; // Slightly higher buffer for batch tx
     const rentReserve = MIN_RENT_EXEMPTION;
     const epsilon = 0.000001; // Tolerance for floating point precision issues
+    let isAdjusted = false;
 
     if (tokenSymbol === 'SOL') {
       const requiredSol = totalAmountToken + feeBuffer + rentReserve;
       // Use epsilon to handle floating point precision issues, especially for "max" amounts
       if (balances.sol + epsilon < requiredSol) {
-        await interaction.editReply({
-          content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n**Available:** ${balances.sol.toFixed(5)} SOL`,
-        });
-        return;
+        // Auto-adjust logic
+        const maxPossible = Math.max(0, balances.sol - feeBuffer - rentReserve);
+
+        // If they have enough to send something, adjust it
+        if (maxPossible > 0) {
+          totalAmountToken = maxPossible;
+          amountPerUser = totalAmountToken / recipientWallets.length;
+          isAdjusted = true;
+
+          // Recalculate USD value
+          try {
+            const price = await priceService.getTokenPrice(tokenMint);
+            usdValuePerUser = price ? amountPerUser * price.price : 0;
+          } catch {
+            usdValuePerUser = 0;
+          }
+        } else {
+          // Genuine insufficient funds (can't even pay fees/rent)
+          await interaction.editReply({
+            content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n**Available:** ${balances.sol.toFixed(5)} SOL`,
+          });
+          return;
+        }
       }
     } else {
       // SPL Token
@@ -380,6 +400,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       )
       .setColor(0x00ff00)
       .setTimestamp();
+
+    if (isAdjusted) {
+      embed.setFooter({
+        text: '⚠️ Amount automatically adjusted to fit available balance (minus rent/fees)',
+      });
+    }
 
     if (newWallets.length > 0) {
       embed.addFields({

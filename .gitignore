@@ -85,3 +85,4 @@ volumes/
 .netlify
 fattips_dump.sql
 nogit/
+.env

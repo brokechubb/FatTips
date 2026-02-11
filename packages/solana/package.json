@@ -4,6 +4,7 @@
   "private": true,
   "description": "Solana client wrappers for FatTips",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
     "test": "vitest run",

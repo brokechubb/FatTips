@@ -1,0 +1,369 @@
+import { Router } from 'express';
+import { prisma } from 'fattips-database';
+import {
+  WalletService,
+  TransactionService,
+  BalanceService,
+  PriceService,
+  TOKEN_MINTS,
+} from 'fattips-solana';
+
+const router: Router = Router();
+
+const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
+const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
+const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
+const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
+
+async function getTokenMint(token: string): Promise<string> {
+  return TOKEN_MINTS[token as keyof typeof TOKEN_MINTS];
+}
+
+function parseDuration(str: string): number | null {
+  const match = str.trim().match(/^(\d+(?:\.\d+)?)\s*([smhdw])$/i);
+  if (!match) return null;
+  const val = parseFloat(match[1]);
+  const unit = match[2].toLowerCase();
+  if (val < 0) return null;
+  let multiplier = 1000;
+  if (unit === 'm') multiplier *= 60;
+  if (unit === 'h') multiplier *= 60 * 60;
+  if (unit === 'd') multiplier *= 24 * 60 * 60;
+  if (unit === 'w') multiplier *= 7 * 24 * 60 * 60;
+  return Math.floor(val * multiplier);
+}
+
+interface CreateAirdropRequest {
+  creatorDiscordId: string;
+  amount: number;
+  token: 'SOL' | 'USDC' | 'USDT';
+  duration: string;
+  maxWinners?: number;
+  amountType?: 'token' | 'usd';
+}
+
+router.post('/create', async (req, res) => {
+  const {
+    creatorDiscordId,
+    amount,
+    token,
+    duration,
+    maxWinners,
+    amountType = 'token',
+  } = req.body as CreateAirdropRequest;
+
+  try {
+    const durationMs = parseDuration(duration);
+    if (!durationMs || durationMs < 10000) {
+      res.status(400).json({ error: 'Invalid duration. Must be at least 10 seconds.' });
+      return;
+    }
+
+    const creator = await prisma.user.findUnique({
+      where: { discordId: creatorDiscordId },
+    });
+
+    if (!creator) {
+      res.status(404).json({ error: 'Creator wallet not found' });
+      return;
+    }
+
+    const tokenMint = await getTokenMint(token);
+    let amountToken = amount;
+    let usdValue = 0;
+
+    if (amountType === 'usd') {
+      const conversion = await priceService.convertUsdToToken(amount, tokenMint, token);
+      if (!conversion) {
+        res.status(400).json({ error: 'Failed to fetch price' });
+        return;
+      }
+      amountToken = conversion.amountToken;
+      usdValue = amount;
+    } else {
+      const price = await priceService.getTokenPrice(tokenMint);
+      usdValue = price ? amount * price.price : 0;
+    }
+
+    const ephemeralWallet = await walletService.createEncryptedWallet();
+    const GAS_BUFFER = 0.003;
+
+    let fundingAmountSol = 0;
+    let fundingAmountToken = 0;
+
+    if (token === 'SOL') {
+      fundingAmountSol = amountToken + GAS_BUFFER;
+    } else {
+      fundingAmountSol = GAS_BUFFER;
+      fundingAmountToken = amountToken;
+    }
+
+    const creatorBalances = await balanceService.getBalances(creator.walletPubkey);
+    if (creatorBalances.sol < fundingAmountSol) {
+      res.status(400).json({ error: 'Insufficient SOL for gas' });
+      return;
+    }
+    if (fundingAmountToken > 0) {
+      const tokenBal = token === 'USDC' ? creatorBalances.usdc : creatorBalances.usdt;
+      if (tokenBal < fundingAmountToken) {
+        res.status(400).json({ error: `Insufficient ${token}` });
+        return;
+      }
+    }
+
+    const creatorKeypair = await walletService.getKeypair(
+      creator.encryptedPrivkey,
+      creator.keySalt
+    );
+
+    if (fundingAmountSol > 0) {
+      const solToSend = token === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
+      const solSig = await transactionService.transfer(
+        creatorKeypair,
+        ephemeralWallet.publicKey,
+        solToSend,
+        TOKEN_MINTS.SOL
+      );
+    }
+
+    if (fundingAmountToken > 0) {
+      const tokenSig = await transactionService.transfer(
+        creatorKeypair,
+        ephemeralWallet.publicKey,
+        fundingAmountToken,
+        tokenMint
+      );
+    }
+
+    const expiresAt = new Date(Date.now() + durationMs);
+    const airdrop = await prisma.airdrop.create({
+      data: {
+        walletPubkey: ephemeralWallet.publicKey,
+        encryptedPrivkey: ephemeralWallet.encryptedPrivateKey,
+        keySalt: ephemeralWallet.keySalt,
+        creatorId: creator.discordId,
+        amountTotal: amountToken,
+        tokenMint,
+        maxParticipants: maxWinners || null,
+        expiresAt,
+        channelId: 'api',
+      },
+    });
+
+    res.json({
+      success: true,
+      airdropId: airdrop.id,
+      potSize: amountToken,
+      token,
+      totalUsd: usdValue,
+      expiresAt: expiresAt.toISOString(),
+      maxWinners: maxWinners || 'unlimited',
+      ephemeralWallet: ephemeralWallet.publicKey,
+    });
+  } catch (error) {
+    console.error('Error creating airdrop:', error);
+    res.status(500).json({ error: 'Failed to create airdrop' });
+  }
+});
+
+router.get('/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const airdrop = await prisma.airdrop.findUnique({
+      where: { id },
+      include: {
+        creator: {
+          select: { discordId: true },
+        },
+        participants: {
+          include: {
+            user: {
+              select: { discordId: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!airdrop) {
+      res.status(404).json({ error: 'Airdrop not found' });
+      return;
+    }
+
+    res.json({
+      id: airdrop.id,
+      creatorId: airdrop.creatorId,
+      potSize: Number(airdrop.amountTotal),
+      tokenMint: airdrop.tokenMint,
+      participantCount: airdrop.participantCount,
+      maxParticipants: airdrop.maxParticipants,
+      status: airdrop.status,
+      expiresAt: airdrop.expiresAt.toISOString(),
+      createdAt: airdrop.createdAt.toISOString(),
+      participants: airdrop.participants.map((p: any) => ({
+        discordId: p.user.discordId,
+        status: p.status,
+        shareAmount: Number(p.shareAmount),
+      })),
+    });
+  } catch (error) {
+    console.error('Error fetching airdrop:', error);
+    res.status(500).json({ error: 'Failed to fetch airdrop' });
+  }
+});
+
+router.post('/:id/claim', async (req, res) => {
+  const { id } = req.params;
+  const { discordId } = req.body;
+
+  try {
+    const airdrop = await prisma.airdrop.findUnique({
+      where: { id },
+    });
+
+    if (!airdrop) {
+      res.status(404).json({ error: 'Airdrop not found' });
+      return;
+    }
+
+    if (new Date() > airdrop.expiresAt) {
+      res.status(400).json({ error: 'Airdrop has expired' });
+      return;
+    }
+
+    if (airdrop.status !== 'ACTIVE') {
+      res.status(400).json({ error: `Airdrop is ${airdrop.status.toLowerCase()}` });
+      return;
+    }
+
+    const existingParticipant = await prisma.airdropParticipant.findUnique({
+      where: {
+        airdropId_userId: {
+          airdropId: id,
+          userId: discordId,
+        },
+      },
+    });
+
+    if (existingParticipant) {
+      res.status(400).json({ error: 'Already claimed' });
+      return;
+    }
+
+    let recipient = await prisma.user.findUnique({
+      where: { discordId },
+    });
+
+    if (!recipient) {
+      const wallet = await walletService.createEncryptedWallet();
+      recipient = await prisma.user.create({
+        data: {
+          discordId,
+          walletPubkey: wallet.publicKey,
+          encryptedPrivkey: wallet.encryptedPrivateKey,
+          keySalt: wallet.keySalt,
+          encryptedMnemonic: wallet.encryptedMnemonic,
+          mnemonicSalt: wallet.mnemonicSalt,
+          seedDelivered: false,
+        },
+      });
+    }
+
+    const recipientKeypair = await walletService.getKeypair(
+      airdrop.encryptedPrivkey,
+      airdrop.keySalt
+    );
+
+    const participants = await prisma.airdropParticipant.findMany({
+      where: { airdropId: id },
+    });
+
+    const totalClaimed = Number(airdrop.amountClaimed);
+    const totalParticipants = participants.length + 1;
+    let amountPerUser: number;
+
+    if (airdrop.maxParticipants && totalParticipants > airdrop.maxParticipants) {
+      res.status(400).json({ error: 'Max participants reached' });
+      return;
+    }
+
+    const totalPot = Number(airdrop.amountTotal);
+    amountPerUser = totalPot / totalParticipants;
+
+    const signature = await transactionService.transfer(
+      recipientKeypair,
+      recipient.walletPubkey,
+      amountPerUser,
+      airdrop.tokenMint
+    );
+
+    await prisma.airdropParticipant.create({
+      data: {
+        airdropId: id,
+        userId: discordId,
+        shareAmount: amountPerUser,
+        status: 'TRANSFERRED',
+        txSignature: signature,
+      },
+    });
+
+    await prisma.airdrop.update({
+      where: { id },
+      data: {
+        amountClaimed: totalClaimed + amountPerUser,
+        participantCount: totalParticipants,
+      },
+    });
+
+    res.json({
+      success: true,
+      airdropId: id,
+      claimant: discordId,
+      amountReceived: amountPerUser,
+      tokenMint: airdrop.tokenMint,
+      signature,
+      solscanUrl: `https://solscan.io/tx/${signature}`,
+    });
+  } catch (error) {
+    console.error('Error claiming airdrop:', error);
+    res.status(500).json({ error: 'Failed to claim airdrop' });
+  }
+});
+
+router.get('/', async (req, res) => {
+  const { status, limit = 10, offset = 0 } = req.query;
+
+  try {
+    const airdrops = await prisma.airdrop.findMany({
+      where: status ? { status: status as any } : undefined,
+      orderBy: { createdAt: 'desc' },
+      take: Number(limit),
+      skip: Number(offset),
+      include: {
+        creator: {
+          select: { discordId: true },
+        },
+      },
+    });
+
+    res.json({
+      airdrops: airdrops.map((a: any) => ({
+        id: a.id,
+        creatorId: a.creatorId,
+        potSize: Number(a.amountTotal),
+        tokenMint: a.tokenMint,
+        participantCount: a.participantCount,
+        maxParticipants: a.maxParticipants,
+        status: a.status,
+        expiresAt: a.expiresAt.toISOString(),
+      })),
+      total: airdrops.length,
+    });
+  } catch (error) {
+    console.error('Error listing airdrops:', error);
+    res.status(500).json({ error: 'Failed to list airdrops' });
+  }
+});
+
+export default router;

@@ -321,6 +321,7 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
     }
 
     // Check Balances (skip for max since we calculated based on actual balance)
+    let isAdjusted = false;
     if (parsedAmount.type !== 'max') {
       const balances = await balanceService.getBalances(sender.walletPubkey);
       const feeBuffer = 0.00002;
@@ -329,14 +330,30 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
       if (tokenSymbol === 'SOL') {
         const requiredSol = amountToken + feeBuffer + rentReserve;
         if (balances.sol < requiredSol) {
-          await interaction.editReply({
-            content:
-              `${interaction.user} ❌ Insufficient funds!\n` +
-              `**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n` +
-              `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
-              `Try using \`all\` to send everything.`,
-          });
-          return true;
+          // Auto-adjust logic
+          const maxPossible = Math.max(0, balances.sol - feeBuffer - rentReserve);
+
+          if (maxPossible > 0) {
+            amountToken = maxPossible;
+            isAdjusted = true;
+
+            // Recalculate USD value
+            try {
+              const price = await priceService.getTokenPrice(tokenMint);
+              usdValue = price ? amountToken * price.price : 0;
+            } catch {
+              usdValue = 0;
+            }
+          } else {
+            await interaction.editReply({
+              content:
+                `${interaction.user} ❌ Insufficient funds!\n` +
+                `**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n` +
+                `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
+                `Try using \`all\` to send everything.`,
+            });
+            return true;
+          }
         }
 
         // Safety check for dust transfers that might fail rent exemption on destination
@@ -362,7 +379,10 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
     }
 
     // Send processing message
-    await interaction.editReply({ content: '⏳ Processing transaction...' });
+    const msgContent = isAdjusted
+      ? '⏳ Processing transaction... (Amount automatically adjusted to fit available balance)'
+      : '⏳ Processing transaction...';
+    await interaction.editReply({ content: msgContent });
     const processingMsg = await interaction.fetchReply();
 
     // Add to Queue
@@ -657,6 +677,7 @@ async function processSendTransaction(
   }
 
   // Check Balances (skip for max since we calculated based on actual balance)
+  let isAdjusted = false;
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const feeBuffer = 0.00002;
@@ -665,14 +686,30 @@ async function processSendTransaction(
     if (tokenSymbol === 'SOL') {
       const requiredSol = amountToken + feeBuffer + rentReserve;
       if (balances.sol < requiredSol) {
-        await interaction.editReply({
-          content:
-            `${interaction.user} ❌ Insufficient funds!\n` +
-            `**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n` +
-            `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
-            `Try using \`all\` to send everything.`,
-        });
-        return;
+        // Auto-adjust logic
+        const maxPossible = Math.max(0, balances.sol - feeBuffer - rentReserve);
+
+        if (maxPossible > 0) {
+          amountToken = maxPossible;
+          isAdjusted = true;
+
+          // Recalculate USD value
+          try {
+            const price = await priceService.getTokenPrice(tokenMint);
+            usdValue = price ? amountToken * price.price : 0;
+          } catch {
+            usdValue = 0;
+          }
+        } else {
+          await interaction.editReply({
+            content:
+              `${interaction.user} ❌ Insufficient funds!\n` +
+              `**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n` +
+              `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
+              `Try using \`all\` to send everything.`,
+          });
+          return;
+        }
       }
 
       // Safety check for dust transfers that might fail rent exemption on destination
@@ -698,7 +735,10 @@ async function processSendTransaction(
   }
 
   // Send processing message
-  await interaction.editReply({ content: '⏳ Processing transaction...' });
+  const msgContent = isAdjusted
+    ? '⏳ Processing transaction... (Amount automatically adjusted to fit available balance)'
+    : '⏳ Processing transaction...';
+  await interaction.editReply({ content: msgContent });
   const processingMsg = await interaction.fetchReply();
 
   // Add to Queue

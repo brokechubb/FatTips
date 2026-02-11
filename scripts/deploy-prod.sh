@@ -88,9 +88,12 @@ echo "📦 Syncing configuration files..."
 rsync -avz -e "ssh -p $SERVER_PORT -o ConnectTimeout=30" --delete \
   --exclude 'logs' \
   docker-compose.yml \
+  docker \
   scripts \
   package.json \
   pnpm-lock.yaml \
+  pnpm-workspace.yaml \
+  turbo.json \
   .env.example \
   $SERVER_USER@$SERVER_HOST:$REMOTE_DIR/
 
@@ -104,7 +107,8 @@ ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST << EOF
   
   # CLEANUP: Remove source code directories (now unused as we use pre-built images)
   echo "🧹 Removing unused source code..."
-  rm -rf apps packages programs docker docs
+  # Keep docker/ directory with Dockerfiles for potential debugging/manual rebuilds
+  rm -rf apps packages programs docs
   
   echo "🚀 Starting services with new images..."
   # Use the images we just loaded

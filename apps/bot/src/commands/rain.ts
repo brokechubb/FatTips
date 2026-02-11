@@ -270,14 +270,33 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const feeBuffer = 0.00002;
     const rentReserve = MIN_RENT_EXEMPTION;
+    let isAdjusted = false;
 
     if (tokenSymbol === 'SOL') {
       const requiredSol = totalAmountToken + feeBuffer + rentReserve;
       if (balances.sol < requiredSol) {
-        await interaction.editReply({
-          content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n**Available:** ${balances.sol.toFixed(5)} SOL`,
-        });
-        return;
+        // Auto-adjust logic
+        const maxPossible = Math.max(0, balances.sol - feeBuffer - rentReserve);
+
+        // If they have enough to send something, adjust it
+        if (maxPossible > 0) {
+          totalAmountToken = maxPossible;
+          amountPerUser = totalAmountToken / recipientWallets.length;
+          isAdjusted = true;
+
+          // Recalculate USD value
+          try {
+            const price = await priceService.getTokenPrice(tokenMint);
+            usdValuePerUser = price ? amountPerUser * price.price : 0;
+          } catch {
+            usdValuePerUser = 0;
+          }
+        } else {
+          await interaction.editReply({
+            content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n**Available:** ${balances.sol.toFixed(5)} SOL`,
+          });
+          return;
+        }
       }
     } else {
       const currentBal = tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
@@ -356,6 +375,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         'https://em-content.zobj.net/source/microsoft-teams/337/cloud-with-rain_1f327.png'
       )
       .setTimestamp();
+
+    if (isAdjusted) {
+      embed.setFooter({
+        text: '⚠️ Amount automatically adjusted to fit available balance (minus rent/fees)',
+      });
+    }
 
     if (newWallets.length > 0) {
       embed.addFields({

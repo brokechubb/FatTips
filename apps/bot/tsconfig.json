@@ -13,8 +13,14 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    "baseUrl": "."
   },
+  "references": [
+    { "path": "../../packages/database" },
+    { "path": "../../packages/shared" },
+    { "path": "../../packages/solana" }
+  ],
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

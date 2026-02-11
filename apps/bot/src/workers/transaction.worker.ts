@@ -179,8 +179,15 @@ export function initTransactionWorker(client: Client) {
                 await originalMsg.reply({ embeds: [embed] });
               }
             }
-          } catch (discordError) {
-            console.error('Failed to send Discord notification:', discordError);
+          } catch (discordError: any) {
+            // 50001: Missing Access (often due to closed DMs or blocked bot)
+            if (discordError.code === 50001) {
+              console.warn(
+                `[Worker] Could not update notification for job ${job.id}: Missing Access (User likely blocked bot or closed DMs)`
+              );
+            } else {
+              console.error('Failed to send Discord notification:', discordError);
+            }
           }
         }
 

@@ -8,11 +8,13 @@ WORKDIR /app
 # Copy source code first
 COPY . .
 
-# Install dependencies and global prisma (matching project version)
-# We need pnpm globally to run pnpm commands
-RUN npm install -g pnpm && pnpm install
+# Install pnpm
+RUN npm install -g pnpm
 
-# Build dependencies
+# Install dependencies
+RUN pnpm install --no-frozen-lockfile
+
+# Build dependencies in order
 RUN pnpm --filter fattips-database generate
 RUN pnpm --filter fattips-database build
 RUN pnpm --filter fattips-shared build
@@ -40,4 +42,5 @@ USER apiuser
 EXPOSE 3001
 
 # Update CMD to point to the correct path inside /app
+# The directory structure is preserved inside the container (apps/api)
 CMD ["node", "apps/api/dist/index.js"]

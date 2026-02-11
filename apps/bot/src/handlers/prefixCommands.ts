@@ -8,6 +8,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
+  ComponentType,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logger } from '../utils/logger';
@@ -17,6 +18,7 @@ import {
   TransactionService,
   WalletService,
   BalanceService,
+  JupiterSwapService,
 } from 'fattips-solana';
 import { activityService } from '../services/activity';
 import { transactionQueue } from '../queues/transaction.queue';
@@ -37,6 +39,7 @@ const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.J
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
 const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
+const swapService = new JupiterSwapService(process.env.SOLANA_RPC_URL!);
 
 /**
  * Get the prefix for a guild (cached)
@@ -160,6 +163,9 @@ export async function handlePrefixCommand(message: Message, client: Client) {
       case 'rain':
         await handleRain(message, args, client, prefix);
         break;
+      case 'swap':
+        await handleSwap(message, args, prefix);
+        break;
       case 'setprefix':
         await handleSetPrefix(message, args);
         break;
@@ -170,6 +176,295 @@ export async function handlePrefixCommand(message: Message, client: Client) {
   } catch (error) {
     logger.error(`Error in prefix command ${commandName}:`, error);
     await message.reply('❌ An error occurred. Please try again.').catch(() => {});
+  }
+}
+
+// ============ SWAP ============
+async function handleSwap(message: Message, args: string[], prefix: string) {
+  // Usage: %swap <amount> <from> <to>
+  // Example: %swap 1 SOL USDC
+  // Example: %swap max USDC SOL
+
+  if (args.length < 3) {
+    await message.reply(
+      `Usage: \`${prefix}swap <amount> <from_token> <to_token>\`\n` +
+        `Example: \`${prefix}swap 1 SOL USDC\` or \`${prefix}swap max USDC SOL\``
+    );
+    return;
+  }
+
+  const amountStr = args[0];
+  const fromToken = args[1].toUpperCase();
+  const toToken = args[2].toUpperCase();
+
+  // Validate Tokens
+  const validTokens = ['SOL', 'USDC', 'USDT'];
+  if (!validTokens.includes(fromToken) || !validTokens.includes(toToken)) {
+    await message.reply('❌ Invalid token. Supported: SOL, USDC, USDT.');
+    return;
+  }
+
+  if (fromToken === toToken) {
+    await message.reply('❌ You cannot swap the same token!');
+    return;
+  }
+
+  // Parse Amount
+  let amount = 0;
+  const isMax = amountStr.toLowerCase() === 'max' || amountStr.toLowerCase() === 'all';
+
+  if (!isMax) {
+    if (amountStr.startsWith('$')) {
+      const value = parseFloat(amountStr.substring(1));
+      if (isNaN(value) || value <= 0) {
+        await message.reply('❌ Invalid USD amount. Please enter a positive number.');
+        return;
+      }
+
+      const inputMint = TOKEN_MINTS[fromToken as keyof typeof TOKEN_MINTS];
+      const conversion = await priceService.convertUsdToToken(value, inputMint, fromToken);
+
+      if (!conversion) {
+        await message.reply('❌ Failed to fetch prices. Try again.');
+        return;
+      }
+      amount = conversion.amountToken;
+    } else {
+      amount = parseFloat(amountStr);
+      if (isNaN(amount) || amount <= 0) {
+        await message.reply('❌ Invalid amount. Please enter a positive number or "max".');
+        return;
+      }
+    }
+  }
+
+  const statusMsg = await message.reply('⏳ Calculating swap...');
+
+  try {
+    // 1. Get User Wallet
+    const user = await prisma.user.findUnique({
+      where: { discordId: message.author.id },
+    });
+
+    if (!user) {
+      await statusMsg.edit(
+        `❌ You do not have a wallet yet. Use \`${prefix}wallet create\` first.`
+      );
+      return;
+    }
+
+    // 2. Check Balance & Resolve Max
+    const balances = await balanceService.getBalances(user.walletPubkey);
+    let balance = 0;
+    if (fromToken === 'SOL') balance = balances.sol;
+    else if (fromToken === 'USDC') balance = balances.usdc;
+    else if (fromToken === 'USDT') balance = balances.usdt;
+
+    let useGasless = false;
+    const LOW_SOL_THRESHOLD = 0.005; // 0.005 SOL buffer for fees
+
+    // Decide Gasless FIRST
+    if (fromToken !== 'SOL' && balances.sol < LOW_SOL_THRESHOLD) {
+      useGasless = true;
+    }
+
+    if (isMax) {
+      if (fromToken === 'SOL') {
+        // Standard SOL swap: Reserve buffer
+        amount = Math.max(0, balance - LOW_SOL_THRESHOLD);
+      } else {
+        // Token swap (Gasless or Standard) -> Use full balance
+        amount = balance;
+      }
+
+      if (amount <= 0) {
+        await statusMsg.edit(
+          `❌ Insufficient balance to swap (need buffer for fees). Balance: ${balance} ${fromToken}`
+        );
+        return;
+      }
+    }
+
+    if (balance < amount) {
+      await statusMsg.edit(
+        `❌ Insufficient ${fromToken} balance. You have ${balance} ${fromToken}.`
+      );
+      return;
+    }
+
+    // Fee checks for Standard Swap
+    if (!useGasless && fromToken === 'SOL' && balance < amount + LOW_SOL_THRESHOLD) {
+      await statusMsg.edit(
+        `❌ You need to leave some SOL for gas fees (approx ${LOW_SOL_THRESHOLD} SOL).`
+      );
+      return;
+    } else if (fromToken !== 'SOL' && !useGasless && balances.sol < LOW_SOL_THRESHOLD) {
+      // Fallback warning (though logic above likely caught it or set useGasless)
+    }
+
+    // 3. Get Quote
+    const inputMint = TOKEN_MINTS[fromToken as keyof typeof TOKEN_MINTS];
+    const outputMint = TOKEN_MINTS[toToken as keyof typeof TOKEN_MINTS];
+    const outDecimals = swapService.getDecimals(outputMint);
+
+    let quote: any;
+    let outAmount = 0;
+    let priceImpact = '';
+    let minReceived = '';
+
+    if (useGasless) {
+      try {
+        const result = await swapService.getGaslessSwap(
+          inputMint,
+          outputMint,
+          amount,
+          user.walletPubkey
+        );
+        quote = result.quote;
+        // Parse Ultra API response format
+        outAmount = parseInt(quote.outAmount) / Math.pow(10, outDecimals);
+        priceImpact = quote.priceImpactPct
+          ? (parseFloat(quote.priceImpactPct) * 100).toFixed(2)
+          : '0';
+        minReceived = quote.otherAmountThreshold
+          ? (parseInt(quote.otherAmountThreshold) / Math.pow(10, outDecimals)).toFixed(
+              outDecimals === 9 ? 4 : 2
+            )
+          : 'N/A';
+      } catch (error: any) {
+        await statusMsg.edit(
+          `❌ Gasless swap failed. You need ~${LOW_SOL_THRESHOLD} SOL to pay for network fees.\nError: ${error.message}`
+        );
+        return;
+      }
+    } else {
+      // Standard Swap
+      try {
+        quote = await swapService.getQuote(inputMint, outputMint, amount);
+        outAmount = parseInt(quote.outAmount) / Math.pow(10, outDecimals);
+        priceImpact = parseFloat(quote.priceImpactPct).toFixed(2);
+        minReceived = (parseInt(quote.otherAmountThreshold) / Math.pow(10, outDecimals)).toFixed(
+          outDecimals === 9 ? 4 : 2
+        );
+      } catch (error: any) {
+        // Improve error message for network failures
+        if (error.message.includes('fetch failed') || error.message.includes('Failed to fetch')) {
+          await statusMsg.edit(
+            `❌ Unable to connect to Jupiter API. This is usually a temporary network issue. Please try again in a few moments.`
+          );
+        } else {
+          await statusMsg.edit(`❌ Failed to get quote: ${error.message}`);
+        }
+        return;
+      }
+    }
+
+    // 4. Show Confirmation (Edit status message)
+    const embed = new EmbedBuilder()
+      .setTitle(useGasless ? '⛽ Gasless Swap Confirmation' : '🔄 Swap Confirmation')
+      .setColor(useGasless ? 0x00ffaa : 0x00aaff)
+      .addFields(
+        { name: 'From', value: `${amount} ${fromToken}`, inline: true },
+        {
+          name: 'To (Est.)',
+          value: `~${outAmount.toFixed(outDecimals === 9 ? 4 : 2)} ${toToken}`,
+          inline: true,
+        },
+        { name: 'Price Impact', value: `${priceImpact}%`, inline: true },
+        { name: 'Min. Received', value: `${minReceived} ${toToken}`, inline: true }
+      )
+      .setFooter({ text: `Powered by Jupiter API ${useGasless ? '(Ultra/Gasless)' : '(v6)'}` });
+
+    const confirmButton = new ButtonBuilder()
+      .setCustomId(`prefix_confirm_swap_${message.id}`) // Unique ID
+      .setLabel('Confirm Swap')
+      .setStyle(ButtonStyle.Success);
+
+    const cancelButton = new ButtonBuilder()
+      .setCustomId(`prefix_cancel_swap_${message.id}`)
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Secondary);
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(confirmButton, cancelButton);
+
+    const responseMsg = await statusMsg.edit({
+      content: '',
+      embeds: [embed],
+      components: [row],
+    });
+
+    // 5. Handle Confirmation
+    try {
+      const confirmation = await responseMsg.awaitMessageComponent({
+        filter: (i) => i.user.id === message.author.id,
+        time: 60000,
+        componentType: ComponentType.Button,
+      });
+
+      if (confirmation.customId.startsWith('prefix_cancel_swap')) {
+        await confirmation.update({ content: '❌ Swap cancelled.', embeds: [], components: [] });
+        return;
+      }
+
+      if (confirmation.customId.startsWith('prefix_confirm_swap')) {
+        await confirmation.update({
+          content: '🔄 Processing swap on Solana... (this may take up to 30s)',
+          embeds: [],
+          components: [],
+        });
+
+        try {
+          // Get Swap Transaction
+          let swapTransactionBase64 = '';
+          let signature: string;
+
+          if (useGasless) {
+            swapTransactionBase64 = (quote as any).transaction;
+            // Execute Gasless
+            const requestId = (quote as any).requestId;
+            // Decrypt User Key
+            const userKeypair = await walletService.getKeypair(user.encryptedPrivkey, user.keySalt);
+            signature = await swapService.executeGaslessSwap(
+              userKeypair,
+              swapTransactionBase64,
+              requestId
+            );
+          } else {
+            swapTransactionBase64 = await swapService.getSwapTransaction(quote, user.walletPubkey);
+            // Decrypt User Key
+            const userKeypair = await walletService.getKeypair(user.encryptedPrivkey, user.keySalt);
+            // Execute Standard
+            signature = await swapService.executeSwap(userKeypair, swapTransactionBase64);
+          }
+
+          const successEmbed = new EmbedBuilder()
+            .setTitle('✅ Swap Successful!')
+            .setColor(0x00ff00)
+            .setDescription(
+              `Swapped **${amount} ${fromToken}** to **${toToken}**\n\n[View on Solscan](https://solscan.io/tx/${signature})`
+            )
+            .setTimestamp();
+
+          await confirmation.editReply({ content: '', embeds: [successEmbed], components: [] });
+
+          logger.info(`Swap success (prefix): ${signature} (${user.discordId})`);
+        } catch (error: any) {
+          console.error('Swap failed:', error);
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          await confirmation.editReply({
+            content: `❌ Swap failed: ${errorMessage}`,
+            embeds: [],
+            components: [],
+          });
+        }
+      }
+    } catch (e) {
+      // Timeout
+      await responseMsg.edit({ content: '❌ Swap timed out.', components: [] }).catch(() => {});
+    }
+  } catch (error) {
+    logger.error('Error in swap command:', error);
+    await statusMsg.edit('❌ An error occurred while preparing the swap.');
   }
 }
 
@@ -200,7 +495,8 @@ async function handleHelp(message: Message, prefix: string) {
         value:
           `\`${p}balance\` • \`${p}deposit\` • \`${p}history\`\n` +
           `\`${p}send <addr> $10\` • \`${p}withdraw <addr> all\`\n` +
-          `\`${p}wallet create\` • \`${p}wallet export-key\``,
+          `\`${p}wallet create\` • \`${p}wallet export-key\`\n` +
+          `\`${p}swap 1 SOL USDC\` • \`${p}swap max USDC SOL\``,
       },
       {
         name: '⚙️ Info',
