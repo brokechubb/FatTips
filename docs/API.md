@@ -667,40 +667,6 @@ When Jakey creates an airdrop via the API with a `channelId`, the FatTips bot au
 4. Users click Claim → their Discord ID is recorded
 5. At expiry, tokens are distributed to all claimants
 
-### Jakey Trivia Integration Example
-
-```javascript
-// Jakey runs trivia, then creates an airdrop for winners
-async function runTrivia(triviaChannelId) {
-  // 1. Ask question, collect answers, pick winner...
-  const winners = ['winner1', 'winner2', 'winner3'];
-
-  // 2. Create airdrop that posts to Discord
-  const response = await fetch('https://codestats.gg/api/airdrops/create', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': process.env.FATTIPS_API_KEY,
-    },
-    body: JSON.stringify({
-      creatorDiscordId: process.env.JAKEY_DISCORD_ID,
-      amount: 5,
-      token: 'SOL',
-      duration: '1h',
-      maxWinners: winners.length,
-      amountType: 'token',
-      channelId: triviaChannelId, // Posts airdrop to this channel
-    }),
-  });
-
-  const result = await response.json();
-  console.log(`Airdrop posted! ID: ${result.airdropId}`);
-
-  // 3. Winners click Claim button in Discord
-  // 4. When timer ends, tokens are distributed automatically
-}
-```
-
 **Requirements:**
 
 - FatTips bot must be in the server
