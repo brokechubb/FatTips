@@ -1,6 +1,6 @@
 import IORedis from 'ioredis';
 
-const redisHost = process.env.REDIS_HOST || 'localhost';
+const redisHost = process.env.REDIS_HOST || 'redis';
 const redisPort = parseInt(process.env.REDIS_PORT || '6379');
 
 /**
