@@ -95,8 +95,13 @@ if [[ -n "$ENV_FILE" ]]; then
     set +a
 fi
 
-# Set defaults
-API_URL="${API_URL:-https://codestats.gg/api}"
+# Set defaults (script will add /api suffix)
+API_URL="${API_URL:-https://codestats.gg}"
+
+# Add /api suffix if not present
+if [[ "$API_URL" != */api ]]; then
+    API_URL="$API_URL/api"
+fi
 
 # Check for admin key
 if [[ -z "$ADMIN_API_KEY" ]]; then

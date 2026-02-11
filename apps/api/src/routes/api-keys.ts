@@ -11,7 +11,7 @@ function generateApiKey(): string {
 }
 
 function requireAdmin(req: Request, res: Response, next: () => void) {
-  const apiKey = req.headers['x-api-key'];
+  const apiKey = req.headers['x-admin-api-key'];
 
   if (!apiKey) {
     res.status(401).json({ error: 'Admin API key required' });
