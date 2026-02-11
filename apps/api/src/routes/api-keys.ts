@@ -1,15 +1,33 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { prisma } from 'fattips-database';
 import crypto from 'crypto';
 
 const router: Router = Router();
 
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
+
 function generateApiKey(): string {
   return 'ft_' + crypto.randomBytes(32).toString('hex');
 }
 
-router.post('/create', async (req, res) => {
-  const { discordId, name } = req.body;
+function requireAdmin(req: Request, res: Response, next: () => void) {
+  const apiKey = req.headers['x-api-key'];
+
+  if (!apiKey) {
+    res.status(401).json({ error: 'Admin API key required' });
+    return;
+  }
+
+  if (apiKey !== ADMIN_API_KEY) {
+    res.status(403).json({ error: 'Invalid admin API key' });
+    return;
+  }
+
+  next();
+}
+
+router.post('/create', requireAdmin, async (req: Request, res: Response) => {
+  const { discordId, name } = req.body as { discordId: string; name?: string };
 
   try {
     if (!discordId) {
@@ -62,17 +80,12 @@ router.post('/create', async (req, res) => {
   }
 });
 
-router.get('/', async (req, res) => {
+router.get('/', requireAdmin, async (req: Request, res: Response) => {
   const { discordId } = req.query;
 
   try {
-    if (!discordId) {
-      res.status(400).json({ error: 'discordId is required' });
-      return;
-    }
-
     const keys = await prisma.apiKey.findMany({
-      where: { discordId: discordId as string },
+      where: discordId ? { discordId: discordId as string } : undefined,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -93,7 +106,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.delete('/:key', async (req, res) => {
+router.delete('/:key', requireAdmin, async (req: Request, res: Response) => {
   const { key } = req.params;
 
   try {

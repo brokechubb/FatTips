@@ -7,18 +7,50 @@
 
 ## Authentication
 
-Each API key is tied to a specific Discord user and can only access that user's wallet.
+Each user API key is tied to a specific Discord user and can only access that user's wallet.
 
-### Getting an API Key
+### Getting a User API Key
+
+User API keys must be created by an admin using the `ADMIN_API_KEY` environment variable:
+
+```bash
+# Set in .env on the server
+ADMIN_API_KEY=your-admin-master-key
+```
+
+Then create a user API key:
 
 ```http
 POST /api/keys/create
+X-Admin-API-Key: your-admin-master-key
 Content-Type: application/json
 
 {
   "discordId": "123456789",
   "name": "Jakey Bot"
 }
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "apiKey": "ft_abc123...",
+  "discordId": "123456789",
+  "name": "Jakey Bot",
+  "createdAt": "2024-01-15T12:00:00.000Z"
+}
+```
+
+**Important:** Store user API keys securely - they are only shown once.
+
+### Using a User API Key
+
+Include in header:
+
+```
+X-API-Key: ft_abc123...
 ```
 
 Response:
@@ -52,12 +84,15 @@ X-API-Key: ft_abc123...
 
 ---
 
-### API Keys
+### API Keys (Admin)
+
+API keys are managed using the `ADMIN_API_KEY` environment variable on the server. This prevents unauthorized users from creating API keys for other users.
 
 #### Create API Key
 
 ```http
 POST /api/keys/create
+X-Admin-API-Key: your-admin-master-key
 Content-Type: application/json
 
 {
@@ -84,6 +119,7 @@ Response:
 
 ```http
 GET /api/keys?discordId=123456789
+X-Admin-API-Key: your-admin-master-key
 ```
 
 Response:
@@ -107,6 +143,7 @@ Response:
 
 ```http
 DELETE /api/keys/:key
+X-Admin-API-Key: your-admin-master-key
 ```
 
 Response:
