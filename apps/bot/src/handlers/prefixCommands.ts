@@ -28,8 +28,9 @@ const DISCORD_CANNOT_DM = 50007;
 
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
-const FEE_BUFFER = 0.00002; // SOL - standard fee buffer for transactions
-const PREFIX_FEE_BUFFER = 0.00002; // SOL - consistent fee buffer for prefix commands
+const FEE_BUFFER = 0.001; // SOL - standard fee buffer for transactions (~$0.15)
+const PREFIX_FEE_BUFFER = 0.001; // SOL - consistent fee buffer for prefix commands
+const MIN_SOL_FOR_GAS = 0.001; // Minimum SOL required for gas fees
 
 // Cache for guild prefixes (refresh every 5 minutes)
 const prefixCache = new Map<string, { prefix: string; expiresAt: number }>();
@@ -826,8 +827,9 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
   }
 
   // Check balance (skip for 'max' since we calculated based on actual balance)
+  const balances = await balanceService.getBalances(sender.walletPubkey);
+
   if (parsedAmount.type !== 'max') {
-    const balances = await balanceService.getBalances(sender.walletPubkey);
     const required =
       tokenSymbol === 'SOL' ? amountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION : amountToken;
     const available =
@@ -839,6 +841,17 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
       );
       return;
     }
+  }
+
+  // Check SOL balance for gas fees (required for all transaction types)
+  if (balances.sol < MIN_SOL_FOR_GAS) {
+    await message.reply(
+      `❌ Insufficient SOL for gas fees!\n` +
+        `**Required:** ${MIN_SOL_FOR_GAS} SOL for transaction fees\n` +
+        `**Available:** ${balances.sol.toFixed(6)} SOL\n\n` +
+        `Deposit SOL to your wallet to pay for transaction fees.`
+    );
+    return;
   }
 
   // Send processing message
@@ -1173,8 +1186,8 @@ async function handleRain(message: Message, args: string[], client: Client, pref
   }
 
   // Get active users
-  const activeUserIds = activityService.getActiveUsers(message.channel.id, 15);
-  const candidates = activeUserIds.filter((id) => id !== message.author.id);
+  const activeUserIds = await activityService.getActiveUsers(message.channel.id, 15);
+  const candidates = activeUserIds.filter((id: string) => id !== message.author.id);
 
   if (candidates.length === 0) {
     await message.reply('❌ No active users found to rain on! The channel is dry. 🏜️');

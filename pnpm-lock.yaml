@@ -35,6 +35,9 @@ importers:
       fattips-database:
         specifier: workspace:^
         version: link:../../packages/database
+      fattips-shared:
+        specifier: workspace:^
+        version: link:../../packages/shared
       fattips-solana:
         specifier: workspace:^
         version: link:../../packages/solana

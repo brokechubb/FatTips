@@ -53,11 +53,8 @@ router.post('/create', async (req, res) => {
   }
 });
 
-// All routes below require authentication and ownership
-router.use(requireAuth);
-router.use(requireOwnership);
-
-router.get('/:discordId', async (req, res) => {
+// Get wallet - requires auth and ownership
+router.get('/:discordId', requireAuth, requireOwnership, async (req, res) => {
   const { discordId } = req.params;
 
   try {
@@ -82,7 +79,7 @@ router.get('/:discordId', async (req, res) => {
   }
 });
 
-router.delete('/:discordId', async (req, res) => {
+router.delete('/:discordId', requireAuth, requireOwnership, async (req, res) => {
   const { discordId } = req.params;
 
   try {

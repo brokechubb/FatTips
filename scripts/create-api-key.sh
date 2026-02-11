@@ -118,13 +118,13 @@ WALLET_RESPONSE=$(curl -s -X POST "$API_URL/wallet/create" \
     -H "Content-Type: application/json" \
     -d "{\"discordId\": \"$DISCORD_ID\"}")
 
-WALLET_SUCCESS=$(echo "$WALLET_RESPONSE" | grep -o '"success": *[^,}]*' | grep -o 'true')
+WALLET_SUCCESS=$(echo "$WALLET_RESPONSE" | grep -o '"success": *[^,}]*' | grep -o 'true' || true)
 
 if [[ "$WALLET_SUCCESS" == "true" ]]; then
     WALLET_PUBKEY=$(echo "$WALLET_RESPONSE" | grep -o '"walletPubkey": *"[^"]*"' | cut -d'"' -f4)
     log "Wallet created/verified: $WALLET_PUBKEY"
 else
-    WALLET_ERROR=$(echo "$WALLET_RESPONSE" | grep -o '"error": *"[^"]*"' | cut -d'"' -f4)
+    WALLET_ERROR=$(echo "$WALLET_RESPONSE" | grep -o '"error": *"[^"]*"' | cut -d'"' -f4 || true)
     if [[ "$WALLET_ERROR" == "User already has a wallet" ]]; then
         log "Wallet already exists"
     else
@@ -139,7 +139,7 @@ KEY_RESPONSE=$(curl -s -X POST "$API_URL/keys/create" \
     -H "Content-Type: application/json" \
     -d "{\"discordId\": \"$DISCORD_ID\", \"name\": \"$KEY_NAME\"}")
 
-KEY_SUCCESS=$(echo "$KEY_RESPONSE" | grep -o '"success": *[^,}]*' | grep -o 'true')
+KEY_SUCCESS=$(echo "$KEY_RESPONSE" | grep -o '"success": *[^,}]*' | grep -o 'true' || true)
 
 if [[ "$KEY_SUCCESS" == "true" ]]; then
     API_KEY=$(echo "$KEY_RESPONSE" | grep -o '"apiKey": *"[^"]*"' | cut -d'"' -f4)
@@ -175,6 +175,6 @@ if [[ "$KEY_SUCCESS" == "true" ]]; then
         log "SECURE THIS FILE or delete it after storing the key securely!"
     fi
 else
-    KEY_ERROR=$(echo "$KEY_RESPONSE" | grep -o '"error": *"[^"]*"' | cut -d'"' -f4)
+    KEY_ERROR=$(echo "$KEY_RESPONSE" | grep -o '"error": *"[^"]*"' | cut -d'"' -f4 || true)
     error "Failed to create API key: $KEY_ERROR"
 fi

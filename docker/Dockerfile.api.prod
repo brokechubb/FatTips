@@ -1,0 +1,36 @@
+FROM node:18-alpine
+
+RUN apk add --no-cache openssl
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/database/package.json ./packages/database/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/solana/package.json ./packages/solana/
+COPY apps/api/package.json ./apps/api/
+COPY apps/bot/package.json ./apps/bot/
+
+# Install pnpm and dependencies
+RUN npm install -g pnpm && pnpm install --production
+
+# Copy pre-built dist files
+COPY apps/api/dist ./apps/api/dist
+COPY apps/bot/dist ./apps/bot/dist
+COPY packages/database/dist ./packages/database/dist
+COPY packages/shared/dist ./packages/shared/dist
+COPY packages/solana/dist ./packages/solana/dist
+
+# Copy prisma schema for database package
+COPY packages/database/prisma ./packages/database/prisma
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 appuser
+
+USER appuser
+
+EXPOSE 3001
+
+CMD ["node", "apps/api/dist/index.js"]

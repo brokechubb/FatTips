@@ -11,3 +11,9 @@ export function formatAmount(amount: number, decimals: number = 9): string {
 
 // Export Solana constants
 export * from './constants/solana';
+
+// Export Redis pub/sub
+export { redisPubSub, REDIS_CHANNELS } from './redis';
+
+// Export Redis-based activity service
+export { redisActivityService, RedisActivityService } from './activity';

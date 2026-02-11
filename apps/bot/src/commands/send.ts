@@ -23,7 +23,8 @@ import { PublicKey } from '@solana/web3.js';
 
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
-const FEE_BUFFER = 0.00002; // SOL - standard fee buffer
+const FEE_BUFFER = 0.001; // SOL - standard fee buffer (~$0.15)
+const MIN_SOL_FOR_GAS = 0.001; // Minimum SOL required for gas fees
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
@@ -336,9 +337,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             return;
           }
 
-          if (balances.sol < feeBuffer) {
+          // Check SOL balance for gas fees (required for all transaction types)
+          if (balances.sol < MIN_SOL_FOR_GAS) {
             await interaction.editReply({
-              content: `${interaction.user} ❌ Insufficient SOL for gas fees! You need at least 0.005 SOL to process this transaction.`,
+              content:
+                `${interaction.user} ❌ Insufficient SOL for gas fees!\n` +
+                `**Required:** ${MIN_SOL_FOR_GAS} SOL for transaction fees\n` +
+                `**Available:** ${balances.sol.toFixed(6)} SOL\n\n` +
+                `Deposit SOL to your wallet to pay for transaction fees.`,
             });
             return;
           }

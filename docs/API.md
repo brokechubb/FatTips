@@ -741,9 +741,94 @@ Response:
 
 ---
 
-### Leaderboard
+## Activity (Channel)
 
-#### Get Top Tippers
+### Get Active Users
+
+Get list of users who were active in a Discord channel within the specified time window. Use this to select random winners for rain functionality.
+
+```http
+GET /api/activity/active-users?channelId=123456789012345678&minutes=15
+```
+
+**Query Parameters:**
+
+- `channelId` (required): Discord channel ID (17-19 digit snowflake)
+- `minutes` (optional): Time window in minutes (default: 15, max: 60)
+
+**Response:**
+
+```json
+{
+  "channelId": "123456789012345678",
+  "minutes": 15,
+  "count": 10,
+  "users": [
+    "123456789",
+    "987654321",
+    "111222333"
+  ]
+}
+```
+
+**Example (Jakey selecting rain winners):**
+
+```javascript
+// Get active users in a channel
+const response = await fetch(
+  'https://codestats.gg/api/activity/active-users?channelId=123456789012345678&minutes=15',
+  {
+    headers: { 'X-API-Key': process.env.FATTIPS_API_KEY },
+  }
+);
+
+const { users } = await response.json();
+
+// Randomly select winners
+const shuffled = users.sort(() => 0.5 - Math.random());
+const winners = shuffled.slice(0, 5);
+
+// Create rain with selected winners
+const rainResponse = await fetch('https://codestats.gg/api/rain/create', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': process.env.FATTIPS_API_KEY,
+  },
+  body: JSON.stringify({
+    creatorDiscordId: process.env.JAKEY_DISCORD_ID,
+    amount: 10,
+    token: 'SOL',
+    winners,
+    amountType: 'token',
+  }),
+});
+```
+
+### Get Active User Count
+
+Get count of active users in a Discord channel.
+
+```http
+GET /api/activity/count?channelId=123456789012345678&minutes=15
+```
+
+**Response:**
+
+```json
+{
+  "channelId": "123456789012345678",
+  "minutes": 15,
+  "count": 10
+}
+```
+
+
+---
+
+## Leaderboard
+
+### Get Top Tippers
 
 ```http
 GET /api/leaderboard/top-tippers?limit=10
@@ -761,7 +846,7 @@ Response:
 ]
 ```
 
-#### Get Top Receivers
+### Get Top Receivers
 
 ```http
 GET /api/leaderboard/top-receivers?limit=10
@@ -894,7 +979,7 @@ const response = await fetch('https://codestats.gg/api/send/tip', {
 
 const result = await response.json();
 if (result.success) {
-  console.log(`Tipped! Transaction: ${result.solscanUrl}`);
+  console.log('Tipped! Transaction: ' + result.solscanUrl);
 }
 ```
 
@@ -919,7 +1004,7 @@ const response = await fetch('https://codestats.gg/api/airdrops/create', {
 });
 
 const result = await response.json();
-console.log(`Airdrop created! ID: ${result.airdropId}`);
+console.log('Airdrop created! ID: ' + result.airdropId);
 ```
 
 ### Jakey Checks User Balance
@@ -932,8 +1017,8 @@ const response = await fetch('https://codestats.gg/api/balance/user123', {
   },
 });
 
-const { balances } = await response.json();
-if (balances.sol >= 1) {
+const data = await response.json();
+if (data.balances.sol >= 1) {
   // User has at least 1 SOL
 }
 ```
@@ -963,4 +1048,3 @@ const swap = await fetch('https://codestats.gg/api/swap/execute', {
     amountType: 'token',
   }),
 });
-```

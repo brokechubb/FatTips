@@ -136,7 +136,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     else if (fromToken === 'USDT') balance = balances.usdt;
 
     let useGasless = false;
-    const LOW_SOL_THRESHOLD = 0.005; // 0.005 SOL buffer for fees
+    const LOW_SOL_THRESHOLD = 0.001; // 0.001 SOL buffer for fees (~$0.15)
 
     // Decide Gasless FIRST (needed for max calc)
     if (fromToken !== 'SOL' && balances.sol < LOW_SOL_THRESHOLD) {

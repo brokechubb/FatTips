@@ -24,7 +24,8 @@ const DISCORD_CANNOT_DM = 50007;
 
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
-const FEE_BUFFER = 0.00002; // SOL - standard fee buffer
+const FEE_BUFFER = 0.001; // SOL - standard fee buffer (~$0.15)
+const MIN_SOL_FOR_GAS = 0.001; // Minimum SOL required for gas fees
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
@@ -89,10 +90,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   try {
     // 1. Get Active Users
-    const activeUserIds = activityService.getActiveUsers(interaction.channelId, 15); // Last 15 mins
+    const activeUserIds = await activityService.getActiveUsers(interaction.channelId, 15); // Last 15 mins
 
     // Filter out sender and bots (though listener filters bots)
-    const candidates = activeUserIds.filter((id) => id !== interaction.user.id);
+    const candidates = activeUserIds.filter((id: string) => id !== interaction.user.id);
 
     if (candidates.length === 0) {
       await interaction.editReply({
@@ -306,8 +307,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         });
         return;
       }
-      if (balances.sol < feeBuffer) {
-        await interaction.editReply({ content: '❌ Insufficient SOL for gas fees!' });
+
+      // Check SOL balance for gas fees (required for all transaction types)
+      if (balances.sol < MIN_SOL_FOR_GAS) {
+        await interaction.editReply({
+          content:
+            `${interaction.user} ❌ Insufficient SOL for gas fees!\n` +
+            `**Required:** ${MIN_SOL_FOR_GAS} SOL for transaction fees\n` +
+            `**Available:** ${balances.sol.toFixed(6)} SOL\n\n` +
+            `Deposit SOL to your wallet to pay for transaction fees.`,
+        });
         return;
       }
     }

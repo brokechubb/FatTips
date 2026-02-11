@@ -181,9 +181,10 @@ export function initTransactionWorker(client: Client) {
             }
           } catch (discordError: any) {
             // 50001: Missing Access (often due to closed DMs or blocked bot)
-            if (discordError.code === 50001) {
+            // 10008: Unknown Message (user deleted the message)
+            if (discordError.code === 50001 || discordError.code === 10008) {
               console.warn(
-                `[Worker] Could not update notification for job ${job.id}: Missing Access (User likely blocked bot or closed DMs)`
+                `[Worker] Could not update notification for job ${job.id}: ${discordError.code === 50001 ? 'Missing Access (User likely blocked bot or closed DMs)' : 'Message was deleted by user'}`
               );
             } else {
               console.error('Failed to send Discord notification:', discordError);
@@ -206,13 +207,30 @@ export function initTransactionWorker(client: Client) {
       } catch (error: any) {
         console.error(`Job ${job.id} failed:`, error);
 
+        // Provide user-friendly error messages for common Solana errors
+        let userErrorMessage = error.message;
+
+        // Check for "no record of a prior credit" error - means 0 SOL balance
+        if (error.message?.includes('no record of a prior credit')) {
+          userErrorMessage =
+            'Insufficient SOL for transaction fees. Please deposit SOL to your wallet to pay for gas.';
+        }
+
+        // Check for insufficient funds errors
+        if (
+          error.message?.includes('insufficient funds') ||
+          error.message?.includes('InsufficientFunds')
+        ) {
+          userErrorMessage = 'Insufficient token balance for this transaction.';
+        }
+
         // Notify failure
         if (channelId && messageId) {
           try {
             const channel = (await client.channels.fetch(channelId)) as TextChannel;
             if (channel) {
               await channel.send(
-                `❌ Transaction failed for <@${senderDiscordId}>: ${error.message}`
+                `❌ Transaction failed for <@${senderDiscordId}>: ${userErrorMessage}`
               );
             }
           } catch {}

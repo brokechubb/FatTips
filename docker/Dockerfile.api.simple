@@ -1,0 +1,50 @@
+FROM node:18-alpine
+
+RUN apk add --no-cache libc6-compat openssl python3 make g++
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/bot/package.json ./apps/bot/
+COPY packages/database/package.json ./packages/database/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/solana/package.json ./packages/solana/
+
+# Install pnpm and dependencies
+RUN npm install -g pnpm && pnpm install
+
+# Copy source files
+COPY apps/api/src ./apps/api/src
+COPY apps/api/tsconfig.json ./apps/api/
+COPY apps/bot/src ./apps/bot/src
+COPY apps/bot/tsconfig.json ./apps/bot/
+COPY packages/database/src ./packages/database/src
+COPY packages/database/prisma ./packages/database/prisma
+COPY packages/database/tsconfig.json ./packages/database/
+COPY packages/shared/src ./packages/shared/src
+COPY packages/shared/tsconfig.json ./packages/shared/
+COPY packages/solana/src ./packages/solana/src
+COPY packages/solana/tsconfig.json ./packages/solana/
+
+# Generate Prisma client
+RUN pnpm --filter fattips-database generate
+
+# Build packages
+RUN pnpm --filter fattips-database build
+RUN pnpm --filter fattips-shared build
+RUN pnpm --filter fattips-solana build
+
+# Build API
+RUN pnpm --filter fattips-api build
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 apiuser
+
+USER apiuser
+
+EXPOSE 3001
+
+CMD ["node", "apps/api/dist/index.js"]

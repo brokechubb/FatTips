@@ -14,6 +14,7 @@ import swapRoutes from './routes/swap';
 import rainRoutes from './routes/rain';
 import leaderboardRoutes from './routes/leaderboard';
 import apiKeyRoutes from './routes/api-keys';
+import activityRoutes from './routes/activity';
 
 dotenv.config();
 
@@ -43,6 +44,7 @@ app.use('/api/airdrops', requireAuth, airdropRoutes);
 app.use('/api/swap', requireAuth, swapRoutes);
 app.use('/api/rain', requireAuth, rainRoutes);
 app.use('/api/leaderboard', requireAuth, leaderboardRoutes);
+app.use('/api/activity', activityRoutes);
 
 app.listen(PORT, () => {
   console.log(`API server running on port ${PORT}`);
