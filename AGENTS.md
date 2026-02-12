@@ -59,19 +59,27 @@ The production environment on `codestats.gg` deviates slightly from local develo
 To deploy updates to the production server:
 
 ```bash
-# 1. SSH into the server
-ssh -p 1337 chubb@codestats.gg
-
-# 2. Navigate to project directory
-cd /opt/FatTips
-
-# 3. Pull latest changes (if using git) or sync files
-# (Ensure Dockerfiles and docker-compose.yml are up to date)
-
-# 4. Deploy using the automated script (Recommended)
-# This builds locally and uploads compressed images to save disk space
+# Run from local machine - builds, uploads, and deploys automatically
 ./scripts/deploy-prod.sh
 ```
+
+**What deploy-prod.sh does:**
+
+1. Creates database backup
+2. Builds Docker images locally
+3. Uploads compressed images to server (saves disk space)
+4. Runs database migrations **before** starting services
+5. Starts all services
+6. Installs npm packages for cleanup scripts
+
+### Maintenance Scripts
+
+Located in `scripts/`:
+
+- `cleanup-airdrops.js` - Drains residual funds from settled airdrop wallets
+- `run-cleanup-docker.sh` - Wrapper to run cleanup inside Docker container
+- `setup-cleanup-cron.sh` - Installs weekly cron job (runs Sundays at 3 AM)
+- `backup-database.sh` - Creates encrypted PostgreSQL backups
 
 ## Code Style Guidelines
 
@@ -233,3 +241,4 @@ Currently minimal testing setup. When adding tests:
 - Create feature branches from `main`
 - Use conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`
 - Run `pnpm lint && pnpm typecheck` before committing
+- Update CHANGELOG.md before deploying (copy changes for Discord announcement)
