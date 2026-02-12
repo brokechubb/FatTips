@@ -559,7 +559,7 @@ async function handleBalance(message: Message, prefix: string) {
   // Calculate total USD value
   const totalUsd = solUsdValue + balances.usdc + balances.usdt;
 
-  let description = `\`${user.walletPubkey}\`\n<https://solscan.io/account/${user.walletPubkey}>`;
+  let description = `\`${user.walletPubkey}\``;
   if (showUsdValues) {
     description += `\n\n**Total Value:** $${totalUsd.toFixed(2)} USD`;
   }

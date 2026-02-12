@@ -30,7 +30,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     await interaction.editReply({
-      content: `**Your Deposit Address:**\n\`\`\`\n${user.walletPubkey}\n\`\`\`\n<https://solscan.io/account/${user.walletPubkey}>\n\nSend SOL, USDC, or USDT to this address to fund your wallet.`,
+      content: `**Your Deposit Address:**\n\`\`\`\n${user.walletPubkey}\n\`\`\`\n\nSend SOL, USDC, or USDT to this address to fund your wallet.`,
     });
   } catch (error) {
     console.error('Error fetching deposit address:', error);
