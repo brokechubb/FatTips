@@ -63,6 +63,7 @@ model Airdrop {
   status            AirdropStatus @default(ACTIVE)
   expiresAt         DateTime
   settledAt         DateTime?
+  cleanedUpAt       DateTime? // Timestamp when residual funds were drained
   createdAt         DateTime @default(now())
   channelId         String   // Channel where airdrop was created
   messageId         String?  // ID of the embed message
@@ -71,6 +72,7 @@ model Airdrop {
 
   @@index([status, expiresAt])
   @@index([creatorId])
+  @@index([cleanedUpAt])
 }
 
 model AirdropParticipant {

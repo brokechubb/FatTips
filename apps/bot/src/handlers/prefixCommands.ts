@@ -559,10 +559,11 @@ async function handleBalance(message: Message, prefix: string) {
   // Calculate total USD value
   const totalUsd = solUsdValue + balances.usdc + balances.usdt;
 
-  let description = `\`${user.walletPubkey}\``;
+  let description = `\`${user.walletPubkey}\`\n<https://solscan.io/account/${user.walletPubkey}>`;
   if (showUsdValues) {
     description += `\n\n**Total Value:** $${totalUsd.toFixed(2)} USD`;
   }
+  description += `\n\n*💡 For privacy, use \`/balance\` (slash command) as the preferred way to check your balance - only you will see it.*`;
 
   const embed = new EmbedBuilder()
     .setTitle('💰 Your Wallet')
@@ -579,34 +580,7 @@ async function handleBalance(message: Message, prefix: string) {
     .setColor(0x00ff00)
     .setTimestamp();
 
-  // If in DM, reply directly
-  if (message.channel.type === ChannelType.DM) {
-    await message.reply({ embeds: [embed] });
-    return;
-  }
-
-  try {
-    await message.author.send({ embeds: [embed] });
-    const reply = await message.reply('✅ Sent your balance to your DMs!');
-
-    // Clean up messages after 5 seconds
-    setTimeout(() => {
-      reply.delete().catch(() => {});
-      if (message.deletable) {
-        message.delete().catch(() => {});
-      }
-    }, 5000);
-  } catch (error: any) {
-    if (error.code === DISCORD_CANNOT_DM) {
-      const reply = await message.reply(
-        '❌ I cannot DM you. Please enable DMs to check your balance privately.'
-      );
-      setTimeout(() => reply.delete().catch(() => {}), 10000);
-    } else {
-      logger.error('Error sending balance DM:', error);
-      await message.reply('❌ Failed to send balance. Please try again.');
-    }
-  }
+  await message.reply({ embeds: [embed] });
 }
 
 // ============ WALLET ============
@@ -829,26 +803,68 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
   // Check balance (skip for 'max' since we calculated based on actual balance)
   const balances = await balanceService.getBalances(sender.walletPubkey);
 
+  // Check if recipients are new wallets (need rent exemption for SOL or ATA for SPL)
+  let newRecipientCount = 0;
+  const checkCount = Math.min(recipientWallets.length, 10);
+  for (let i = 0; i < checkCount; i++) {
+    try {
+      const recipientBalances = await balanceService.getBalances(recipientWallets[i].walletPubkey);
+      if (
+        recipientBalances.sol === 0 &&
+        recipientBalances.usdc === 0 &&
+        recipientBalances.usdt === 0
+      ) {
+        newRecipientCount++;
+      }
+    } catch {
+      newRecipientCount++;
+    }
+  }
+  const estimatedNewRecipients =
+    newRecipientCount > 0
+      ? Math.ceil(newRecipientCount * (recipientWallets.length / checkCount))
+      : 0;
+  const recipientRentReserve = estimatedNewRecipients * MIN_RENT_EXEMPTION;
+
   if (parsedAmount.type !== 'max') {
+    const recipientRent =
+      tokenSymbol === 'SOL' ? recipientRentReserve : estimatedNewRecipients * 0.002; // ATA rent for SPL
     const required =
-      tokenSymbol === 'SOL' ? amountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION : amountToken;
+      tokenSymbol === 'SOL'
+        ? amountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION + recipientRent
+        : amountToken;
     const available =
       tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
     if (available < required) {
+      const rentInfo =
+        estimatedNewRecipients > 0
+          ? `\n• +${estimatedNewRecipients} new recipient${estimatedNewRecipients > 1 ? 's need' : ' needs'} rent exemption`
+          : '';
       await message.reply(
-        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol} (incl. rent exemption), have ${available.toFixed(4)}`
+        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol} (incl. fees/rent)${rentInfo}, have ${available.toFixed(4)}`
       );
       return;
     }
   }
 
   // Check SOL balance for gas fees (required for all transaction types)
-  if (balances.sol < MIN_SOL_FOR_GAS) {
+  if (tokenSymbol === 'SOL' && balances.sol < MIN_SOL_FOR_GAS + recipientRentReserve) {
     await message.reply(
       `❌ Insufficient SOL for gas fees!\n` +
-        `**Required:** ${MIN_SOL_FOR_GAS} SOL for transaction fees\n` +
-        `**Available:** ${balances.sol.toFixed(6)} SOL\n\n` +
+        `**Required:** ${(MIN_SOL_FOR_GAS + recipientRentReserve).toFixed(5)} SOL\n` +
+        `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
+        `Deposit SOL to your wallet to pay for transaction fees.`
+    );
+    return;
+  } else if (
+    tokenSymbol !== 'SOL' &&
+    balances.sol < MIN_SOL_FOR_GAS + estimatedNewRecipients * 0.002
+  ) {
+    await message.reply(
+      `❌ Insufficient SOL for gas & rent!\n` +
+        `**Required:** ${(MIN_SOL_FOR_GAS + estimatedNewRecipients * 0.002).toFixed(5)} SOL\n` +
+        `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
         `Deposit SOL to your wallet to pay for transaction fees.`
     );
     return;
@@ -1023,7 +1039,7 @@ async function handleSend(message: Message, args: string[], prefix: string) {
     amountPerUser: amountToken,
     tokenMint,
     tokenSymbol,
-    usdValuePerUser: 0, // Not calculated for withdrawal here
+    usdValuePerUser: usdValue,
     channelId: message.channel.id,
     messageId: processingMsg.id,
     skipPriorityFee: parsedAmount.type === 'max' && tokenSymbol === 'SOL',
@@ -1037,7 +1053,7 @@ async function handleHistory(message: Message) {
       OR: [{ fromId: message.author.id }, { toId: message.author.id }],
     },
     orderBy: { createdAt: 'desc' },
-    take: 10,
+    take: 3,
   });
 
   if (transactions.length === 0) {
@@ -1090,10 +1106,10 @@ async function handleHistory(message: Message) {
   });
 
   const embed = new EmbedBuilder()
-    .setTitle('📜 Transaction History')
+    .setTitle('📜 Recent Transactions')
     .setDescription(lines.join('\n\n'))
     .setColor(0x00aaff)
-    .setFooter({ text: 'Last 10 transactions' })
+    .setFooter({ text: 'Last 3 transactions • Use /history for full history' })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });
@@ -1476,9 +1492,20 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     usdValue = price ? amountToken * price.price : 0;
   }
 
+  // Validate amount
+  if (amountToken <= 0) {
+    await message.reply('❌ Amount must be greater than 0.');
+    return;
+  }
+
   // Create ephemeral wallet
   const ephemeralWallet = await walletService.createEncryptedWallet();
-  const GAS_BUFFER = 0.003;
+  // Calculate gas buffer based on max winners to account for rent exemption
+  // Each new winner wallet needs 0.00089 SOL rent exemption + 0.000005 SOL tx fee
+  const winnerCount = maxWinners || 100; // Default to 100 if not specified
+  const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption
+  const TX_FEE = 0.000005; // Per transaction fee
+  const GAS_BUFFER = 0.003 + winnerCount * (RENT_EXEMPTION + TX_FEE);
 
   // Check balance (skip for max since we calculated based on actual balance)
   if (parsedAmount.type !== 'max') {
@@ -1527,6 +1554,29 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   } catch (error: any) {
     await message.reply(`❌ Failed to fund airdrop: ${error.message || 'Unknown error'}`);
     return;
+  }
+
+  // Verify the ephemeral wallet was funded before creating airdrop
+  await message.reply('✅ Verifying funds received...');
+  try {
+    const walletBalances = await balanceService.getBalances(ephemeralWallet.publicKey);
+    if (tokenMint === TOKEN_MINTS.SOL) {
+      if (walletBalances.sol < amountToken) {
+        await message.reply('❌ Failed to verify SOL in airdrop wallet. Please try again.');
+        return;
+      }
+    } else {
+      const tokenBal = tokenMint === TOKEN_MINTS.USDC ? walletBalances.usdc : walletBalances.usdt;
+      if (tokenBal < amountToken) {
+        await message.reply(
+          `❌ Failed to verify ${tokenSymbol} in airdrop wallet. Please try again.`
+        );
+        return;
+      }
+    }
+  } catch (verifyError) {
+    console.error('Balance verification failed:', verifyError);
+    // Continue anyway - the balance check might fail due to RPC issues
   }
 
   // Create airdrop in DB

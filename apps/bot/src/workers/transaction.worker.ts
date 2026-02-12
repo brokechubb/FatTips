@@ -142,35 +142,50 @@ export function initTransactionWorker(client: Client) {
         }
 
         // 5. Notify Discord
-        if (channelId && messageId) {
+        // For withdrawals: send DM to user
+        // For tips/rain: edit/reply in channel
+        if (type === 'WITHDRAWAL' && senderDiscordId) {
+          try {
+            const user = await client.users.fetch(senderDiscordId);
+            const embed = new EmbedBuilder()
+              .setTitle('📤 Withdrawal Successful')
+              .setDescription(
+                `Sent **${amountPerUser.toFixed(4)} ${tokenSymbol}** (~$${usdValuePerUser.toFixed(2)}) to:\n\`${targetPubkey}\`\n\n[View on Solscan](https://solscan.io/tx/${signature})`
+              )
+              .setColor(0x00ff00)
+              .setTimestamp();
+            await user.send({ embeds: [embed] });
+          } catch (discordError: any) {
+            // 50001: Missing Access, 50007: Cannot DM
+            if (discordError.code === 50001 || discordError.code === 50007) {
+              console.warn(
+                `[Worker] Could not DM user ${senderDiscordId}: User likely blocked bot or closed DMs`
+              );
+            } else {
+              console.error(
+                `[Worker] Failed to send withdrawal DM to user ${senderDiscordId}:`,
+                discordError
+              );
+            }
+          }
+        } else if (channelId && messageId) {
+          // Only for tips/rain - edit/reply in channel
           try {
             const channel = (await client.channels.fetch(channelId)) as TextChannel;
             if (channel) {
               const originalMsg = await channel.messages.fetch(messageId);
-              let embed: EmbedBuilder;
+              const userMentions = recipientWallets.map((r) => `<@${r.discordId}>`).join(', ');
+              const title = type === 'RAIN' ? '🌧️ Making it Rain!' : '💸 Tip Sent!';
 
-              if (type === 'WITHDRAWAL') {
-                embed = new EmbedBuilder()
-                  .setTitle('📤 Withdrawal Successful')
-                  .setDescription(
-                    `Sent **${amountPerUser.toFixed(4)} ${tokenSymbol}** (~$${usdValuePerUser.toFixed(2)}) to:\n\`${targetPubkey}\`\n\n[View on Solscan](https://solscan.io/tx/${signature})`
-                  )
-                  .setColor(0x00ff00)
-                  .setTimestamp();
-              } else {
-                const userMentions = recipientWallets.map((r) => `<@${r.discordId}>`).join(', ');
-                const title = type === 'RAIN' ? '🌧️ Making it Rain!' : '💸 Tip Sent!';
-
-                embed = new EmbedBuilder()
-                  .setTitle(title)
-                  .setDescription(
-                    `**<@${senderDiscordId}>** sent ${userMentions}\n\n` +
-                      `**Amount:** ${amountPerUser.toFixed(4)} ${tokenSymbol} (~$${usdValuePerUser.toFixed(2)}) each\n` +
-                      `[View on Solscan](https://solscan.io/tx/${signature})`
-                  )
-                  .setColor(0x00ff00)
-                  .setTimestamp();
-              }
+              const embed = new EmbedBuilder()
+                .setTitle(title)
+                .setDescription(
+                  `**<@${senderDiscordId}>** sent ${userMentions}\n\n` +
+                    `**Amount:** ${amountPerUser.toFixed(4)} ${tokenSymbol} (~$${usdValuePerUser.toFixed(2)}) each\n` +
+                    `[View on Solscan](https://solscan.io/tx/${signature})`
+                )
+                .setColor(0x00ff00)
+                .setTimestamp();
 
               // If it was a "Processing..." message, edit it. Otherwise reply.
               if (originalMsg.author.id === client.user?.id) {

@@ -199,13 +199,22 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     usdValue = price ? amountToken * price.price : 0;
   }
 
+  // Validate amount
+  if (amountToken <= 0) {
+    await interaction.editReply({ content: '❌ Amount must be greater than 0.' });
+    return;
+  }
+
   // 5. Generate Ephemeral Wallet
   const ephemeralWallet = await walletService.createEncryptedWallet();
 
   // 6. Fund Ephemeral Wallet
-  // We need to send: Amount + Gas Fees for distribution
-  // Estimate: 0.002 SOL for rent + (0.000005 * 100 txs) -> ~0.003 SOL buffer
-  const GAS_BUFFER = 0.003;
+  // Calculate gas buffer based on max winners to account for rent exemption
+  // Each new winner wallet needs 0.00089 SOL rent exemption + 0.000005 SOL tx fee
+  const winnerCount = maxWinners || 100; // Default to 100 if not specified
+  const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption
+  const TX_FEE = 0.000005; // Per transaction fee
+  const GAS_BUFFER = 0.003 + winnerCount * (RENT_EXEMPTION + TX_FEE);
 
   let fundingAmountSol = 0;
   let fundingAmountToken = 0;
@@ -304,6 +313,31 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     logTransaction('AIRDROP', { status: 'FAILED', error: error.message || String(error) });
     await interaction.editReply({ content: '❌ Failed to fund airdrop wallet. Please try again.' });
     return;
+  }
+
+  // Verify the ephemeral wallet was funded before creating airdrop
+  await interaction.editReply({ content: '✅ Verifying funds received...' });
+  try {
+    const walletBalances = await balanceService.getBalances(ephemeralWallet.publicKey);
+    if (tokenMint === TOKEN_MINTS.SOL) {
+      if (walletBalances.sol < amountToken) {
+        await interaction.editReply({
+          content: '❌ Failed to verify SOL in airdrop wallet. Please try again.',
+        });
+        return;
+      }
+    } else {
+      const tokenBal = tokenMint === TOKEN_MINTS.USDC ? walletBalances.usdc : walletBalances.usdt;
+      if (tokenBal < amountToken) {
+        await interaction.editReply({
+          content: `❌ Failed to verify ${tokenSymbol} in airdrop wallet. Please try again.`,
+        });
+        return;
+      }
+    }
+  } catch (verifyError) {
+    console.error('Balance verification failed:', verifyError);
+    // Continue anyway - the balance check might fail due to RPC issues
   }
 
   // 7. Create DB Record

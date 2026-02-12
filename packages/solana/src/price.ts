@@ -37,6 +37,15 @@ export class JupiterPriceService {
       const response = await fetch(`${this.apiUrl}?ids=${mintAddress}`, { headers });
 
       if (!response.ok) {
+        console.error(`Jupiter Price API Error: ${response.status} ${response.statusText}`);
+        console.error(`API URL: ${this.apiUrl}?ids=${mintAddress}`);
+        console.error(`API Key provided: ${!!this.apiKey}`);
+
+        // If 401, log more details
+        if (response.status === 401) {
+          console.error('401 Unauthorized - Jupiter API key may be invalid or missing');
+        }
+
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
@@ -64,10 +73,12 @@ export class JupiterPriceService {
         };
       }
 
+      console.error('Jupiter Price API: No price data found for mint:', mintAddress);
+      console.error('Response data:', data);
       return null;
     } catch (error) {
-      console.error('API Error:', error);
-      // Silently return null - API might require key or be unavailable
+      console.error('Jupiter Price API Error:', error);
+      // Return null to maintain existing behavior but log the error
       return null;
     }
   }
@@ -80,21 +91,27 @@ export class JupiterPriceService {
     mintAddress: string,
     tokenSymbol: string
   ): Promise<ConversionResult | null> {
-    const price = await this.getTokenPrice(mintAddress);
+    try {
+      const price = await this.getTokenPrice(mintAddress);
 
-    if (!price || price.price <= 0) {
+      if (!price || price.price <= 0) {
+        console.error('Jupiter Price API: Invalid price for mint', mintAddress, price);
+        return null;
+      }
+
+      const amountToken = usdAmount / price.price;
+
+      return {
+        amountToken,
+        tokenSymbol,
+        tokenMint: mintAddress,
+        usdValue: usdAmount,
+        price: price.price,
+      };
+    } catch (error) {
+      console.error('Jupiter Price API convert error:', error);
       return null;
     }
-
-    const amountToken = usdAmount / price.price;
-
-    return {
-      amountToken,
-      tokenSymbol,
-      tokenMint: mintAddress,
-      usdValue: usdAmount,
-      price: price.price,
-    };
   }
 
   /**

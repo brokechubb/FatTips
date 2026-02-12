@@ -18,6 +18,8 @@ import {
   BalanceService,
 } from 'fattips-solana';
 import { activityService } from '../services/activity';
+import { Connection, PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
 
 // Discord error codes
 const DISCORD_CANNOT_DM = 50007;
@@ -26,11 +28,13 @@ const DISCORD_CANNOT_DM = 50007;
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
 const FEE_BUFFER = 0.001; // SOL - standard fee buffer (~$0.15)
 const MIN_SOL_FOR_GAS = 0.001; // Minimum SOL required for gas fees
+const ATA_RENT_EXEMPTION = 0.002; // SOL - rent for creating associated token account
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
 const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
+const solanaConnection = new Connection(process.env.SOLANA_RPC_URL!);
 
 export const data = new SlashCommandBuilder()
   .setName('rain')
@@ -309,7 +313,45 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
 
       // Check SOL balance for gas fees (required for all transaction types)
-      if (balances.sol < MIN_SOL_FOR_GAS) {
+      // For SPL tokens, also check if recipients need ATA creation
+      if (tokenSymbol !== 'SOL') {
+        // Check up to 10 recipients to see if they need ATA creation
+        const checkCount = Math.min(recipientWallets.length, 10);
+        let newAtaCount = 0;
+        for (let i = 0; i < checkCount; i++) {
+          try {
+            const mintPubkey = new PublicKey(tokenMint);
+            const recipientAta = await getAssociatedTokenAddress(
+              mintPubkey,
+              new PublicKey(recipientWallets[i].walletPubkey)
+            );
+            await getAccount(solanaConnection, recipientAta);
+          } catch {
+            newAtaCount++;
+          }
+        }
+        const estimatedNewAtas =
+          newAtaCount > 0 ? Math.ceil(newAtaCount * (recipientWallets.length / checkCount)) : 0;
+        const ataRentRequired = estimatedNewAtas * ATA_RENT_EXEMPTION;
+
+        const totalSolNeeded = MIN_SOL_FOR_GAS + ataRentRequired;
+        if (balances.sol < totalSolNeeded) {
+          const rentInfo =
+            estimatedNewAtas > 0
+              ? `\n• +${estimatedNewAtas} new wallet${estimatedNewAtas > 1 ? 's' : ''} need ${ATA_RENT_EXEMPTION} SOL each for token accounts`
+              : '';
+          await interaction.editReply({
+            content:
+              `${interaction.user} ❌ Insufficient SOL for gas & rent!\n` +
+              `**Required:** ${totalSolNeeded.toFixed(5)} SOL\n` +
+              `• ${MIN_SOL_FOR_GAS} SOL for transaction fees\n` +
+              `• ${ataRentRequired.toFixed(5)} SOL for new wallet${estimatedNewAtas > 1 ? 's' : ''} (rent exemption)${rentInfo}\n` +
+              `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
+              `Deposit SOL to your wallet to cover fees.`,
+          });
+          return;
+        }
+      } else if (balances.sol < MIN_SOL_FOR_GAS) {
         await interaction.editReply({
           content:
             `${interaction.user} ❌ Insufficient SOL for gas fees!\n` +

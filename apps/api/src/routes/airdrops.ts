@@ -100,8 +100,19 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
       usdValue = price ? amount * price.price : 0;
     }
 
+    // Validate amount
+    if (amountToken <= 0) {
+      res.status(400).json({ error: 'Amount must be greater than 0' });
+      return;
+    }
+
     const ephemeralWallet = await walletService.createEncryptedWallet();
-    const GAS_BUFFER = 0.003;
+    // Calculate gas buffer based on max winners to account for rent exemption
+    // Each new winner wallet needs 0.00089 SOL rent exemption + 0.000005 SOL tx fee
+    const winnerCount = maxWinners || 100; // Default to 100 if not specified
+    const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption
+    const TX_FEE = 0.000005; // Per transaction fee
+    const GAS_BUFFER = 0.003 + winnerCount * (RENT_EXEMPTION + TX_FEE);
 
     let fundingAmountSol = 0;
     let fundingAmountToken = 0;
@@ -131,23 +142,46 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
       creator.keySalt
     );
 
+    let solSig: string | undefined;
+    let tokenSig: string | undefined;
+
     if (fundingAmountSol > 0) {
       const solToSend = token === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
-      const solSig = await transactionService.transfer(
+      solSig = await transactionService.transfer(
         creatorKeypair,
         ephemeralWallet.publicKey,
         solToSend,
         TOKEN_MINTS.SOL
       );
+      console.log(`[AIRDROP] SOL funding transaction: ${solSig}`);
     }
 
     if (fundingAmountToken > 0) {
-      const tokenSig = await transactionService.transfer(
+      tokenSig = await transactionService.transfer(
         creatorKeypair,
         ephemeralWallet.publicKey,
         fundingAmountToken,
         tokenMint
       );
+      console.log(`[AIRDROP] Token funding transaction: ${tokenSig}`);
+    }
+
+    // Wait a moment for transactions to be fully processed
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Verify the ephemeral wallet was funded
+    const walletBalances = await balanceService.getBalances(ephemeralWallet.publicKey);
+    if (token === 'SOL') {
+      if (walletBalances.sol < amountToken) {
+        res.status(500).json({ error: 'Failed to fund airdrop wallet with SOL' });
+        return;
+      }
+    } else {
+      const tokenBal = token === 'USDC' ? walletBalances.usdc : walletBalances.usdt;
+      if (tokenBal < amountToken) {
+        res.status(500).json({ error: `Failed to fund airdrop wallet with ${token}` });
+        return;
+      }
     }
 
     const expiresAt = new Date(Date.now() + durationMs);
@@ -300,7 +334,7 @@ router.post('/:id/claim', async (req, res) => {
       });
     }
 
-    const recipientKeypair = await walletService.getKeypair(
+    const airdropKeypair = await walletService.getKeypair(
       airdrop.encryptedPrivkey,
       airdrop.keySalt
     );
@@ -322,7 +356,7 @@ router.post('/:id/claim', async (req, res) => {
     amountPerUser = totalPot / totalParticipants;
 
     const signature = await transactionService.transfer(
-      recipientKeypair,
+      airdropKeypair,
       recipient.walletPubkey,
       amountPerUser,
       airdrop.tokenMint

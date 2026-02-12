@@ -75,7 +75,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const totalUsd = solUsdValue + balances.usdc + balances.usdt;
 
     // Build description
-    let description = `**Deposit Address:**\n\`\`\`\n${user.walletPubkey}\n\`\`\``;
+    let description = `**Deposit Address:**\n\`\`\`\n${user.walletPubkey}\n\`\`\`\n<https://solscan.io/account/${user.walletPubkey}>`;
     if (showUsdValues) {
       description += `\n\n**Total Value:** $${totalUsd.toFixed(2)} USD`;
     }

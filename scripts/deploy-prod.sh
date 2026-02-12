@@ -80,7 +80,12 @@ echo "📤 Uploading compressed images to production..."
 # Save both images, compress with gzip, and pipe to remote docker load
 docker save fattips-bot:latest fattips-api:latest | gzip | ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST "gunzip | docker load"
 
-# 3. Sync Configuration Files
+# 3. Run Database Migrations BEFORE restarting services
+# This ensures schema is updated before new code tries to use it
+echo "🐘 Running database migrations..."
+ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST "docker exec fattips-bot pnpm --filter fattips-database migrate:prod"
+
+# 4. Sync Configuration Files
 echo "📦 Syncing configuration files..."
 # We only need docker-compose.yml, scripts, and basic config. Source code is inside the image!
 # NOTE: .env is NOT synced - production has its own .env with secrets
@@ -97,7 +102,7 @@ rsync -avz -e "ssh -p $SERVER_PORT -o ConnectTimeout=30" --delete \
   .env.example \
   $SERVER_USER@$SERVER_HOST:$REMOTE_DIR/
 
-# 4. Restart Services on Remote
+# 5. Restart Services on Remote
 echo "🔄 Restarting services on server..."
 ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST << EOF
   cd $REMOTE_DIR
@@ -114,10 +119,16 @@ ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST << EOF
   # Use the images we just loaded
   docker compose up -d
   
-  # 5. Run Migrations
-  echo "🐘 Running database migrations..."
-  sleep 10
-  docker compose exec -T bot pnpm --filter fattips-database migrate:prod
+  # 5. Install npm packages for cleanup scripts
+  echo "📦 Installing npm packages for cleanup scripts..."
+  # Create scripts directory as root and install packages
+  docker exec -u root fattips-bot mkdir -p /app/scripts
+  docker exec -u root fattips-bot sh -c "cd /app/scripts && npm init -y && npm install pg @solana/web3.js"
+
+  # Ensure cleanup scripts are in the container
+  docker cp scripts/cleanup-airdrops.js fattips-bot:/app/scripts/cleanup-airdrops.js 2>/dev/null || true
+  docker cp scripts/run-cleanup-docker.sh fattips-bot:/app/scripts/run-cleanup-docker.sh 2>/dev/null || true
+  docker exec -u root fattips-bot chmod +x /app/scripts/run-cleanup-docker.sh 2>/dev/null || true
   
   echo "🧹 Post-deployment cleanup..."
   docker system prune -f

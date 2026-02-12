@@ -445,10 +445,49 @@ export class AirdropService {
       let distributableAmount = totalAmount;
       const totalEstimatedFees = winners.length * feePerTx;
 
-      // Check actual wallet balance to be safe
-      try {
-        const balances = await this.balanceService.getBalances(walletKeypair.publicKey.toBase58());
+      // Check actual wallet balance to be safe (with retry for reliability)
+      let balances: { sol: number; usdc: number; usdt: number } = { sol: 0, usdc: 0, usdt: 0 };
+      let balanceCheckAttempts = 0;
+      const maxAttempts = 3;
+      let balanceCheckSucceeded = false;
 
+      while (balanceCheckAttempts < maxAttempts) {
+        try {
+          const walletPubkey = walletKeypair.publicKey.toBase58();
+          balances = await this.balanceService.getBalances(walletPubkey);
+
+          console.log(
+            `[AIRDROP] Balance check for ${airdrop.id}: ${balances.sol} SOL, ${balances.usdc} USDC, ${balances.usdt} USDT (wallet: ${walletPubkey})`
+          );
+
+          // If balance is 0 and we haven't exhausted retries, try again
+          if (balances.sol === 0 && balanceCheckAttempts < maxAttempts - 1) {
+            console.warn(
+              `[AIRDROP] Balance returned 0, retrying... (${balanceCheckAttempts + 1}/${maxAttempts})`
+            );
+            balanceCheckAttempts++;
+            await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s before retry
+            continue;
+          }
+
+          balanceCheckSucceeded = true;
+          break; // Success, exit retry loop
+        } catch (err) {
+          balanceCheckAttempts++;
+          console.error(
+            `[AIRDROP] Balance check failed (attempt ${balanceCheckAttempts}/${maxAttempts}):`,
+            err
+          );
+          if (balanceCheckAttempts >= maxAttempts) {
+            console.error('[AIRDROP] Max balance check attempts reached, using DB value');
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s before retry
+        }
+      }
+
+      // Apply balance-based adjustments
+      if (balanceCheckSucceeded) {
         if (tokenMint === TOKEN_MINTS.SOL) {
           // For SOL: We must subtract fees + rent buffer from the total pot
           const maxAvailable = Math.max(0, balances.sol - totalEstimatedFees - rentBuffer);
@@ -458,7 +497,7 @@ export class AirdropService {
 
           if (distributableAmount < totalAmount) {
             console.warn(
-              `[AIRDROP] Adjusting payout due to fees. Promised: ${totalAmount}, Available: ${maxAvailable}`
+              `[AIRDROP] Adjusting payout due to fees. Promised: ${totalAmount}, Available: ${maxAvailable}, Raw Balance: ${balances.sol}`
             );
           }
         } else {
@@ -494,8 +533,8 @@ export class AirdropService {
           const tokenBal = tokenMint === TOKEN_MINTS.USDC ? balances.usdc : balances.usdt;
           distributableAmount = Math.min(totalAmount, tokenBal);
         }
-      } catch (err) {
-        console.error('Failed to fetch realtime balance for settlement, using DB value', err);
+      } else {
+        console.error('[AIRDROP] Balance check failed after retries, using DB value');
       }
 
       // Safety check: If distributable amount is 0, abort
