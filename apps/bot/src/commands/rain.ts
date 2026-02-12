@@ -464,7 +464,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
           const guideEmbed = new EmbedBuilder()
             .setTitle('🚀 Welcome to FatTips')
-            .setDescription('You just received crypto! Use `/balance` to check it.')
+            .setDescription('You just received Solana! Use `/balance` to check it.')
             .setColor(0x00aaff);
           await user.send({ embeds: [guideEmbed] });
 

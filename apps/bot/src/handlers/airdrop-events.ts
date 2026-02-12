@@ -80,7 +80,7 @@ export class AirdropEventHandler {
       const endTimestamp = Math.floor(new Date(event.expiresAt).getTime() / 1000);
 
       const embed = new EmbedBuilder()
-        .setTitle('🎉 Crypto Airdrop!')
+        .setTitle('🎉 Solana Airdrop!')
         .setDescription(
           `**A pot of ${event.potSize.toFixed(2)} ${event.token}** (~$${event.totalUsd.toFixed(2)}) has been dropped!\n\n` +
             `Click **Claim** to enter.\n` +

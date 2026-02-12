@@ -475,7 +475,7 @@ async function handleHelp(message: Message, prefix: string) {
   const embed = new EmbedBuilder()
     .setTitle('💰 FatTips Commands')
     .setDescription(
-      `Send crypto tips instantly on Discord!\n` +
+      `Send Solana tips instantly on Discord!\n` +
         `**Prefix:** \`${prefix}\` (recommended for guilds)\n\n` +
         `💡 **Pro Tips:**\n` +
         `• Reply to any message with \`${p}tip $5\` to tip the author\n` +
@@ -906,7 +906,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
       // Send Guide
       const guideEmbed = new EmbedBuilder()
         .setTitle('🚀 Getting Started')
-        .setDescription('You just received crypto! Use `/balance` to check it.')
+        .setDescription('You just received Solana! Use `/balance` to check it.')
         .setColor(0x00aaff);
       await user.send({ embeds: [guideEmbed] });
 
@@ -1368,7 +1368,7 @@ async function handleRain(message: Message, args: string[], client: Client, pref
       // Send Guide
       const guideEmbed = new EmbedBuilder()
         .setTitle('🚀 Getting Started')
-        .setDescription('You just received crypto! Use `/balance` to check it.')
+        .setDescription('You just received Solana! Use `/balance` to check it.')
         .setColor(0x00aaff);
       await user.send({ embeds: [guideEmbed] });
 
@@ -1597,7 +1597,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   // Send embed with claim button
   const endTimestamp = Math.floor(expiresAt.getTime() / 1000);
   const embed = new EmbedBuilder()
-    .setTitle('🎉 Crypto Airdrop!')
+    .setTitle('🎉 Solana Airdrop!')
     .setDescription(
       `**${message.author}** dropped a pot of **${amountToken.toFixed(2)} ${tokenSymbol}** (~$${usdValue.toFixed(2)})!\n\n` +
         `Click **Claim** to enter.\n` +

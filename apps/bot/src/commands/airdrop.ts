@@ -27,7 +27,7 @@ const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
 
 export const data = new SlashCommandBuilder()
   .setName('airdrop')
-  .setDescription('Create a crypto airdrop for the community')
+  .setDescription('Create a Solana airdrop for the community')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
   .setIntegrationTypes([ApplicationIntegrationType.GuildInstall]) // Only visible when bot is guild-installed
   .setContexts([InteractionContextType.Guild]) // Only usable in guild channels
@@ -358,7 +358,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   // 8. Send Embed
   const endTimestamp = Math.floor(expiresAt.getTime() / 1000);
   const embed = new EmbedBuilder()
-    .setTitle('🎉 Crypto Airdrop!')
+    .setTitle('🎉 Solana Airdrop!')
     .setDescription(
       `**${interaction.user}** dropped a pot of **${amountToken.toFixed(2)} ${tokenSymbol}** (~$${usdValue.toFixed(2)})!\n\n` +
         `Click **Claim** to enter.\n` +
