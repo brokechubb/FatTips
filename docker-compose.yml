@@ -41,6 +41,11 @@ services:
     volumes:
       - redis_data:/data
     # Port not exposed externally - containers connect via internal Docker network
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
     deploy:
       resources:
         limits:
@@ -70,11 +75,11 @@ services:
       - DATABASE_URL=postgresql://fattips_user:${POSTGRES_PASSWORD}@postgres:5432/fattips
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
     volumes:
       - ./logs/bot:/app/apps/bot/logs
     deploy:
@@ -106,6 +111,8 @@ services:
       - REDIS_HOST=redis
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     deploy:
       resources:

@@ -1,6 +1,7 @@
 import { ButtonInteraction, EmbedBuilder, Client, TextChannel } from 'discord.js';
 import * as Sentry from '@sentry/node';
 import { prisma } from 'fattips-database';
+import { withDatabaseRetry } from 'fattips-database/dist/utils';
 import { logger, logTransaction } from '../utils/logger';
 import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
 
@@ -275,22 +276,33 @@ export class AirdropService {
    */
   async settleExpiredAirdrops(client: any) {
     try {
-      const expiredAirdrops = await prisma.airdrop.findMany({
-        where: {
-          status: 'ACTIVE',
-          expiresAt: { lt: new Date() },
-        },
-        include: {
-          participants: true,
-          creator: true,
-        },
-      });
+      const expiredAirdrops = await withDatabaseRetry(() =>
+        prisma.airdrop.findMany({
+          where: {
+            status: 'ACTIVE',
+            expiresAt: { lt: new Date() },
+          },
+          include: {
+            participants: true,
+            creator: true,
+          },
+        })
+      );
 
       for (const airdrop of expiredAirdrops) {
         await this.settleAirdrop(airdrop, client);
       }
     } catch (error) {
-      logger.error('Error settling airdrops:', error);
+      const err = error as Error;
+      logger.error('Error settling airdrops:', err);
+
+      // Check if it's a database connection error
+      if (err.message.includes('P1001') || err.message.includes("Can't reach database")) {
+        logger.warn('Database connection issue detected. Will retry on next interval.');
+        // Don't send to Sentry for temporary connection issues
+        return;
+      }
+
       Sentry.captureException(error, {
         tags: {
           action: 'settleExpiredAirdrops',
@@ -303,13 +315,36 @@ export class AirdropService {
    * Settle a single airdrop by ID
    */
   async settleAirdropById(airdropId: string, client: any) {
-    const airdrop = await prisma.airdrop.findUnique({
-      where: { id: airdropId },
-      include: { participants: true, creator: true },
-    });
+    try {
+      const airdrop = await withDatabaseRetry(() =>
+        prisma.airdrop.findUnique({
+          where: { id: airdropId },
+          include: { participants: true, creator: true },
+        })
+      );
 
-    if (airdrop && airdrop.status === 'ACTIVE') {
-      await this.settleAirdrop(airdrop, client);
+      if (airdrop && airdrop.status === 'ACTIVE') {
+        await this.settleAirdrop(airdrop, client);
+      }
+    } catch (error) {
+      const err = error as Error;
+      logger.error(`Error settling airdrop ${airdropId}:`, err);
+
+      // Check if it's a database connection error
+      if (err.message.includes('P1001') || err.message.includes("Can't reach database")) {
+        logger.warn(
+          `Database connection issue detected for airdrop ${airdropId}. Will retry if needed.`
+        );
+        // Don't send to Sentry for temporary connection issues
+        return;
+      }
+
+      Sentry.captureException(error, {
+        tags: {
+          airdropId,
+          action: 'settleAirdropById',
+        },
+      });
     }
   }
 
@@ -326,10 +361,12 @@ export class AirdropService {
     try {
       // 1. Mark as SETTLED (to prevent double processing)
       // We do this via updateMany to be atomic
-      const { count } = await prisma.airdrop.updateMany({
-        where: { id: airdrop.id, status: 'ACTIVE' },
-        data: { status: 'SETTLED', settledAt: new Date() }, // Mark settled immediately
-      });
+      const { count } = await withDatabaseRetry(() =>
+        prisma.airdrop.updateMany({
+          where: { id: airdrop.id, status: 'ACTIVE' },
+          data: { status: 'SETTLED', settledAt: new Date() }, // Mark settled immediately
+        })
+      );
 
       if (count === 0) return; // Already settled by another process
 
@@ -416,10 +453,12 @@ export class AirdropService {
             }
           }
 
-          await prisma.airdrop.update({
-            where: { id: airdrop.id },
-            data: { status: 'EXPIRED' },
-          });
+          await withDatabaseRetry(() =>
+            prisma.airdrop.update({
+              where: { id: airdrop.id },
+              data: { status: 'EXPIRED' },
+            })
+          );
 
           // Update original message only
           await this.endAirdropMessage(client, airdrop, 0, 0, tokenSymbol);
@@ -540,14 +579,16 @@ export class AirdropService {
       // Safety check: If distributable amount is 0, abort
       if (distributableAmount <= 0) {
         console.warn(`[AIRDROP] No funds to distribute for ${airdrop.id}. Marking settled.`);
-        await prisma.airdrop.update({
-          where: { id: airdrop.id },
-          data: {
-            status: 'SETTLED',
-            amountClaimed: 0,
-            settledAt: new Date(),
-          },
-        });
+        await withDatabaseRetry(() =>
+          prisma.airdrop.update({
+            where: { id: airdrop.id },
+            data: {
+              status: 'SETTLED',
+              amountClaimed: 0,
+              settledAt: new Date(),
+            },
+          })
+        );
 
         await this.endAirdropMessage(
           client,
@@ -569,20 +610,24 @@ export class AirdropService {
       for (const winner of winners) {
         try {
           // Get or Create Winner Wallet
-          let user = await prisma.user.findUnique({ where: { discordId: winner.userId } });
+          let user = await withDatabaseRetry(() =>
+            prisma.user.findUnique({ where: { discordId: winner.userId } })
+          );
 
           if (!user) {
             // Create wallet for winner
             const newWallet = await this.walletService.createEncryptedWallet();
-            user = await prisma.user.create({
-              data: {
-                discordId: winner.userId,
-                walletPubkey: newWallet.publicKey,
-                encryptedPrivkey: newWallet.encryptedPrivateKey,
-                keySalt: newWallet.keySalt,
-                seedDelivered: false,
-              },
-            });
+            user = await withDatabaseRetry(() =>
+              prisma.user.create({
+                data: {
+                  discordId: winner.userId,
+                  walletPubkey: newWallet.publicKey,
+                  encryptedPrivkey: newWallet.encryptedPrivateKey,
+                  keySalt: newWallet.keySalt,
+                  seedDelivered: false,
+                },
+              })
+            );
 
             // Try to DM private key using safe method
             const dmSent = await this.safeSendDM(
@@ -605,10 +650,12 @@ export class AirdropService {
             );
 
             if (dmSent) {
-              await prisma.user.update({
-                where: { discordId: winner.userId },
-                data: { seedDelivered: true },
-              });
+              await withDatabaseRetry(() =>
+                prisma.user.update({
+                  where: { discordId: winner.userId },
+                  data: { seedDelivered: true },
+                })
+              );
             }
           }
 
@@ -621,19 +668,21 @@ export class AirdropService {
           );
 
           // Log transaction
-          await prisma.transaction.create({
-            data: {
-              signature,
-              fromId: null as any, // System wallet, no user
-              toId: winner.userId,
-              amountUsd: 0, // TODO: Fetch price
-              amountToken: share,
-              tokenMint,
-              usdRate: 0,
-              txType: 'AIRDROP_CLAIM',
-              status: 'CONFIRMED',
-            },
-          });
+          await withDatabaseRetry(() =>
+            prisma.transaction.create({
+              data: {
+                signature,
+                fromId: null as any, // System wallet, no user
+                toId: winner.userId,
+                amountUsd: 0, // TODO: Fetch price
+                amountToken: share,
+                tokenMint,
+                usdRate: 0,
+                txType: 'AIRDROP_CLAIM',
+                status: 'CONFIRMED',
+              },
+            })
+          );
 
           logTransaction('AIRDROP', {
             fromId: 'BOT',
@@ -645,14 +694,16 @@ export class AirdropService {
           });
 
           // Update Participant
-          await prisma.airdropParticipant.update({
-            where: { id: winner.id },
-            data: {
-              status: 'TRANSFERRED',
-              shareAmount: share,
-              txSignature: signature,
-            },
-          });
+          await withDatabaseRetry(() =>
+            prisma.airdropParticipant.update({
+              where: { id: winner.id },
+              data: {
+                status: 'TRANSFERRED',
+                shareAmount: share,
+                txSignature: signature,
+              },
+            })
+          );
 
           successCount++;
         } catch (txError) {
@@ -668,14 +719,16 @@ export class AirdropService {
       }
 
       // 3. Update Status
-      await prisma.airdrop.update({
-        where: { id: airdrop.id },
-        data: {
-          status: 'SETTLED',
-          amountClaimed: (share * successCount).toFixed(9), // Convert to string for Decimal safety
-          settledAt: new Date(),
-        },
-      });
+      await withDatabaseRetry(() =>
+        prisma.airdrop.update({
+          where: { id: airdrop.id },
+          data: {
+            status: 'SETTLED',
+            amountClaimed: (share * successCount).toFixed(9), // Convert to string for Decimal safety
+            settledAt: new Date(),
+          },
+        })
+      );
 
       // 4. Notify (Updating original message only, no new message)
       // this.notifyChannel(...) // Removed as per request
