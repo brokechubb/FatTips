@@ -1,4 +1,4 @@
-FROM node:18-alpine AS base
+FROM node:20-alpine AS base
 
 # Install dependencies
 RUN apk add --no-cache libc6-compat openssl
@@ -8,20 +8,20 @@ WORKDIR /app
 # Copy source code first
 COPY . .
 
-# Install dependencies
-RUN npm install -g pnpm && pnpm install
+# Install dependencies (use --force to avoid interactive prompts in Docker)
+RUN npm install -g pnpm && pnpm install --force
 
-# Build dependencies
+# Build dependencies in correct order (database -> solana -> shared)
 RUN pnpm --filter fattips-database generate
 RUN pnpm --filter fattips-database build
-RUN pnpm --filter fattips-shared build
 RUN pnpm --filter fattips-solana build
+RUN pnpm --filter fattips-shared build
 
 # Build the application
 RUN pnpm --filter fattips-web build
 
 # Production image
-FROM node:18-alpine AS runner
+FROM node:20-alpine AS runner
 RUN apk add --no-cache openssl
 
 WORKDIR /app

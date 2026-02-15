@@ -1,4 +1,4 @@
-FROM node:18-alpine AS base
+FROM node:20-alpine AS base
 
 # Install dependencies and build tools for native modules (bigint-buffer, etc.)
 RUN apk add --no-cache libc6-compat openssl python3 make g++
@@ -10,19 +10,20 @@ COPY . .
 
 # Install dependencies and global prisma (matching project version)
 # We need pnpm globally to run pnpm commands
-RUN npm install -g pnpm && pnpm install
+# Use --force to avoid interactive prompts in Docker
+RUN npm install -g pnpm && pnpm install --force
 
-# Build dependencies
+# Build dependencies in correct order (database -> solana -> shared)
 RUN pnpm --filter fattips-database generate
 RUN pnpm --filter fattips-database build
-RUN pnpm --filter fattips-shared build
 RUN pnpm --filter fattips-solana build
+RUN pnpm --filter fattips-shared build
 
 # Build the application
 RUN pnpm --filter fattips-bot build
 
 # Production image
-FROM node:18-alpine AS runner
+FROM node:20-alpine AS runner
 RUN apk add --no-cache openssl
 
 # Install pnpm for runtime scripts (migrations etc)

@@ -158,6 +158,12 @@ importers:
 
   packages/shared:
     dependencies:
+      fattips-database:
+        specifier: workspace:*
+        version: link:../database
+      fattips-solana:
+        specifier: workspace:*
+        version: link:../solana
       ioredis:
         specifier: ^5.4.1
         version: 5.9.2

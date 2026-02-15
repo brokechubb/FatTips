@@ -125,15 +125,25 @@ model GuildSettings {
 }
 
 model ApiKey {
-  id          String   @id @default(uuid())
-  key         String   @unique
-  discordId   String
-  name        String   @default("Default")
-  lastUsedAt  DateTime?
-  expiresAt   DateTime?
-  createdAt   DateTime @default(now())
-  revokedAt   DateTime?
+  id String @id @default(uuid())
+  key String @unique
+  discordId String
+  name String @default("Default")
+  lastUsedAt DateTime?
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
 
   @@index([discordId])
   @@index([key])
+}
+
+model AirdropPoolWallet {
+  address String @id
+  encryptedPrivkey String
+  keySalt String
+  isBusy Boolean @default(false)
+  lastUsedAt DateTime @default(now())
+
+  @@index([isBusy, lastUsedAt])
 }

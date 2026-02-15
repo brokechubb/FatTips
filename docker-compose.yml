@@ -75,11 +75,11 @@ services:
       - DATABASE_URL=postgresql://fattips_user:${POSTGRES_PASSWORD}@postgres:5432/fattips
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-  depends_on:
-    postgres:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./logs/bot:/app/apps/bot/logs
     deploy:

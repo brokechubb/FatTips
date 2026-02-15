@@ -11,7 +11,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "ioredis": "^5.4.1"
+    "ioredis": "^5.4.1",
+    "fattips-database": "workspace:*",
+    "fattips-solana": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
