@@ -18,6 +18,12 @@ const {
   sendAndConfirmTransaction,
   PublicKey,
 } = require('@solana/web3.js');
+const {
+  getAssociatedTokenAddress,
+  getAccount,
+  createTransferInstruction,
+  createAssociatedTokenAccountInstruction,
+} = require('@solana/spl-token');
 const { Client } = require('pg');
 const crypto = require('crypto');
 const { promisify } = require('util');
@@ -30,9 +36,11 @@ const TAG_LENGTH = 16;
 const SALT_LENGTH = 32;
 const FEE_BUFFER = 5000;
 
-// Default destination (environment variable or hardcoded)
-const DEFAULT_DESTINATION =
-  process.env.CLEANUP_DESTINATION || '9HMqaDgnbvy4VYi9VpNVb6u3xv4vqD5RG12cyxcsVRFY';
+// Token mints for SPL token sweeping
+const TOKEN_MINTS = {
+  USDC: new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'),
+  USDT: new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'),
+};
 
 const colors = {
   reset: '\x1b[0m',
@@ -112,6 +120,37 @@ async function main() {
           continue;
         }
 
+        // Sweep SPL tokens first (USDC, USDT)
+        for (const [tokenName, mintPubkey] of Object.entries(TOKEN_MINTS)) {
+          try {
+            const sourceAta = await getAssociatedTokenAddress(mintPubkey, keypair.publicKey);
+            const account = await getAccount(connection, sourceAta);
+            const tokenBalance = Number(account.amount);
+            if (tokenBalance > 0) {
+              const destAta = await getAssociatedTokenAddress(mintPubkey, destPubkey);
+              const tx = new Transaction();
+              // Create destination ATA if needed
+              try {
+                await getAccount(connection, destAta);
+              } catch {
+                tx.add(
+                  createAssociatedTokenAccountInstruction(
+                    keypair.publicKey, destAta, destPubkey, mintPubkey
+                  )
+                );
+              }
+              tx.add(createTransferInstruction(sourceAta, destAta, keypair.publicKey, tokenBalance));
+              const sig = await sendAndConfirmTransaction(connection, tx, [keypair]);
+              const humanAmount = tokenBalance / 1e6;
+              console.log(`${colors.green}  ✅ Swept ${humanAmount.toFixed(2)} ${tokenName}${colors.reset}`);
+              totalDrained += humanAmount; // Approximate as USD for summary
+            }
+          } catch (e) {
+            // Token account doesn't exist or error — skip
+          }
+        }
+
+        // Sweep SOL
         const balance = await connection.getBalance(keypair.publicKey);
         const balanceSol = balance / LAMPORTS_PER_SOL;
 

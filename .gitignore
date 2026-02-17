@@ -87,3 +87,6 @@ fattips_dump.sql
 nogit/
 .env
 .megamemory/
+ROADMAP.md
+GEMINI.md
+scripts/check-users-balances.js

@@ -261,7 +261,12 @@ export class AirdropPoolService {
           }
         } catch (sweepError) {
           console.error(`[POOL] Failed to sweep wallet ${address}:`, sweepError);
-          // Continue to release even if sweep fails - don't want to lock the wallet forever
+          // DO NOT release — keep wallet busy to prevent fund mixing with next airdrop
+          // Use the drain-pool-residual.js script to manually recover these funds
+          console.warn(
+            `[POOL] ⚠️ Wallet ${address} kept busy due to failed sweep. Run drain-pool-residual.js to recover.`
+          );
+          return;
         }
       }
 

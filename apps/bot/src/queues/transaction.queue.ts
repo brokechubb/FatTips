@@ -1,5 +1,6 @@
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
+import crypto from 'crypto';
 
 export const REDIS_CONNECTION_OPTS = {
   host: process.env.REDIS_HOST || 'redis', // Default to docker service name
@@ -33,12 +34,24 @@ export interface TransferJobData {
 export const transactionQueue = new Queue<TransferJobData>('transactions', {
   connection,
   defaultJobOptions: {
-    attempts: 3,
-    backoff: {
-      type: 'exponential',
-      delay: 1000,
-    },
+    attempts: 1, // Fix: Disable automatic retries to prevent double-spending on timeouts
     removeOnComplete: 100, // Keep last 100 completed jobs
     removeOnFail: 1000, // Keep last 1000 failed jobs for debugging
   },
 });
+
+/**
+ * Generate an idempotency key for deduplicating transactions.
+ * Prevents double-submission within a 30-second window.
+ */
+export function generateJobId(
+  type: string,
+  senderDiscordId: string,
+  amountPerUser: number,
+  tokenSymbol: string
+): string {
+  // Round to 30-second windows to prevent rapid duplicate submissions
+  const timeWindow = Math.floor(Date.now() / 30000);
+  const raw = `${type}:${senderDiscordId}:${amountPerUser}:${tokenSymbol}:${timeWindow}`;
+  return crypto.createHash('sha256').update(raw).digest('hex').substring(0, 16);
+}

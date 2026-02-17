@@ -17,3 +17,6 @@ export { redisPubSub, REDIS_CHANNELS } from './redis';
 
 // Export Redis-based activity service
 export { redisActivityService, RedisActivityService } from './activity';
+
+// Export AirdropPoolService
+export { AirdropPoolService } from './airdrop-pool';

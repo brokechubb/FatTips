@@ -6,6 +6,7 @@ import {
   TextInputStyle,
   ActionRowBuilder,
   EmbedBuilder,
+  TextChannel,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logTransaction } from '../utils/logger';
@@ -16,7 +17,7 @@ import {
   WalletService,
   BalanceService,
 } from 'fattips-solana';
-import { transactionQueue } from '../queues/transaction.queue';
+import { transactionQueue, generateJobId } from '../queues/transaction.queue';
 
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
@@ -199,62 +200,63 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
       }
     }
 
-    // Send processing message
+    // Send processing message (Ephemeral)
     const msgContent = isAdjusted
-      ? '⏳ Processing transaction... (Amount automatically adjusted to fit available balance)'
-      : '⏳ Processing transaction...';
+      ? '✅ Tip Queued! Amount adjusted to fit balance. Watch the channel for confirmation.'
+      : '✅ Tip Queued! Watch the channel for confirmation.';
+    
     await interaction.editReply({ content: msgContent });
-    const processingMsg = await interaction.fetchReply();
+
+    // Send PUBLIC placeholder for the worker to update
+    // This prevents "littering" because the worker can reliably fetch and edit this public message
+    let publicMsg;
+    if (interaction.channel) {
+      try {
+        publicMsg = await (interaction.channel as TextChannel).send(`💸 **${interaction.user.username}** is sending a tip...`);
+      } catch (err) {
+        // If we can't send to channel, worker will likely fail to notify too, but transaction proceeds
+        console.error('Failed to send public placeholder:', err);
+      }
+    }
 
     // Add to Queue
-    await transactionQueue.add('tip', {
-      type: 'TIP',
-      senderDiscordId: sender.discordId,
-      senderUsername: interaction.user.username,
-      recipientDiscordIds: [recipient.discordId],
-      amountPerUser: amountToken,
-      tokenMint,
-      tokenSymbol,
-      usdValuePerUser: usdValue,
-      channelId: interaction.channelId!,
-      messageId: processingMsg.id,
-    });
+    const jobId = generateJobId('TIP', sender.discordId, amountToken, tokenSymbol);
+    await transactionQueue.add(
+      'tip',
+      {
+        type: 'TIP',
+        senderDiscordId: sender.discordId,
+        senderUsername: interaction.user.username,
+        recipientDiscordIds: [recipient.discordId],
+        amountPerUser: amountToken,
+        tokenMint,
+        tokenSymbol,
+        usdValuePerUser: usdValue,
+        channelId: interaction.channelId!,
+        messageId: publicMsg?.id, // Pass the PUBLIC message ID
+      },
+      { jobId }
+    );
 
     if (newWalletKey) {
+      const { sendPrivateKeyDM } = require('../utils/keyCleanup');
       const targetUser = await interaction.client.users.fetch(targetUserId);
-      const guideEmbed = new EmbedBuilder()
-        .setTitle('🆕 New Wallet Created')
-        .setDescription(
+      const msg = 
+          `🆕 **New Wallet Created**\n` +
           `A new wallet was created for you to receive this tip!\n\n` +
-            `**🔐 Private Key:**\n\`\`\`\n${newWalletKey}\n\`\`\`\n*Self-destructs in 15m.*`
-        )
-        .setColor(0x00aaff)
-        .setFooter({ text: 'Save this key now!' });
+          `**🔐 Private Key:**\n\`\`\`\n${newWalletKey}\n\`\`\`\n*Self-destructs in 15m.*`;
 
-      try {
-        const sentMsg = await targetUser.send({ embeds: [guideEmbed] });
-        setTimeout(async () => {
-          try {
-            await sentMsg.edit({
-              embeds: [
-                new EmbedBuilder()
-                  .setTitle('🆕 New Wallet Created')
-                  .setDescription('🔒 **Key removed for security.**')
-                  .setColor(0x00aaff),
-              ],
-            });
-          } catch {
-            // Message might have been deleted, ignore
-          }
-        }, 900000);
+      await sendPrivateKeyDM(
+        interaction.client as any,
+        targetUserId,
+        msg,
+        '🔒 **Key removed for security.**'
+      );
 
-        await prisma.user.update({
-          where: { discordId: targetUserId },
-          data: { seedDelivered: true },
-        });
-      } catch (e) {
-        console.error('Failed to DM new wallet key:', e);
-      }
+      await prisma.user.update({
+        where: { discordId: targetUserId },
+        data: { seedDelivered: true },
+      });
     }
 
     return true;

@@ -1,7 +1,7 @@
 import { Worker, Job } from 'bullmq';
 import { Client, TextChannel, EmbedBuilder } from 'discord.js';
 import { prisma } from 'fattips-database';
-import { TransactionService, WalletService, TOKEN_MINTS } from 'fattips-solana';
+import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
 import IORedis from 'ioredis';
 import { REDIS_CONNECTION_OPTS, TransferJobData } from '../queues/transaction.queue';
 
@@ -13,6 +13,7 @@ const connection = new IORedis({
 // Services
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
+const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
 
 export function initTransactionWorker(client: Client) {
   const worker = new Worker<TransferJobData>(
@@ -76,6 +77,36 @@ export function initTransactionWorker(client: Client) {
           sender.encryptedPrivkey,
           sender.keySalt
         );
+
+        // Re-verify balance just before execution to prevent TOCTOU race conditions
+        const balances = await balanceService.getBalances(sender.walletPubkey);
+        const totalAmount = type === 'WITHDRAWAL'
+          ? amountPerUser
+          : amountPerUser * (recipientWallets.length || 1);
+
+        const MIN_RENT_EXEMPTION = 0.00089088;
+        const FEE_BUFFER = 0.00002;
+
+        if (tokenMint === TOKEN_MINTS.SOL) {
+          const required = totalAmount + FEE_BUFFER + (type === 'WITHDRAWAL' ? 0 : MIN_RENT_EXEMPTION);
+          if (balances.sol < required) {
+            throw new Error(
+              `Insufficient SOL at execution time. Need ${required.toFixed(6)}, have ${balances.sol.toFixed(6)}. ` +
+              `Balance may have changed since the command was issued.`
+            );
+          }
+        } else {
+          const tokenBal = tokenMint === TOKEN_MINTS.USDC ? balances.usdc : balances.usdt;
+          if (tokenBal < totalAmount) {
+            throw new Error(
+              `Insufficient ${tokenSymbol} at execution time. Need ${totalAmount.toFixed(6)}, have ${tokenBal.toFixed(6)}. ` +
+              `Balance may have changed since the command was issued.`
+            );
+          }
+          if (balances.sol < FEE_BUFFER) {
+            throw new Error('Insufficient SOL for gas fees at execution time.');
+          }
+        }
 
         let signature: string;
 
@@ -244,9 +275,19 @@ export function initTransactionWorker(client: Client) {
           try {
             const channel = (await client.channels.fetch(channelId)) as TextChannel;
             if (channel) {
-              await channel.send(
-                `❌ Transaction failed for <@${senderDiscordId}>: ${userErrorMessage}`
-              );
+              // Fix: Edit the "Processing..." message instead of sending a new error message
+              try {
+                const originalMsg = await channel.messages.fetch(messageId);
+                if (originalMsg.author.id === client.user?.id) {
+                  await originalMsg.edit(`❌ Transaction failed for <@${senderDiscordId}>: ${userErrorMessage}`);
+                } else {
+                  await originalMsg.reply(`❌ Transaction failed: ${userErrorMessage}`);
+                }
+              } catch (msgError) {
+                // If original message deleted, maybe send fresh one? Or just log.
+                // Sending fresh one is safer to notify user.
+                await channel.send(`❌ Transaction failed for <@${senderDiscordId}>: ${userErrorMessage}`);
+              }
             }
           } catch {}
         }

@@ -105,8 +105,10 @@ enum TxStatus {
 
 enum AirdropStatus {
   ACTIVE
+  SETTLING   // Distribution in progress — prevents double-processing
   EXPIRED
   SETTLED
+  FAILED     // Settlement failed permanently
   RECLAIMED
 }
 

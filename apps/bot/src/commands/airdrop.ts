@@ -19,11 +19,15 @@ import {
   WalletService,
   BalanceService,
 } from 'fattips-solana';
+import { Connection } from '@solana/web3.js';
+import { AirdropPoolService } from 'fattips-shared';
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
 const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
+const connection = new Connection(process.env.SOLANA_RPC_URL!, 'confirmed');
+const poolService = new AirdropPoolService();
 
 export const data = new SlashCommandBuilder()
   .setName('airdrop')
@@ -205,10 +209,13 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // 5. Generate Ephemeral Wallet
-  const ephemeralWallet = await walletService.createEncryptedWallet();
+  // 5. Get Pool Wallet
+  // Use pool wallet instead of ephemeral wallet - it's already in the database
+  // so if funding succeeds but verification fails, we can still recover funds
+  const poolWallet = await poolService.getOrCreateWallet();
+  console.log(`[AIRDROP] Using pool wallet: ${poolWallet.address}`);
 
-  // 6. Fund Ephemeral Wallet
+  // 6. Fund Pool Wallet
   // Calculate gas buffer based on max winners to account for rent exemption
   // Each new winner wallet needs 0.00089 SOL rent exemption + 0.000005 SOL tx fee
   const winnerCount = maxWinners || 100; // Default to 100 if not specified
@@ -254,6 +261,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   }
 
   // Execute Funding Transaction
+  const fundingSignatures: string[] = [];
   try {
     const creatorKeypair = await walletService.getKeypair(
       creator.encryptedPrivkey,
@@ -262,27 +270,14 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
     // Transfer SOL if needed
     if (fundingAmountSol > 0) {
-      // If dropping SOL, we send total. If dropping Token, we send just Gas.
-      // Wait, if dropping SOL, the amountToken is included in fundingAmountSol logic above? Yes.
-      // But transactionService.transfer sends pure amount.
-      // If tokenSymbol is SOL, we send `amountToken + GAS_BUFFER`.
-      // If tokenSymbol is USDC, we send `GAS_BUFFER` SOL separately?
-      // My transactionService.transfer does ONE transfer.
-
-      // We need TWO transfers if it's an SPL token airdrop:
-      // 1. Send SOL for gas
-      // 2. Send Tokens for the pot
-
-      // Let's keep it simple: Just trigger the transfers.
-
-      // Send SOL
       const solToSend = tokenSymbol === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
       const solSig = await transactionService.transfer(
         creatorKeypair,
-        ephemeralWallet.publicKey,
+        poolWallet.address,
         solToSend,
         TOKEN_MINTS.SOL
       );
+      fundingSignatures.push(solSig);
       logTransaction('AIRDROP', {
         fromId: creator.discordId,
         amount: solToSend,
@@ -296,10 +291,11 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     if (fundingAmountToken > 0) {
       const tokenSig = await transactionService.transfer(
         creatorKeypair,
-        ephemeralWallet.publicKey,
+        poolWallet.address,
         fundingAmountToken,
         tokenMint
       );
+      fundingSignatures.push(tokenSig);
       logTransaction('AIRDROP', {
         fromId: creator.discordId,
         amount: fundingAmountToken,
@@ -311,41 +307,102 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   } catch (error: any) {
     console.error('Funding failed:', error);
     logTransaction('AIRDROP', { status: 'FAILED', error: error.message || String(error) });
+    // Release the pool wallet back if funding failed
+    try {
+      await poolService.releaseWallet(poolWallet.address);
+    } catch (releaseError) {
+      console.error('Failed to release pool wallet after funding failure:', releaseError);
+    }
     await interaction.editReply({ content: '❌ Failed to fund airdrop wallet. Please try again.' });
     return;
   }
 
-  // Verify the ephemeral wallet was funded before creating airdrop
-  await interaction.editReply({ content: '✅ Verifying funds received...' });
+  // Wait for all funding transactions to be confirmed
+  await interaction.editReply({ content: '⏳ Waiting for transaction confirmation...' });
   try {
-    const walletBalances = await balanceService.getBalances(ephemeralWallet.publicKey);
-    if (tokenMint === TOKEN_MINTS.SOL) {
-      if (walletBalances.sol < amountToken) {
-        await interaction.editReply({
-          content: '❌ Failed to verify SOL in airdrop wallet. Please try again.',
-        });
-        return;
-      }
-    } else {
-      const tokenBal = tokenMint === TOKEN_MINTS.USDC ? walletBalances.usdc : walletBalances.usdt;
-      if (tokenBal < amountToken) {
-        await interaction.editReply({
-          content: `❌ Failed to verify ${tokenSymbol} in airdrop wallet. Please try again.`,
-        });
-        return;
-      }
+    for (const sig of fundingSignatures) {
+      await connection.confirmTransaction(sig, 'confirmed');
     }
-  } catch (verifyError) {
-    console.error('Balance verification failed:', verifyError);
-    // Continue anyway - the balance check might fail due to RPC issues
+  } catch (confirmError) {
+    console.error('Transaction confirmation failed:', confirmError);
+    logTransaction('AIRDROP', {
+      status: 'FAILED',
+      error: `Transaction confirmation failed. Signatures: ${fundingSignatures.join(', ')}`,
+    });
+    // Release the pool wallet back if confirmation failed
+    try {
+      await poolService.releaseWallet(poolWallet.address);
+    } catch (releaseError) {
+      console.error('Failed to release pool wallet after confirmation failure:', releaseError);
+    }
+    await interaction.editReply({
+      content: '❌ Transaction confirmation failed. Please check your wallet and try again.',
+    });
+    return;
+  }
+
+  // Verify the pool wallet was funded before creating airdrop
+  await interaction.editReply({ content: '✅ Verifying funds received...' });
+  let verified = false;
+  let retryCount = 0;
+  const maxRetries = 5;
+
+  while (!verified && retryCount < maxRetries) {
+    try {
+      const walletBalances = await balanceService.getBalances(poolWallet.address);
+
+      if (tokenMint === TOKEN_MINTS.SOL) {
+        if (walletBalances.sol >= amountToken) {
+          verified = true;
+        } else if (retryCount === maxRetries - 1) {
+          // Verification failed but wallet is in DB - funds can be recovered later
+          console.error(
+            `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Funds are recoverable.`
+          );
+          await interaction.editReply({
+            content:
+              '❌ Failed to verify SOL in airdrop wallet. The pool wallet has been reserved and funds will be automatically recovered.',
+          });
+          return;
+        }
+      } else {
+        const tokenBal = tokenMint === TOKEN_MINTS.USDC ? walletBalances.usdc : walletBalances.usdt;
+        if (tokenBal >= amountToken) {
+          verified = true;
+        } else if (retryCount === maxRetries - 1) {
+          // Verification failed but wallet is in DB - funds can be recovered later
+          console.error(
+            `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Funds are recoverable.`
+          );
+          await interaction.editReply({
+            content: `❌ Failed to verify ${tokenSymbol} in airdrop wallet. The pool wallet has been reserved and funds will be automatically recovered.`,
+          });
+          return;
+        }
+      }
+
+      if (!verified) {
+        retryCount++;
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second before retry
+      }
+    } catch (verifyError) {
+      console.error(`Balance verification failed (attempt ${retryCount + 1}):`, verifyError);
+      retryCount++;
+      if (retryCount >= maxRetries) {
+        console.error('Max retries reached for balance verification');
+        // Continue anyway - the balance check might fail due to RPC issues
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
   }
 
   // 7. Create DB Record
   const airdrop = await prisma.airdrop.create({
     data: {
-      walletPubkey: ephemeralWallet.publicKey,
-      encryptedPrivkey: ephemeralWallet.encryptedPrivateKey,
-      keySalt: ephemeralWallet.keySalt,
+      walletPubkey: poolWallet.address,
+      encryptedPrivkey: poolWallet.encryptedPrivkey,
+      keySalt: poolWallet.keySalt,
       creatorId: creator.discordId,
       amountTotal: amountToken,
       tokenMint,

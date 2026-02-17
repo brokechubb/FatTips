@@ -191,6 +191,35 @@ export class JupiterSwapService {
     const swapTransactionBuf = Buffer.from(swapTransactionBase64, 'base64');
     const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
 
+    // Validate the transaction before signing
+    // 1. Verify user is a required signer
+    const message = transaction.message;
+    const accountKeys = message.getAccountKeys();
+    const userKeyStr = userKeypair.publicKey.toBase58();
+
+    let userIsRequiredSigner = false;
+    for (let i = 0; i < message.header.numRequiredSignatures; i++) {
+      if (accountKeys.get(i)?.toBase58() === userKeyStr) {
+        userIsRequiredSigner = true;
+        break;
+      }
+    }
+    if (!userIsRequiredSigner) {
+      throw new Error(
+        'Swap transaction validation failed: user wallet is not a required signer. ' +
+        'This may indicate a tampered transaction.'
+      );
+    }
+
+    // 2. Sanity check: ensure the transaction doesn't have an excessive number of instructions
+    const instructionCount = message.compiledInstructions.length;
+    if (instructionCount > 30) {
+      throw new Error(
+        `Swap transaction validation failed: suspicious instruction count (${instructionCount}). ` +
+        'Normal swaps have fewer instructions.'
+      );
+    }
+
     // Sign the transaction
     transaction.sign([userKeypair]);
 

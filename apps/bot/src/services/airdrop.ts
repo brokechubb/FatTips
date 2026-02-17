@@ -146,8 +146,9 @@ export class AirdropService {
           });
           newWalletCreated = true;
 
-          // Try to send DM with private key
-          const dmSent = await this.safeSendDM(
+          // Try to send DM with private key using robust utility
+          const { sendPrivateKeyDM } = require('../utils/keyCleanup');
+          const dmResult = await sendPrivateKeyDM(
             interaction.client as Client,
             interaction.user.id,
             `🎉 **Welcome to FatTips!**\n\n` +
@@ -155,19 +156,10 @@ export class AirdropService {
               `**Private Key:** \`\`\`${newWallet.privateKeyBase58}\`\`\`\n` +
               `⚠️ **Save this key! This message self-destructs in 15m.**\n\n` +
               `Use \`/balance\` to check your funds.`,
-            {
-              onSuccess: (dmMsg) => {
-                // Auto-delete sensitive DM after 15 minutes
-                setTimeout(async () => {
-                  try {
-                    await dmMsg.edit(
-                      '🔒 **Private Key removed for security.** Use `/wallet action:export-key` to view it again.'
-                    );
-                  } catch {}
-                }, 900000);
-              },
-            }
+              '🔒 **Private Key removed for security.** Use `/wallet action:export-key` to view it again.'
           );
+          
+          const dmSent = dmResult.sent;
 
           if (dmSent) {
             await prisma.user.update({
@@ -359,16 +351,16 @@ export class AirdropService {
     console.log(`Settling airdrop ${airdrop.id}...`);
 
     try {
-      // 1. Mark as SETTLED (to prevent double processing)
+      // 1. Mark as SETTLING (to prevent double processing while distributing)
       // We do this via updateMany to be atomic
       const { count } = await withDatabaseRetry(() =>
         prisma.airdrop.updateMany({
           where: { id: airdrop.id, status: 'ACTIVE' },
-          data: { status: 'SETTLED', settledAt: new Date() }, // Mark settled immediately
+          data: { status: 'SETTLING' },
         })
       );
 
-      if (count === 0) return; // Already settled by another process
+      if (count === 0) return; // Already being settled by another process
 
       const participants = airdrop.participants;
       const totalAmount = Number(airdrop.amountTotal);
@@ -456,7 +448,7 @@ export class AirdropService {
           await withDatabaseRetry(() =>
             prisma.airdrop.update({
               where: { id: airdrop.id },
-              data: { status: 'EXPIRED' },
+              data: { status: 'EXPIRED', settledAt: new Date() },
             })
           );
 
@@ -543,14 +535,13 @@ export class AirdropService {
           // For Tokens: We distribute the token amount, but we must check if we have SOL for gas
           if (balances.sol < totalEstimatedFees) {
             console.error(
-              `[AIRDROP] CRITICAL: Not enough SOL for gas fees! Need ${totalEstimatedFees}, Have ${balances.sol}. Aborting settlement.`
+              `[AIRDROP] CRITICAL: Not enough SOL for gas fees! Need ${totalEstimatedFees}, Have ${balances.sol}. Marking as FAILED.`
             );
-            // Abort settlement if we can't pay gas
-            // We'll mark it as SETTLED but with 0 success to prevent infinite retries
+            // Mark as FAILED — this is a permanent failure that needs manual intervention
             await prisma.airdrop.update({
               where: { id: airdrop.id },
               data: {
-                status: 'SETTLED',
+                status: 'FAILED',
                 amountClaimed: 0,
                 settledAt: new Date(),
               },
@@ -578,12 +569,12 @@ export class AirdropService {
 
       // Safety check: If distributable amount is 0, abort
       if (distributableAmount <= 0) {
-        console.warn(`[AIRDROP] No funds to distribute for ${airdrop.id}. Marking settled.`);
+        console.warn(`[AIRDROP] No funds to distribute for ${airdrop.id}. Marking as FAILED.`);
         await withDatabaseRetry(() =>
           prisma.airdrop.update({
             where: { id: airdrop.id },
             data: {
-              status: 'SETTLED',
+              status: 'FAILED',
               amountClaimed: 0,
               settledAt: new Date(),
             },
@@ -743,6 +734,19 @@ export class AirdropService {
           action: 'settleAirdrop',
         },
       });
+
+      // Revert to ACTIVE so the settlement loop will retry
+      try {
+        await withDatabaseRetry(() =>
+          prisma.airdrop.updateMany({
+            where: { id: airdrop.id, status: 'SETTLING' },
+            data: { status: 'ACTIVE' },
+          })
+        );
+        logger.info(`[AIRDROP] Reverted airdrop ${airdrop.id} from SETTLING back to ACTIVE for retry`);
+      } catch (revertError) {
+        logger.error(`[AIRDROP] CRITICAL: Failed to revert airdrop ${airdrop.id} status:`, revertError);
+      }
     }
   }
 

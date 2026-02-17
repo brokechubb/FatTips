@@ -23,6 +23,11 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
       return;
     }
 
+    if (keyRecord.revokedAt) {
+      res.status(401).json({ error: 'API key has been revoked' });
+      return;
+    }
+
     if (keyRecord.expiresAt && new Date() > keyRecord.expiresAt) {
       res.status(401).json({ error: 'API key expired' });
       return;

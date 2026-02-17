@@ -14,7 +14,8 @@
     "sourceMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    "baseUrl": "."
+    "baseUrl": ".",
+    "composite": true
   },
   "references": [
     { "path": "../../packages/database" },

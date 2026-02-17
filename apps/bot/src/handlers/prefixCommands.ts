@@ -20,8 +20,12 @@ import {
   BalanceService,
   JupiterSwapService,
 } from 'fattips-solana';
+import { AirdropPoolService } from 'fattips-shared';
 import { activityService } from '../services/activity';
-import { transactionQueue } from '../queues/transaction.queue';
+import { transactionQueue, generateJobId } from '../queues/transaction.queue';
+import { sendPrivateKeyDM, scheduleKeyRedaction } from '../utils/keyCleanup';
+
+const poolService = new AirdropPoolService();
 
 export const DEFAULT_PREFIX = 'f';
 const DISCORD_CANNOT_DM = 50007;
@@ -593,7 +597,7 @@ async function handleWallet(message: Message, args: string[], prefix: string) {
     });
 
     if (existing) {
-      await message.reply(`You already have a wallet!\nAddress: \`${existing.walletPubkey}\``);
+      await message.reply(`You already have a wallet!\nAddress: \`${existing.walletPubkey}\`\n\n*💡 For privacy, use \`/wallet create\` (slash command) as the preferred way to create your wallet - only you will see the address.*`);
       return;
     }
 
@@ -611,22 +615,20 @@ async function handleWallet(message: Message, args: string[], prefix: string) {
     });
 
     // Try to DM the private key
-    try {
-      const dmMsg = await message.author.send(
-        `🎉 **Wallet Created!**\n\n` +
-          `**Address:** \`${wallet.publicKey}\`\n\n` +
-          `**Private Key:**\n\`\`\`${wallet.privateKeyBase58}\`\`\`\n` +
-          `⚠️ **Save this key! This message self-destructs in 15 minutes.**`
-      );
+    const msgContent =
+      `🎉 **Wallet Created!**\n\n` +
+      `**Address:** \`${wallet.publicKey}\`\n\n` +
+      `**Private Key:**\n\`\`\`${wallet.privateKeyBase58}\`\`\`\n` +
+      `⚠️ **Save this key! This message self-destructs in 15 minutes.**`;
 
-      setTimeout(async () => {
-        try {
-          await dmMsg.edit(
-            `🔒 **Private key removed for security.** Use \`${prefix}wallet export-key\` to view again.`
-          );
-        } catch {}
-      }, 900000);
+    const dmResult = await sendPrivateKeyDM(
+      message.client,
+      message.author.id,
+      msgContent,
+      `🔒 **Private key removed for security.** Use \`${prefix}wallet export-key\` to view again.`
+    );
 
+    if (dmResult.sent) {
       await prisma.user.update({
         where: { discordId: message.author.id },
         data: { seedDelivered: true },
@@ -635,13 +637,12 @@ async function handleWallet(message: Message, args: string[], prefix: string) {
       await message.reply(
         `✅ Wallet created! Check your DMs for the private key.\nAddress: \`${wallet.publicKey}\``
       );
-    } catch (error: any) {
-      if (error.code === DISCORD_CANNOT_DM) {
-        await message.reply(
-          `✅ Wallet created!\nAddress: \`${wallet.publicKey}\`\n\n` +
-            `⚠️ I couldn't DM you the private key. Use \`${prefix}wallet export-key\` in DMs to get it.`
-        );
-      }
+    } else {
+      // DM failed
+      await message.reply(
+        `✅ Wallet created!\nAddress: \`${wallet.publicKey}\`\n\n` +
+          `⚠️ I couldn't DM you the private key. Use \`${prefix}wallet export-key\` in DMs to get it.`
+      );
     }
   } else if (action === 'export-key') {
     // Only allow in DMs for security
@@ -661,16 +662,13 @@ async function handleWallet(message: Message, args: string[], prefix: string) {
 
     const privateKey = await walletService.decryptPrivateKey(user.encryptedPrivkey, user.keySalt);
 
-    const dmMsg = await message.reply(
+    const msgContent =
       `🔐 **Your Private Key:**\n\`\`\`${privateKey}\`\`\`\n` +
-        `⚠️ This message self-destructs in 15 minutes.`
-    );
+      `⚠️ This message self-destructs in 15 minutes.`;
 
-    setTimeout(async () => {
-      try {
-        await dmMsg.edit('🔒 **Private key removed for security.**');
-      } catch {}
-    }, 900000);
+    const dmMsg = await message.reply(msgContent);
+    // Since we're replying to a DM, we use scheduleKeyRedaction directly on the message
+    scheduleKeyRedaction(dmMsg, '🔒 **Private key removed for security.**');
   } else {
     await message.reply(`Usage: \`${prefix}wallet create\` or \`${prefix}wallet export-key\``);
   }
@@ -874,48 +872,50 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
   const processingMsg = await message.reply('⏳ Processing transaction...');
 
   // Add to Queue
-  await transactionQueue.add('tip', {
-    type: 'TIP',
-    senderDiscordId: sender.discordId,
-    senderUsername: message.author.username,
-    recipientDiscordIds: recipientWallets.map((r) => r.discordId),
-    amountPerUser,
-    tokenMint,
-    tokenSymbol,
-    usdValuePerUser: usdPerUser,
-    channelId: message.channel.id,
-    messageId: processingMsg.id,
-  });
+  const jobId = generateJobId('TIP', sender.discordId, amountPerUser, tokenSymbol);
+  await transactionQueue.add(
+    'tip',
+    {
+      type: 'TIP',
+      senderDiscordId: sender.discordId,
+      senderUsername: message.author.username,
+      recipientDiscordIds: recipientWallets.map((r) => r.discordId),
+      amountPerUser,
+      tokenMint,
+      tokenSymbol,
+      usdValuePerUser: usdPerUser,
+      channelId: message.channel.id,
+      messageId: processingMsg.id,
+    },
+    { jobId }
+  );
 
   // Handle New Wallets (Send Keys immediately)
   for (const newWallet of newWallets) {
     try {
-      const user = await client.users.fetch(newWallet.id);
       const msg =
-        `🎉 **Welcome to FatTips!**\n` +
-        `You have a pending tip of **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** coming!\n\n` +
+        `🎉 **You caught some rain! 🌧️**\n` +
+        `You have a pending tip of **${formatTokenAmount(amountPerUser)} ${tokenSymbol}**!\n\n` +
         `**🔐 Your Private Key:**\n\`\`\`\n${newWallet.key}\n\`\`\`\n*Self-destructs in 15m.*`;
 
-      const sentMsg = await user.send(msg);
-      setTimeout(async () => {
-        try {
-          await sentMsg.edit('🔒 **Key removed for security.**');
-        } catch {}
-      }, 900000);
+      const dmResult = await sendPrivateKeyDM(client, newWallet.id, msg, '🔒 **Key removed for security.**');
 
-      // Send Guide
-      const guideEmbed = new EmbedBuilder()
-        .setTitle('🚀 Getting Started')
-        .setDescription('You just received Solana! Use `/balance` to check it.')
-        .setColor(0x00aaff);
-      await user.send({ embeds: [guideEmbed] });
+      if (dmResult.sent) {
+        // Send Guide only if DM was successful
+        const user = await client.users.fetch(newWallet.id);
+        const guideEmbed = new EmbedBuilder()
+          .setTitle('🚀 Getting Started')
+          .setDescription('You just received Solana! Use `/balance` to check it.')
+          .setColor(0x00aaff);
+        await user.send({ embeds: [guideEmbed] });
 
-      await prisma.user.update({
-        where: { discordId: newWallet.id },
-        data: { seedDelivered: true },
-      });
+        await prisma.user.update({
+          where: { discordId: newWallet.id },
+          data: { seedDelivered: true },
+        });
+      }
     } catch (error) {
-      // Failed to DM key
+      logger.error(`Failed to DM key to new user ${newWallet.id}:`, error);
     }
   }
 }
@@ -1032,18 +1032,23 @@ async function handleSend(message: Message, args: string[], prefix: string) {
   const processingMsg = await message.reply('⏳ Processing transaction...');
 
   // Add to Queue
-  await transactionQueue.add('withdrawal', {
-    type: 'WITHDRAWAL',
-    senderDiscordId: sender.discordId,
-    toAddress: address,
-    amountPerUser: amountToken,
-    tokenMint,
-    tokenSymbol,
-    usdValuePerUser: usdValue,
-    channelId: message.channel.id,
-    messageId: processingMsg.id,
-    skipPriorityFee: parsedAmount.type === 'max' && tokenSymbol === 'SOL',
-  });
+  const jobId = generateJobId('WITHDRAWAL', sender.discordId, amountToken, tokenSymbol);
+  await transactionQueue.add(
+    'withdrawal',
+    {
+      type: 'WITHDRAWAL',
+      senderDiscordId: sender.discordId,
+      toAddress: address,
+      amountPerUser: amountToken,
+      tokenMint,
+      tokenSymbol,
+      usdValuePerUser: usdValue,
+      channelId: message.channel.id,
+      messageId: processingMsg.id,
+      skipPriorityFee: parsedAmount.type === 'max' && tokenSymbol === 'SOL',
+    },
+    { jobId }
+  );
 }
 
 // ============ HISTORY ============
@@ -1336,46 +1341,53 @@ async function handleRain(message: Message, args: string[], client: Client, pref
   const processingMsg = await message.reply('⏳ Making it rain...');
 
   // Add to Queue
-  await transactionQueue.add('rain', {
-    type: 'RAIN',
-    senderDiscordId: sender.discordId,
-    senderUsername: message.author.username,
-    recipientDiscordIds: recipientWallets.map((r) => r.discordId),
-    amountPerUser,
-    tokenMint,
-    tokenSymbol,
-    usdValuePerUser: usdPerUser,
-    channelId: message.channel.id,
-    messageId: processingMsg.id,
-  });
+  const jobId = generateJobId('RAIN', sender.discordId, amountPerUser, tokenSymbol);
+  await transactionQueue.add(
+    'rain',
+    {
+      type: 'RAIN',
+      senderDiscordId: sender.discordId,
+      senderUsername: message.author.username,
+      recipientDiscordIds: recipientWallets.map((r) => r.discordId),
+      amountPerUser,
+      tokenMint,
+      tokenSymbol,
+      usdValuePerUser: usdPerUser,
+      channelId: message.channel.id,
+      messageId: processingMsg.id,
+    },
+    { jobId }
+  );
 
   // Handle New Wallets (Send Keys immediately)
   for (const newWallet of newWallets) {
     try {
-      const user = await client.users.fetch(newWallet.id);
       const msg =
         `🎉 **You're about to get rained on!**\n` +
         `You have a pending tip of **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** coming!\n\n` +
         `**🔐 Your Private Key:**\n\`\`\`\n${newWallet.key}\n\`\`\`\n*Self-destructs in 15m.*`;
 
-      const sentMsg = await user.send(msg);
-      setTimeout(async () => {
-        try {
-          await sentMsg.edit('🔒 **Key removed for security.**');
-        } catch {}
-      }, 900000);
+      const dmResult = await sendPrivateKeyDM(
+        client,
+        newWallet.id,
+        msg,
+        '🔒 **Key removed for security.**'
+      );
 
-      // Send Guide
-      const guideEmbed = new EmbedBuilder()
-        .setTitle('🚀 Getting Started')
-        .setDescription('You just received Solana! Use `/balance` to check it.')
-        .setColor(0x00aaff);
-      await user.send({ embeds: [guideEmbed] });
+      if (dmResult.sent) {
+        // Send Guide
+        const user = await client.users.fetch(newWallet.id);
+        const guideEmbed = new EmbedBuilder()
+          .setTitle('🚀 Getting Started')
+          .setDescription('You just received Solana! Use `/balance` to check it.')
+          .setColor(0x00aaff);
+        await user.send({ embeds: [guideEmbed] });
 
-      await prisma.user.update({
-        where: { discordId: newWallet.id },
-        data: { seedDelivered: true },
-      });
+        await prisma.user.update({
+          where: { discordId: newWallet.id },
+          data: { seedDelivered: true },
+        });
+      }
     } catch (error) {
       // Failed to DM key
     }
@@ -1498,8 +1510,10 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     return;
   }
 
-  // Create ephemeral wallet
-  const ephemeralWallet = await walletService.createEncryptedWallet();
+  // Get pool wallet (already in database for recovery if verification fails)
+  const poolWallet = await poolService.getOrCreateWallet();
+  console.log(`[AIRDROP] Using pool wallet: ${poolWallet.address}`);
+
   // Calculate gas buffer based on max winners to account for rent exemption
   // Each new winner wallet needs 0.00089 SOL rent exemption + 0.000005 SOL tx fee
   const winnerCount = maxWinners || 100; // Default to 100 if not specified
@@ -1526,7 +1540,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     }
   }
 
-  // Fund ephemeral wallet
+  // Fund pool wallet
   const senderKeypair = await walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
 
   try {
@@ -1538,38 +1552,47 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
 
     await transactionService.transfer(
       senderKeypair,
-      ephemeralWallet.publicKey,
+      poolWallet.address,
       solToSend,
       TOKEN_MINTS.SOL
     );
 
     if (tokenSymbol !== 'SOL') {
-      await transactionService.transfer(
-        senderKeypair,
-        ephemeralWallet.publicKey,
-        amountToken,
-        tokenMint
-      );
+      await transactionService.transfer(senderKeypair, poolWallet.address, amountToken, tokenMint);
     }
   } catch (error: any) {
+    // Release pool wallet back on failure
+    try {
+      await poolService.releaseWallet(poolWallet.address);
+    } catch (releaseError) {
+      console.error('Failed to release pool wallet after funding failure:', releaseError);
+    }
     await message.reply(`❌ Failed to fund airdrop: ${error.message || 'Unknown error'}`);
     return;
   }
 
-  // Verify the ephemeral wallet was funded before creating airdrop
+  // Verify the pool wallet was funded before creating airdrop
   await message.reply('✅ Verifying funds received...');
   try {
-    const walletBalances = await balanceService.getBalances(ephemeralWallet.publicKey);
+    const walletBalances = await balanceService.getBalances(poolWallet.address);
     if (tokenMint === TOKEN_MINTS.SOL) {
       if (walletBalances.sol < amountToken) {
-        await message.reply('❌ Failed to verify SOL in airdrop wallet. Please try again.');
+        console.error(
+          `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Funds are recoverable.`
+        );
+        await message.reply(
+          '❌ Failed to verify SOL in airdrop wallet. The pool wallet has been reserved and funds will be automatically recovered.'
+        );
         return;
       }
     } else {
       const tokenBal = tokenMint === TOKEN_MINTS.USDC ? walletBalances.usdc : walletBalances.usdt;
       if (tokenBal < amountToken) {
+        console.error(
+          `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Funds are recoverable.`
+        );
         await message.reply(
-          `❌ Failed to verify ${tokenSymbol} in airdrop wallet. Please try again.`
+          `❌ Failed to verify ${tokenSymbol} in airdrop wallet. The pool wallet has been reserved and funds will be automatically recovered.`
         );
         return;
       }
@@ -1582,9 +1605,9 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   // Create airdrop in DB
   const airdrop = await prisma.airdrop.create({
     data: {
-      walletPubkey: ephemeralWallet.publicKey,
-      encryptedPrivkey: ephemeralWallet.encryptedPrivateKey,
-      keySalt: ephemeralWallet.keySalt,
+      walletPubkey: poolWallet.address,
+      encryptedPrivkey: poolWallet.encryptedPrivkey,
+      keySalt: poolWallet.keySalt,
       creatorId: sender.discordId,
       amountTotal: amountToken,
       tokenMint,

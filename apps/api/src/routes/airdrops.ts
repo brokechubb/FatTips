@@ -107,6 +107,25 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
     }
 
     const ephemeralWallet = await walletService.createEncryptedWallet();
+
+    // Fix #13: Create DB record FIRST to persist the key
+    // If we crash during funding, we at least have the key to recover funds
+    const expiresAt = new Date(Date.now() + durationMs);
+    const airdrop = await prisma.airdrop.create({
+      data: {
+        walletPubkey: ephemeralWallet.publicKey,
+        encryptedPrivkey: ephemeralWallet.encryptedPrivateKey,
+        keySalt: ephemeralWallet.keySalt,
+        creatorId: creator.discordId,
+        amountTotal: amountToken,
+        tokenMint,
+        maxParticipants: maxWinners || null,
+        expiresAt,
+        channelId: channelId || 'api',
+        status: 'ACTIVE', // Will be set to FAILED if funding fails
+      },
+    });
+
     // Calculate gas buffer based on max winners to account for rent exemption
     // Each new winner wallet needs 0.00089 SOL rent exemption + 0.000005 SOL tx fee
     const winnerCount = maxWinners || 100; // Default to 100 if not specified
@@ -126,12 +145,14 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
 
     const creatorBalances = await balanceService.getBalances(creator.walletPubkey);
     if (creatorBalances.sol < fundingAmountSol) {
+      await prisma.airdrop.update({ where: { id: airdrop.id }, data: { status: 'FAILED', amountClaimed: 0 } });
       res.status(400).json({ error: 'Insufficient SOL for gas' });
       return;
     }
     if (fundingAmountToken > 0) {
       const tokenBal = token === 'USDC' ? creatorBalances.usdc : creatorBalances.usdt;
       if (tokenBal < fundingAmountToken) {
+        await prisma.airdrop.update({ where: { id: airdrop.id }, data: { status: 'FAILED', amountClaimed: 0 } });
         res.status(400).json({ error: `Insufficient ${token}` });
         return;
       }
@@ -145,25 +166,32 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
     let solSig: string | undefined;
     let tokenSig: string | undefined;
 
-    if (fundingAmountSol > 0) {
-      const solToSend = token === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
-      solSig = await transactionService.transfer(
-        creatorKeypair,
-        ephemeralWallet.publicKey,
-        solToSend,
-        TOKEN_MINTS.SOL
-      );
-      console.log(`[AIRDROP] SOL funding transaction: ${solSig}`);
-    }
+    try {
+      if (fundingAmountSol > 0) {
+        const solToSend = token === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
+        solSig = await transactionService.transfer(
+          creatorKeypair,
+          ephemeralWallet.publicKey,
+          solToSend,
+          TOKEN_MINTS.SOL
+        );
+        console.log(`[AIRDROP] SOL funding transaction: ${solSig}`);
+      }
 
-    if (fundingAmountToken > 0) {
-      tokenSig = await transactionService.transfer(
-        creatorKeypair,
-        ephemeralWallet.publicKey,
-        fundingAmountToken,
-        tokenMint
-      );
-      console.log(`[AIRDROP] Token funding transaction: ${tokenSig}`);
+      if (fundingAmountToken > 0) {
+        tokenSig = await transactionService.transfer(
+          creatorKeypair,
+          ephemeralWallet.publicKey,
+          fundingAmountToken,
+          tokenMint
+        );
+        console.log(`[AIRDROP] Token funding transaction: ${tokenSig}`);
+      }
+    } catch (fundError) {
+      console.error('Funding failed:', fundError);
+      await prisma.airdrop.update({ where: { id: airdrop.id }, data: { status: 'FAILED', amountClaimed: 0 } });
+      res.status(500).json({ error: 'Failed to fund airdrop wallet' });
+      return;
     }
 
     // Wait a moment for transactions to be fully processed
@@ -173,31 +201,10 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
     const walletBalances = await balanceService.getBalances(ephemeralWallet.publicKey);
     if (token === 'SOL') {
       if (walletBalances.sol < amountToken) {
-        res.status(500).json({ error: 'Failed to fund airdrop wallet with SOL' });
-        return;
-      }
-    } else {
-      const tokenBal = token === 'USDC' ? walletBalances.usdc : walletBalances.usdt;
-      if (tokenBal < amountToken) {
-        res.status(500).json({ error: `Failed to fund airdrop wallet with ${token}` });
-        return;
+        // Don't fail here, just log warning. The key is safe in DB.
+        console.warn(`[AIRDROP] Wallet ${ephemeralWallet.publicKey} might not be fully funded yet (SOL=${walletBalances.sol})`);
       }
     }
-
-    const expiresAt = new Date(Date.now() + durationMs);
-    const airdrop = await prisma.airdrop.create({
-      data: {
-        walletPubkey: ephemeralWallet.publicKey,
-        encryptedPrivkey: ephemeralWallet.encryptedPrivateKey,
-        keySalt: ephemeralWallet.keySalt,
-        creatorId: creator.discordId,
-        amountTotal: amountToken,
-        tokenMint,
-        maxParticipants: maxWinners || null,
-        expiresAt,
-        channelId: channelId || 'api',
-      },
-    });
 
     // Publish airdrop created event for Discord bot to post message
     if (channelId) {
@@ -301,6 +308,11 @@ router.post('/:id/claim', async (req, res) => {
       return;
     }
 
+    if (airdrop.maxParticipants && airdrop.participantCount >= airdrop.maxParticipants) {
+      res.status(400).json({ error: 'Max participants reached' });
+      return;
+    }
+
     const existingParticipant = await prisma.airdropParticipant.findUnique({
       where: {
         airdropId_userId: {
@@ -315,6 +327,7 @@ router.post('/:id/claim', async (req, res) => {
       return;
     }
 
+    // Ensure user exists (create wallet if needed)
     let recipient = await prisma.user.findUnique({
       where: { discordId },
     });
@@ -334,60 +347,39 @@ router.post('/:id/claim', async (req, res) => {
       });
     }
 
-    const airdropKeypair = await walletService.getKeypair(
-      airdrop.encryptedPrivkey,
-      airdrop.keySalt
-    );
-
-    const participants = await prisma.airdropParticipant.findMany({
-      where: { airdropId: id },
-    });
-
-    const totalClaimed = Number(airdrop.amountClaimed);
-    const totalParticipants = participants.length + 1;
-    let amountPerUser: number;
-
-    if (airdrop.maxParticipants && totalParticipants > airdrop.maxParticipants) {
-      res.status(400).json({ error: 'Max participants reached' });
-      return;
+    // Register as participant only — funds are distributed at settlement
+    // This matches the bot's behavior and prevents early claimants from draining the pot
+    try {
+      await prisma.airdropParticipant.create({
+        data: {
+          airdropId: id,
+          userId: discordId,
+          shareAmount: 0, // Calculated at settlement
+          status: 'PENDING',
+        },
+      });
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        res.status(400).json({ error: 'Already claimed' });
+        return;
+      }
+      throw error;
     }
 
-    const totalPot = Number(airdrop.amountTotal);
-    amountPerUser = totalPot / totalParticipants;
-
-    const signature = await transactionService.transfer(
-      airdropKeypair,
-      recipient.walletPubkey,
-      amountPerUser,
-      airdrop.tokenMint
-    );
-
-    await prisma.airdropParticipant.create({
-      data: {
-        airdropId: id,
-        userId: discordId,
-        shareAmount: amountPerUser,
-        status: 'TRANSFERRED',
-        txSignature: signature,
-      },
-    });
-
-    await prisma.airdrop.update({
+    // Atomically increment participant count
+    const updatedAirdrop = await prisma.airdrop.update({
       where: { id },
-      data: {
-        amountClaimed: totalClaimed + amountPerUser,
-        participantCount: totalParticipants,
-      },
+      data: { participantCount: { increment: 1 } },
     });
 
     res.json({
       success: true,
       airdropId: id,
       claimant: discordId,
-      amountReceived: amountPerUser,
-      tokenMint: airdrop.tokenMint,
-      signature,
-      solscanUrl: `https://solscan.io/tx/${signature}`,
+      participantCount: updatedAirdrop.participantCount,
+      maxParticipants: updatedAirdrop.maxParticipants,
+      status: 'PENDING',
+      message: 'Claimed successfully. Funds will be distributed when the airdrop settles.',
     });
   } catch (error) {
     console.error('Error claiming airdrop:', error);
