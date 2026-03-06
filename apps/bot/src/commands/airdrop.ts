@@ -209,6 +209,44 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // Calculate gas buffer for the airdrop wallet
+  // The airdrop wallet needs:
+  // 1. Rent exemption (0.00089 SOL) - minimum to keep the account alive
+  // 2. Transaction fees (0.000005 SOL per winner) - actual cost to send transactions
+  // 3. Safety buffer (0.001 SOL) - for priority fees and unexpected costs
+  const winnerCount = maxWinners || 100; // Default to 100 if not specified
+  const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption (one-time, not per winner!)
+  const TX_FEE = 0.000005; // Per transaction fee
+  const SAFETY_BUFFER = 0.001; // Extra buffer for priority fees
+  const GAS_BUFFER = RENT_EXEMPTION + winnerCount * TX_FEE + SAFETY_BUFFER;
+
+  // Warn about high gas costs for small SOL airdrops
+  if (tokenSymbol === 'SOL' && parsedAmount.type !== 'max') {
+    const totalCost = amountToken + GAS_BUFFER;
+    const gasPercentage = (GAS_BUFFER / totalCost) * 100;
+
+    // If gas is more than 50% of the total cost, warn the user
+    if (gasPercentage > 50) {
+      const price = await priceService.getTokenPrice(TOKEN_MINTS.SOL);
+      const solPrice = price ? price.price : 0;
+      const gasUsd = GAS_BUFFER * solPrice;
+      const amountUsd = amountToken * solPrice;
+
+      await interaction.editReply({
+        content:
+          `⚠️ **High Gas Cost Warning**\n\n` +
+          `You're about to create a **$${amountUsd.toFixed(2)}** SOL airdrop, ` +
+          `but the gas buffer will cost an additional **$${gasUsd.toFixed(2)}**.\n\n` +
+          `**Total cost: $${(amountUsd + gasUsd).toFixed(2)}** (${GAS_BUFFER.toFixed(4)} SOL gas buffer)\n\n` +
+          `Consider:\n` +
+          `• Using USDC or USDT instead (lower gas costs)\n` +
+          `• Increasing the airdrop amount\n` +
+          `• Reducing max winners (currently ${winnerCount})`,
+      });
+      return;
+    }
+  }
+
   // 5. Get Pool Wallet
   // Use pool wallet instead of ephemeral wallet - it's already in the database
   // so if funding succeeds but verification fails, we can still recover funds
@@ -216,12 +254,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   console.log(`[AIRDROP] Using pool wallet: ${poolWallet.address}`);
 
   // 6. Fund Pool Wallet
-  // Calculate gas buffer based on max winners to account for rent exemption
-  // Each new winner wallet needs 0.00089 SOL rent exemption + 0.000005 SOL tx fee
-  const winnerCount = maxWinners || 100; // Default to 100 if not specified
-  const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption
-  const TX_FEE = 0.000005; // Per transaction fee
-  const GAS_BUFFER = 0.003 + winnerCount * (RENT_EXEMPTION + TX_FEE);
+  // Gas buffer variables already calculated above for validation
 
   let fundingAmountSol = 0;
   let fundingAmountToken = 0;
@@ -270,17 +303,16 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
     // Transfer SOL if needed
     if (fundingAmountSol > 0) {
-      const solToSend = tokenSymbol === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
       const solSig = await transactionService.transfer(
         creatorKeypair,
         poolWallet.address,
-        solToSend,
+        fundingAmountSol,
         TOKEN_MINTS.SOL
       );
       fundingSignatures.push(solSig);
       logTransaction('AIRDROP', {
         fromId: creator.discordId,
-        amount: solToSend,
+        amount: fundingAmountSol,
         token: 'SOL',
         signature: solSig,
         status: 'SUCCESS',
@@ -318,7 +350,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   }
 
   // Wait for all funding transactions to be confirmed
-  await interaction.editReply({ content: '⏳ Waiting for transaction confirmation...' });
+
   try {
     for (const sig of fundingSignatures) {
       await connection.confirmTransaction(sig, 'confirmed');
@@ -342,7 +374,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   }
 
   // Verify the pool wallet was funded before creating airdrop
-  await interaction.editReply({ content: '✅ Verifying funds received...' });
+
   let verified = false;
   let retryCount = 0;
   const maxRetries = 5;
@@ -352,13 +384,30 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
       const walletBalances = await balanceService.getBalances(poolWallet.address);
 
       if (tokenMint === TOKEN_MINTS.SOL) {
+        console.log(
+          `[AIRDROP] Balance check attempt ${retryCount + 1}: wallet=${walletBalances.sol} SOL, expected>=${amountToken} SOL`
+        );
         if (walletBalances.sol >= amountToken) {
           verified = true;
         } else if (retryCount === maxRetries - 1) {
-          // Verification failed but wallet is in DB - funds can be recovered later
           console.error(
-            `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Funds are recoverable.`
+            `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Balance: ${walletBalances.sol}, Expected: ${amountToken}. Funds are recoverable.`
           );
+          // Create a FAILED airdrop record so recovery knows who funded this wallet
+          await prisma.airdrop.create({
+            data: {
+              walletPubkey: poolWallet.address,
+              encryptedPrivkey: poolWallet.encryptedPrivkey,
+              keySalt: poolWallet.keySalt,
+              creatorId: creator.discordId,
+              amountTotal: amountToken,
+              tokenMint,
+              maxParticipants: maxWinners ?? 0,
+              expiresAt,
+              channelId: interaction.channelId,
+              status: 'FAILED',
+            },
+          });
           await interaction.editReply({
             content:
               '❌ Failed to verify SOL in airdrop wallet. The pool wallet has been reserved and funds will be automatically recovered.',
@@ -367,13 +416,30 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
         }
       } else {
         const tokenBal = tokenMint === TOKEN_MINTS.USDC ? walletBalances.usdc : walletBalances.usdt;
+        console.log(
+          `[AIRDROP] Balance check attempt ${retryCount + 1}: wallet=${tokenBal} ${tokenSymbol}, expected>=${amountToken} ${tokenSymbol}`
+        );
         if (tokenBal >= amountToken) {
           verified = true;
         } else if (retryCount === maxRetries - 1) {
-          // Verification failed but wallet is in DB - funds can be recovered later
           console.error(
-            `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Funds are recoverable.`
+            `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Balance: ${tokenBal}, Expected: ${amountToken}. Funds are recoverable.`
           );
+          // Create a FAILED airdrop record so recovery knows who funded this wallet
+          await prisma.airdrop.create({
+            data: {
+              walletPubkey: poolWallet.address,
+              encryptedPrivkey: poolWallet.encryptedPrivkey,
+              keySalt: poolWallet.keySalt,
+              creatorId: creator.discordId,
+              amountTotal: amountToken,
+              tokenMint,
+              maxParticipants: maxWinners ?? 0,
+              expiresAt,
+              channelId: interaction.channelId,
+              status: 'FAILED',
+            },
+          });
           await interaction.editReply({
             content: `❌ Failed to verify ${tokenSymbol} in airdrop wallet. The pool wallet has been reserved and funds will be automatically recovered.`,
           });
@@ -383,7 +449,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 
       if (!verified) {
         retryCount++;
-        await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second before retry
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     } catch (verifyError) {
       console.error(`Balance verification failed (attempt ${retryCount + 1}):`, verifyError);
@@ -393,7 +459,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
         // Continue anyway - the balance check might fail due to RPC issues
         break;
       }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
 
@@ -423,7 +489,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     )
     .setColor(0x00ff00)
     .addFields(
-      { name: 'Pot Size', value: `${amountToken.toFixed(2)} ${tokenSymbol}`, inline: true },
+      { name: 'Pot Size', value: `${amountToken.toFixed(2)} ${tokenSymbol} (~$${usdValue.toFixed(2)})`, inline: true },
       { name: 'Max Winners', value: maxWinners ? `${maxWinners}` : 'Unlimited', inline: true }
     )
     .setFooter({ text: 'Funds are held securely in a temporary wallet.' });

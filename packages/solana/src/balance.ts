@@ -12,7 +12,7 @@ export class BalanceService {
   private connection: Connection;
 
   constructor(rpcUrl: string) {
-    this.connection = new Connection(rpcUrl);
+    this.connection = new Connection(rpcUrl, { commitment: 'confirmed' });
   }
 
   /**

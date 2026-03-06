@@ -7,6 +7,8 @@ import {
   Keypair,
   LAMPORTS_PER_SOL,
   ComputeBudgetProgram,
+  SendTransactionError,
+  SendOptions,
 } from '@solana/web3.js';
 import {
   createTransferInstruction,
@@ -18,9 +20,17 @@ import { TOKEN_MINTS } from './price';
 
 export class TransactionService {
   private connection: Connection;
+  private sendOptions: SendOptions;
 
   constructor(rpcUrl: string) {
-    this.connection = new Connection(rpcUrl, 'confirmed');
+    this.connection = new Connection(rpcUrl, {
+      commitment: 'confirmed',
+      confirmTransactionInitialTimeout: 60000,
+    });
+    this.sendOptions = {
+      skipPreflight: true,
+      preflightCommitment: 'confirmed',
+    };
   }
 
   /**
@@ -71,7 +81,30 @@ export class TransactionService {
           })
         );
       }
-      return sendAndConfirmTransaction(this.connection, transaction, [senderKeypair]);
+      try {
+        const signature = await this.connection.sendTransaction(
+          transaction,
+          [senderKeypair],
+          this.sendOptions
+        );
+        const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+        if (confirmation.value.err) {
+          throw new Error(`Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+        }
+        return signature;
+      } catch (error: any) {
+        if (error instanceof SendTransactionError) {
+          try {
+            const logs = await error.getLogs(this.connection);
+            console.error('[TransactionService] Transaction failed. Logs:', logs);
+            throw new Error(`Transaction failed: ${logs?.join(' | ') || error.message}`);
+          } catch {
+            console.error('[TransactionService] Transaction failed:', error.message);
+            throw new Error(`Transaction failed: ${error.message}`);
+          }
+        }
+        throw error;
+      }
     }
 
     // Case 2: SPL Token Batch Transfer (USDC/USDT)
@@ -114,7 +147,30 @@ export class TransactionService {
       );
     }
 
-    return sendAndConfirmTransaction(this.connection, transaction, [senderKeypair]);
+    try {
+      const signature = await this.connection.sendTransaction(
+        transaction,
+        [senderKeypair],
+        this.sendOptions
+      );
+      const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+      if (confirmation.value.err) {
+        throw new Error(`Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+      }
+      return signature;
+    } catch (error: any) {
+      if (error instanceof SendTransactionError) {
+        try {
+          const logs = await error.getLogs(this.connection);
+          console.error('[TransactionService] Transaction failed. Logs:', logs);
+          throw new Error(`Transaction failed: ${logs?.join(' | ') || error.message}`);
+        } catch {
+          console.error('[TransactionService] Transaction failed:', error.message);
+          throw new Error(`Transaction failed: ${error.message}`);
+        }
+      }
+      throw error;
+    }
   }
 
   /**
@@ -140,7 +196,30 @@ export class TransactionService {
       })
     );
 
-    return sendAndConfirmTransaction(this.connection, transaction, [senderKeypair]);
+    try {
+      const signature = await this.connection.sendTransaction(
+        transaction,
+        [senderKeypair],
+        this.sendOptions
+      );
+      const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+      if (confirmation.value.err) {
+        throw new Error(`Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+      }
+      return signature;
+    } catch (error: any) {
+      if (error instanceof SendTransactionError) {
+        try {
+          const logs = await error.getLogs(this.connection);
+          console.error('[TransactionService] Transaction failed. Logs:', logs);
+          throw new Error(`Transaction failed: ${logs?.join(' | ') || error.message}`);
+        } catch {
+          console.error('[TransactionService] Transaction failed:', error.message);
+          throw new Error(`Transaction failed: ${error.message}`);
+        }
+      }
+      throw error;
+    }
   }
 
   /**
@@ -189,6 +268,29 @@ export class TransactionService {
       createTransferInstruction(senderAta, recipientAta, senderKeypair.publicKey, amountRaw)
     );
 
-    return sendAndConfirmTransaction(this.connection, transaction, [senderKeypair]);
+    try {
+      const signature = await this.connection.sendTransaction(
+        transaction,
+        [senderKeypair],
+        this.sendOptions
+      );
+      const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+      if (confirmation.value.err) {
+        throw new Error(`Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+      }
+      return signature;
+    } catch (error: any) {
+      if (error instanceof SendTransactionError) {
+        try {
+          const logs = await error.getLogs(this.connection);
+          console.error('[TransactionService] Transaction failed. Logs:', logs);
+          throw new Error(`Transaction failed: ${logs?.join(' | ') || error.message}`);
+        } catch {
+          console.error('[TransactionService] Transaction failed:', error.message);
+          throw new Error(`Transaction failed: ${error.message}`);
+        }
+      }
+      throw error;
+    }
   }
 }

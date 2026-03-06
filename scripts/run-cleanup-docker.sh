@@ -12,12 +12,6 @@ if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
 fi
 
-# Ensure the script is in the container (copy if needed)
-if ! docker exec fattips-bot test -f /app/scripts/cleanup-airdrops.js; then
-    docker exec -u root fattips-bot mkdir -p /app/scripts
-    docker cp /opt/FatTips/scripts/cleanup-airdrops.js fattips-bot:/app/scripts/cleanup-airdrops.js
-fi
-
 # Build arguments for the cleanup script:
 # 1. CLEANUP_DESTINATION (or use default: 9HMqaDgnbvy4VYi9VpNVb6u3xv4vqD5RG12cyxcsVRFY)
 # 2. DATABASE_URL - use internal Docker network address
@@ -31,10 +25,30 @@ echo "Running airdrop cleanup..."
 echo "  Destination: $DESTINATION"
 echo "  Database: using internal Docker network"
 
-# Run the cleanup script inside the container with all required arguments
-# Run from /app/scripts so node can find the locally installed node_modules
-docker exec fattips-bot sh -c "cd /app/scripts && node cleanup-airdrops.js \
-    '$DESTINATION' \
-    '$INTERNAL_DB_URL' \
-    '$MASTER_ENCRYPTION_KEY' \
-    '$SOLANA_RPC_URL'" 2>&1
+# Install dependencies in container if needed, then run cleanup
+# Using NODE_PATH to point to installed modules
+docker exec fattips-bot sh -c '
+  set -e
+  DEPS_DIR="/tmp/cleanup-deps"
+  
+  # Install dependencies if not present
+  if [ ! -d "$DEPS_DIR/node_modules" ]; then
+    echo "Installing dependencies in container..."
+    mkdir -p "$DEPS_DIR"
+    cd "$DEPS_DIR"
+    npm init -y >/dev/null 2>&1
+    npm install --silent pg @solana/web3.js @solana/spl-token >/dev/null 2>&1
+    echo "Dependencies installed."
+  fi
+  
+  # Copy latest script to deps dir
+  cp /app/scripts/cleanup-airdrops.js "$DEPS_DIR/" 2>/dev/null || true
+  
+  # Run with NODE_PATH pointing to modules
+  cd "$DEPS_DIR"
+  NODE_PATH="$DEPS_DIR/node_modules" node cleanup-airdrops.js \
+    "'"$DESTINATION"'" \
+    "'"$INTERNAL_DB_URL"'" \
+    "'"$MASTER_ENCRYPTION_KEY"'" \
+    "'"$SOLANA_RPC_URL"'"
+' 2>&1

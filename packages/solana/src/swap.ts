@@ -194,12 +194,13 @@ export class JupiterSwapService {
     // Validate the transaction before signing
     // 1. Verify user is a required signer
     const message = transaction.message;
-    const accountKeys = message.getAccountKeys();
+    // Use staticAccountKeys for signer validation - required signers are always in static accounts
+    // (not in address lookup tables)
     const userKeyStr = userKeypair.publicKey.toBase58();
 
     let userIsRequiredSigner = false;
     for (let i = 0; i < message.header.numRequiredSignatures; i++) {
-      if (accountKeys.get(i)?.toBase58() === userKeyStr) {
+      if (message.staticAccountKeys[i]?.toBase58() === userKeyStr) {
         userIsRequiredSigner = true;
         break;
       }
@@ -207,7 +208,7 @@ export class JupiterSwapService {
     if (!userIsRequiredSigner) {
       throw new Error(
         'Swap transaction validation failed: user wallet is not a required signer. ' +
-        'This may indicate a tampered transaction.'
+          'This may indicate a tampered transaction.'
       );
     }
 
@@ -216,7 +217,7 @@ export class JupiterSwapService {
     if (instructionCount > 30) {
       throw new Error(
         `Swap transaction validation failed: suspicious instruction count (${instructionCount}). ` +
-        'Normal swaps have fewer instructions.'
+          'Normal swaps have fewer instructions.'
       );
     }
 

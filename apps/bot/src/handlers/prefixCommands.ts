@@ -10,6 +10,7 @@ import {
   ChannelType,
   ComponentType,
 } from 'discord.js';
+import { Connection } from '@solana/web3.js';
 import { prisma } from 'fattips-database';
 import { logger } from '../utils/logger';
 import {
@@ -597,7 +598,9 @@ async function handleWallet(message: Message, args: string[], prefix: string) {
     });
 
     if (existing) {
-      await message.reply(`You already have a wallet!\nAddress: \`${existing.walletPubkey}\`\n\n*💡 For privacy, use \`/wallet create\` (slash command) as the preferred way to create your wallet - only you will see the address.*`);
+      await message.reply(
+        `You already have a wallet!\nAddress: \`${existing.walletPubkey}\`\n\n*💡 For privacy, use \`/wallet create\` (slash command) as the preferred way to create your wallet - only you will see the address.*`
+      );
       return;
     }
 
@@ -898,7 +901,12 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
         `You have a pending tip of **${formatTokenAmount(amountPerUser)} ${tokenSymbol}**!\n\n` +
         `**🔐 Your Private Key:**\n\`\`\`\n${newWallet.key}\n\`\`\`\n*Self-destructs in 15m.*`;
 
-      const dmResult = await sendPrivateKeyDM(client, newWallet.id, msg, '🔒 **Key removed for security.**');
+      const dmResult = await sendPrivateKeyDM(
+        client,
+        newWallet.id,
+        msg,
+        '🔒 **Key removed for security.**'
+      );
 
       if (dmResult.sent) {
         // Send Guide only if DM was successful
@@ -1510,16 +1518,48 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     return;
   }
 
+  // Calculate gas buffer for the airdrop wallet
+  // The airdrop wallet needs:
+  // 1. Rent exemption (0.00089 SOL) - minimum to keep the account alive
+  // 2. Transaction fees (0.000005 SOL per winner) - actual cost to send transactions
+  // 3. Safety buffer (0.001 SOL) - for priority fees and unexpected costs
+  const winnerCount = maxWinners || 100; // Default to 100 if not specified
+  const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption (one-time, not per winner!)
+  const TX_FEE = 0.000005; // Per transaction fee
+  const SAFETY_BUFFER = 0.001; // Extra buffer for priority fees
+  const GAS_BUFFER = RENT_EXEMPTION + winnerCount * TX_FEE + SAFETY_BUFFER;
+
+  // Warn about high gas costs for small SOL airdrops
+  if (tokenSymbol === 'SOL' && parsedAmount.type !== 'max') {
+    const totalCost = amountToken + GAS_BUFFER;
+    const gasPercentage = (GAS_BUFFER / totalCost) * 100;
+
+    // If gas is more than 50% of the total cost, warn the user
+    if (gasPercentage > 50) {
+      const price = await priceService.getTokenPrice(TOKEN_MINTS.SOL);
+      const solPrice = price ? price.price : 0;
+      const gasUsd = GAS_BUFFER * solPrice;
+      const amountUsd = amountToken * solPrice;
+
+      await message.reply(
+        `⚠️ **High Gas Cost Warning**\n\n` +
+          `You're about to create a **$${amountUsd.toFixed(2)}** SOL airdrop, ` +
+          `but the gas buffer will cost an additional **$${gasUsd.toFixed(2)}**.\n\n` +
+          `**Total cost: $${(amountUsd + gasUsd).toFixed(2)}** (${GAS_BUFFER.toFixed(4)} SOL gas buffer)\n\n` +
+          `Consider:\n` +
+          `• Using USDC or USDT instead (lower gas costs)\n` +
+          `• Increasing the airdrop amount\n` +
+          `• Reducing max winners (currently ${winnerCount})`
+      );
+      return;
+    }
+  }
+
   // Get pool wallet (already in database for recovery if verification fails)
   const poolWallet = await poolService.getOrCreateWallet();
   console.log(`[AIRDROP] Using pool wallet: ${poolWallet.address}`);
 
-  // Calculate gas buffer based on max winners to account for rent exemption
-  // Each new winner wallet needs 0.00089 SOL rent exemption + 0.000005 SOL tx fee
-  const winnerCount = maxWinners || 100; // Default to 100 if not specified
-  const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption
-  const TX_FEE = 0.000005; // Per transaction fee
-  const GAS_BUFFER = 0.003 + winnerCount * (RENT_EXEMPTION + TX_FEE);
+  // Gas buffer variables already calculated above for validation
 
   // Check balance (skip for max since we calculated based on actual balance)
   if (parsedAmount.type !== 'max') {
@@ -1542,6 +1582,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
 
   // Fund pool wallet
   const senderKeypair = await walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
+  const fundingSignatures: string[] = [];
 
   try {
     // For max, amountToken already has gas buffer subtracted, so we don't add it again
@@ -1550,15 +1591,22 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
       solToSend = amountToken;
     }
 
-    await transactionService.transfer(
+    const solSig = await transactionService.transfer(
       senderKeypair,
       poolWallet.address,
       solToSend,
       TOKEN_MINTS.SOL
     );
+    fundingSignatures.push(solSig);
 
     if (tokenSymbol !== 'SOL') {
-      await transactionService.transfer(senderKeypair, poolWallet.address, amountToken, tokenMint);
+      const tokenSig = await transactionService.transfer(
+        senderKeypair,
+        poolWallet.address,
+        amountToken,
+        tokenMint
+      );
+      fundingSignatures.push(tokenSig);
     }
   } catch (error: any) {
     // Release pool wallet back on failure
@@ -1571,35 +1619,113 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     return;
   }
 
-  // Verify the pool wallet was funded before creating airdrop
-  await message.reply('✅ Verifying funds received...');
+  // Wait for all funding transactions to be confirmed
+
   try {
-    const walletBalances = await balanceService.getBalances(poolWallet.address);
-    if (tokenMint === TOKEN_MINTS.SOL) {
-      if (walletBalances.sol < amountToken) {
-        console.error(
-          `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Funds are recoverable.`
-        );
-        await message.reply(
-          '❌ Failed to verify SOL in airdrop wallet. The pool wallet has been reserved and funds will be automatically recovered.'
-        );
-        return;
-      }
-    } else {
-      const tokenBal = tokenMint === TOKEN_MINTS.USDC ? walletBalances.usdc : walletBalances.usdt;
-      if (tokenBal < amountToken) {
-        console.error(
-          `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Funds are recoverable.`
-        );
-        await message.reply(
-          `❌ Failed to verify ${tokenSymbol} in airdrop wallet. The pool wallet has been reserved and funds will be automatically recovered.`
-        );
-        return;
-      }
+    const connection = new Connection(process.env.SOLANA_RPC_URL!);
+    for (const sig of fundingSignatures) {
+      await connection.confirmTransaction(sig, 'confirmed');
     }
-  } catch (verifyError) {
-    console.error('Balance verification failed:', verifyError);
-    // Continue anyway - the balance check might fail due to RPC issues
+  } catch (confirmError) {
+    console.error('Transaction confirmation failed:', confirmError);
+    // Release the pool wallet back if confirmation failed
+    try {
+      await poolService.releaseWallet(poolWallet.address);
+    } catch (releaseError) {
+      console.error('Failed to release pool wallet after confirmation failure:', releaseError);
+    }
+    await message.reply(
+      '❌ Transaction confirmation failed. Please check your wallet and try again.'
+    );
+    return;
+  }
+
+  // Verify the pool wallet was funded before creating airdrop
+
+  let verified = false;
+  let retryCount = 0;
+  const maxRetries = 5;
+
+  while (!verified && retryCount < maxRetries) {
+    try {
+      const walletBalances = await balanceService.getBalances(poolWallet.address);
+      if (tokenMint === TOKEN_MINTS.SOL) {
+        console.log(
+          `[AIRDROP] Balance check attempt ${retryCount + 1}: wallet=${walletBalances.sol} SOL, expected>=${amountToken} SOL`
+        );
+        if (walletBalances.sol >= amountToken) {
+          verified = true;
+        } else if (retryCount === maxRetries - 1) {
+          console.error(
+            `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Balance: ${walletBalances.sol}, Expected: ${amountToken}. Funds are recoverable.`
+          );
+          // Create a FAILED airdrop record so recovery knows who funded this wallet
+          await prisma.airdrop.create({
+            data: {
+              walletPubkey: poolWallet.address,
+              encryptedPrivkey: poolWallet.encryptedPrivkey,
+              keySalt: poolWallet.keySalt,
+              creatorId: sender.discordId,
+              amountTotal: amountToken,
+              tokenMint,
+              maxParticipants: maxWinners ?? 0,
+              expiresAt,
+              channelId: message.channel.id,
+              status: 'FAILED',
+            },
+          });
+          await message.reply(
+            '❌ Failed to verify SOL in airdrop wallet. The pool wallet has been reserved and funds will be automatically recovered.'
+          );
+          return;
+        }
+      } else {
+        const tokenBal = tokenMint === TOKEN_MINTS.USDC ? walletBalances.usdc : walletBalances.usdt;
+        console.log(
+          `[AIRDROP] Balance check attempt ${retryCount + 1}: wallet=${tokenBal} ${tokenSymbol}, expected>=${amountToken} ${tokenSymbol}`
+        );
+        if (tokenBal >= amountToken) {
+          verified = true;
+        } else if (retryCount === maxRetries - 1) {
+          console.error(
+            `[AIRDROP] Verification failed for pool wallet ${poolWallet.address}. Balance: ${tokenBal}, Expected: ${amountToken}. Funds are recoverable.`
+          );
+          // Create a FAILED airdrop record so recovery knows who funded this wallet
+          await prisma.airdrop.create({
+            data: {
+              walletPubkey: poolWallet.address,
+              encryptedPrivkey: poolWallet.encryptedPrivkey,
+              keySalt: poolWallet.keySalt,
+              creatorId: sender.discordId,
+              amountTotal: amountToken,
+              tokenMint,
+              maxParticipants: maxWinners ?? 0,
+              expiresAt,
+              channelId: message.channel.id,
+              status: 'FAILED',
+            },
+          });
+          await message.reply(
+            `❌ Failed to verify ${tokenSymbol} in airdrop wallet. The pool wallet has been reserved and funds will be automatically recovered.`
+          );
+          return;
+        }
+      }
+
+      if (!verified) {
+        retryCount++;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    } catch (verifyError) {
+      console.error(`Balance verification failed (attempt ${retryCount + 1}):`, verifyError);
+      retryCount++;
+      if (retryCount >= maxRetries) {
+        console.error('Max retries reached for balance verification');
+        // Continue anyway - the balance check might fail due to RPC issues
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
   }
 
   // Create airdrop in DB
@@ -1628,7 +1754,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     )
     .setColor(0x00ff00)
     .addFields(
-      { name: 'Pot Size', value: `${amountToken.toFixed(2)} ${tokenSymbol}`, inline: true },
+      { name: 'Pot Size', value: `${amountToken.toFixed(2)} ${tokenSymbol} (~$${usdValue.toFixed(2)})`, inline: true },
       { name: 'Max Winners', value: maxWinners ? `${maxWinners}` : 'Unlimited', inline: true }
     )
     .setFooter({ text: 'Funds are held securely in a temporary wallet.' });

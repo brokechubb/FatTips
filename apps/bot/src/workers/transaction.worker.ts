@@ -88,7 +88,11 @@ export function initTransactionWorker(client: Client) {
         const FEE_BUFFER = 0.00002;
 
         if (tokenMint === TOKEN_MINTS.SOL) {
-          const required = totalAmount + FEE_BUFFER + (type === 'WITHDRAWAL' ? 0 : MIN_RENT_EXEMPTION);
+          // For withdrawals, the command handler already subtracted fees from the amount,
+          // so only check that we have enough for the transfer itself
+          const required = type === 'WITHDRAWAL'
+            ? totalAmount
+            : totalAmount + FEE_BUFFER + MIN_RENT_EXEMPTION;
           if (balances.sol < required) {
             throw new Error(
               `Insufficient SOL at execution time. Need ${required.toFixed(6)}, have ${balances.sol.toFixed(6)}. ` +

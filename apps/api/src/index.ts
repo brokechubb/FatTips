@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { type Options } from 'express-rate-limit';
 import * as dotenv from 'dotenv';
 import { requireAuth } from './middleware/auth';
 import userRoutes from './routes/users';
@@ -34,7 +34,7 @@ const globalLimiter = rateLimit({
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.headers['x-api-key'] as string || req.ip || 'unknown',
+  keyGenerator: (req) => req.headers['x-api-key'] as string || 'unknown',
   message: { error: 'Too many requests. Please try again later.' },
 });
 
@@ -44,7 +44,7 @@ const financialLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.headers['x-api-key'] as string || req.ip || 'unknown',
+  keyGenerator: (req) => req.headers['x-api-key'] as string || 'unknown',
   message: { error: 'Too many financial requests. Please slow down.' },
 });
 

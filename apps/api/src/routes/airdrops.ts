@@ -126,12 +126,16 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
       },
     });
 
-    // Calculate gas buffer based on max winners to account for rent exemption
-    // Each new winner wallet needs 0.00089 SOL rent exemption + 0.000005 SOL tx fee
+    // Calculate gas buffer for the airdrop wallet
+    // The airdrop wallet needs:
+    // 1. Rent exemption (0.00089 SOL) - minimum to keep the account alive
+    // 2. Transaction fees (0.000005 SOL per winner) - actual cost to send transactions
+    // 3. Safety buffer (0.001 SOL) - for priority fees and unexpected costs
     const winnerCount = maxWinners || 100; // Default to 100 if not specified
-    const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption
+    const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption (one-time, not per winner!)
     const TX_FEE = 0.000005; // Per transaction fee
-    const GAS_BUFFER = 0.003 + winnerCount * (RENT_EXEMPTION + TX_FEE);
+    const SAFETY_BUFFER = 0.001; // Extra buffer for priority fees
+    const GAS_BUFFER = RENT_EXEMPTION + winnerCount * TX_FEE + SAFETY_BUFFER;
 
     let fundingAmountSol = 0;
     let fundingAmountToken = 0;
@@ -145,14 +149,20 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
 
     const creatorBalances = await balanceService.getBalances(creator.walletPubkey);
     if (creatorBalances.sol < fundingAmountSol) {
-      await prisma.airdrop.update({ where: { id: airdrop.id }, data: { status: 'FAILED', amountClaimed: 0 } });
+      await prisma.airdrop.update({
+        where: { id: airdrop.id },
+        data: { status: 'FAILED', amountClaimed: 0 },
+      });
       res.status(400).json({ error: 'Insufficient SOL for gas' });
       return;
     }
     if (fundingAmountToken > 0) {
       const tokenBal = token === 'USDC' ? creatorBalances.usdc : creatorBalances.usdt;
       if (tokenBal < fundingAmountToken) {
-        await prisma.airdrop.update({ where: { id: airdrop.id }, data: { status: 'FAILED', amountClaimed: 0 } });
+        await prisma.airdrop.update({
+          where: { id: airdrop.id },
+          data: { status: 'FAILED', amountClaimed: 0 },
+        });
         res.status(400).json({ error: `Insufficient ${token}` });
         return;
       }
@@ -189,7 +199,10 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
       }
     } catch (fundError) {
       console.error('Funding failed:', fundError);
-      await prisma.airdrop.update({ where: { id: airdrop.id }, data: { status: 'FAILED', amountClaimed: 0 } });
+      await prisma.airdrop.update({
+        where: { id: airdrop.id },
+        data: { status: 'FAILED', amountClaimed: 0 },
+      });
       res.status(500).json({ error: 'Failed to fund airdrop wallet' });
       return;
     }
@@ -202,7 +215,9 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
     if (token === 'SOL') {
       if (walletBalances.sol < amountToken) {
         // Don't fail here, just log warning. The key is safe in DB.
-        console.warn(`[AIRDROP] Wallet ${ephemeralWallet.publicKey} might not be fully funded yet (SOL=${walletBalances.sol})`);
+        console.warn(
+          `[AIRDROP] Wallet ${ephemeralWallet.publicKey} might not be fully funded yet (SOL=${walletBalances.sol})`
+        );
       }
     }
 

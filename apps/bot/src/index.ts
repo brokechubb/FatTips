@@ -89,7 +89,7 @@ const commandFiles = fs
   .readdirSync(commandsPath)
   .filter((file) => (file.endsWith('.ts') || file.endsWith('.js')) && !file.endsWith('.d.ts'));
 
-const commands = [];
+const commands: object[] = [];
 
 for (const file of commandFiles) {
   const filePath = path.join(commandsPath, file);
@@ -107,7 +107,7 @@ for (const file of commandFiles) {
 // Register commands with Discord
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN!);
 
-(async () => {
+async function registerCommands(): Promise<void> {
   try {
     logger.info(`Started refreshing ${commands.length} application (/) commands.`);
 
@@ -120,7 +120,12 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN!
     logger.error('Error registering commands:', error);
     Sentry.captureException(error);
   }
-})();
+}
+
+// Register commands without blocking startup
+registerCommands().catch((err) => {
+  logger.error('Command registration failed (non-fatal):', err);
+});
 
 client.once('clientReady', () => {
   logger.info(`Bot logged in as ${client.user?.tag}`);
@@ -260,4 +265,7 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-client.login(process.env.DISCORD_BOT_TOKEN);
+client.login(process.env.DISCORD_BOT_TOKEN).catch((err) => {
+  logger.error('Failed to login to Discord:', err);
+  process.exit(1);
+});
