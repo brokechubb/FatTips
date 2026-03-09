@@ -1,0 +1,47 @@
+FROM node:20-alpine AS base
+
+# Install dependencies
+RUN apk add --no-cache libc6-compat openssl
+
+WORKDIR /app
+
+# Copy source code first
+COPY . .
+
+# Install dependencies (use --force to avoid interactive prompts in Docker)
+RUN npm install -g pnpm && pnpm install --force
+
+# Build dependencies in correct order (database -> solana -> shared)
+RUN pnpm --filter fattips-database generate
+RUN pnpm --filter fattips-database build
+RUN pnpm --filter fattips-solana build
+RUN pnpm --filter fattips-shared build
+
+# Build the application
+RUN pnpm --filter fattips-web build
+
+# Production image
+FROM node:20-alpine AS runner
+RUN apk add --no-cache openssl
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Copy necessary files
+COPY --from=base /app/apps/web/.next/standalone ./
+COPY --from=base /app/apps/web/.next/static ./.next/static
+# Public folder removed as it does not exist
+COPY --from=base /app/apps/web/package.json ./
+COPY --from=base /app/node_modules ./node_modules
+
+# Don't run as root
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+
+CMD ["node", "server.js"]

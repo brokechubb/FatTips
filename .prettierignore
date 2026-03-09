@@ -1,0 +1,15 @@
+# FatTips
+
+node_modules/
+dist/
+.next/
+*.log
+.env
+.env.local
+.DS_Store
+coverage/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

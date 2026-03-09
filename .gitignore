@@ -1,0 +1,100 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Turbo
+.turbo/
+
+# Build outputs
+.next/
+dist/
+build/
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Solana
+.anchor/
+test-ledger/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Private keys (NEVER commit these!)
+*.key
+*.pem
+*.private
+id_rsa
+id_ed25519
+
+# Backup files
+*.bak
+*.backup
+
+# Database backups (NEVER commit - contain sensitive data!)
+backups/
+*.sql.gz
+*.sql.gpg
+*.sql
+
+# Local development
+.dev/
+local/
+
+# Docker volumes
+.docker/
+volumes/
+
+# Misc
+.vercel
+.netlify
+
+# Production configs (may contain IPs and sensitive settings)
+fattips-api.local
+fattips-api.conf
+
+# Internal documentation
+nogit/
+.megamemory/
+ROADMAP.md
+GEMINI.md
+CLAUDE.md
+AGENTS.md
+
+# Scripts with hardcoded production addresses
+scripts/check-users-balances.js

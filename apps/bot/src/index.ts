@@ -1,0 +1,271 @@
+import { Client, GatewayIntentBits, REST, Routes, Collection, Events, Partials } from 'discord.js';
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as Sentry from '@sentry/node';
+import { nodeProfilingIntegration } from '@sentry/profiling-node';
+import { AirdropService } from './services/airdrop';
+import { activityService } from './services/activity';
+import { handlePrefixCommand } from './handlers/prefixCommands';
+import { logger } from './utils/logger';
+import { handleTipSelectMenu, handleTipModal } from './handlers/tipInteractions';
+import {
+  handleBalanceDeposit,
+  handleBalanceHistory,
+  handleBalanceWithdraw,
+  handleWithdrawModal,
+  handleSendFormModal,
+} from './handlers/balanceInteractions';
+import { initTransactionWorker } from './workers/transaction.worker';
+import { AirdropEventHandler } from './handlers/airdrop-events';
+
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+
+// Initialize Sentry if DSN is provided
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    integrations: [nodeProfilingIntegration()],
+    // Performance Monitoring
+    tracesSampleRate: 1.0, // Capture 100% of transactions in development
+    // Set sampling rate for profiling - this is relative to tracesSampleRate
+    profilesSampleRate: 1.0,
+    environment: process.env.NODE_ENV || 'development',
+  });
+  logger.info('Sentry initialized successfully');
+}
+
+const airdropService = new AirdropService();
+
+// Extend Client to include commands collection
+declare module 'discord.js' {
+  interface Client {
+    commands: Collection<string, any>;
+  }
+}
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent, // Required for prefix commands
+  ],
+  partials: [Partials.Channel], // Required for DM handling
+});
+
+// Track user activity and handle prefix commands
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot) return;
+
+  // Handle prefix commands (works in guilds and DMs)
+  await handlePrefixCommand(message, client);
+
+  // Track activity for rain command (guilds only)
+  if (message.guild) {
+    activityService.recordActivity(message.author.id, message.channelId);
+  }
+});
+
+// Custom event for short airdrops
+
+client.on('scheduleAirdrop', (airdropId: string, durationMs: number) => {
+  logger.info(`Scheduling precise settlement for ${airdropId} in ${durationMs}ms`);
+  setTimeout(() => {
+    // Re-fetch client to be safe, though closure captures it
+    // We need to fetch the airdrop object first since settleAirdrop expects it
+    // Actually, settleExpiredAirdrops finds it.
+    // We should expose a method to settle specific ID.
+    airdropService.settleAirdropById(airdropId, client);
+  }, durationMs);
+});
+
+// Store commands in a collection
+client.commands = new Collection();
+
+// Load commands
+const commandsPath = path.join(__dirname, 'commands');
+const commandFiles = fs
+  .readdirSync(commandsPath)
+  .filter((file) => (file.endsWith('.ts') || file.endsWith('.js')) && !file.endsWith('.d.ts'));
+
+const commands: object[] = [];
+
+for (const file of commandFiles) {
+  const filePath = path.join(commandsPath, file);
+  const command = require(filePath);
+
+  if ('data' in command && 'execute' in command) {
+    client.commands.set(command.data.name, command);
+    commands.push(command.data.toJSON());
+    logger.info(`Loaded command: ${command.data.name}`);
+  } else {
+    logger.warn(`The command at ${filePath} is missing required properties.`);
+  }
+}
+
+// Register commands with Discord
+const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN!);
+
+async function registerCommands(): Promise<void> {
+  try {
+    logger.info(`Started refreshing ${commands.length} application (/) commands.`);
+
+    const data = await rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID!), {
+      body: commands,
+    });
+
+    logger.info(`Successfully reloaded ${(data as any[]).length} application (/) commands.`);
+  } catch (error) {
+    logger.error('Error registering commands:', error);
+    Sentry.captureException(error);
+  }
+}
+
+// Register commands without blocking startup
+registerCommands().catch((err) => {
+  logger.error('Command registration failed (non-fatal):', err);
+});
+
+client.once('clientReady', () => {
+  logger.info(`Bot logged in as ${client.user?.tag}`);
+
+  // Initialize Transaction Worker
+  initTransactionWorker(client);
+  logger.info('Transaction worker initialized');
+
+  // Initialize Airdrop Event Handler (for API-created airdrops)
+  new AirdropEventHandler(client);
+  logger.info('Airdrop event handler initialized');
+
+  // Schedule airdrop settlement (every 10 seconds for responsiveness)
+  setInterval(() => {
+    airdropService.settleExpiredAirdrops(client);
+  }, 10 * 1000);
+});
+
+client.on('interactionCreate', async (interaction) => {
+  // Handle Buttons
+  if (interaction.isButton()) {
+    if (interaction.customId === 'balance_deposit') {
+      await handleBalanceDeposit(interaction);
+      return;
+    }
+    if (interaction.customId === 'balance_withdraw') {
+      await handleBalanceWithdraw(interaction);
+      return;
+    }
+    if (interaction.customId === 'balance_history') {
+      await handleBalanceHistory(interaction);
+      return;
+    }
+
+    if (interaction.customId.startsWith('claim_airdrop_')) {
+      const airdropId = interaction.customId.replace('claim_airdrop_', '');
+      await airdropService.handleClaim(interaction, airdropId);
+    }
+    return;
+  }
+
+  // Handle Select Menus
+  if (interaction.isStringSelectMenu()) {
+    const handled = await handleTipSelectMenu(interaction);
+    if (handled) return;
+    return;
+  }
+
+  /*
+  // User Select Menus disabled
+  if (interaction.isUserSelectMenu()) {
+    const handled = await handleTipUserSelect(interaction);
+    if (handled) return;
+    return;
+  }
+  */
+
+  // Handle Modals
+  if (interaction.isModalSubmit()) {
+    if (interaction.customId === 'withdraw_modal') {
+      await handleWithdrawModal(interaction);
+      return;
+    }
+
+    // Handle /send and /withdraw form modals
+    if (
+      interaction.customId === 'send_form' ||
+      interaction.customId.startsWith('send_amount_form_')
+    ) {
+      await handleSendFormModal(interaction);
+      return;
+    }
+
+    const handled = await handleTipModal(interaction);
+    if (handled) return;
+    return;
+  }
+
+  // Handle Context Menu Commands
+  if (interaction.isUserContextMenuCommand()) {
+    const command = client.commands.get(interaction.commandName);
+    if (command && 'execute' in command) {
+      try {
+        await command.execute(interaction);
+      } catch (error) {
+        logger.error(`Error executing context menu ${interaction.commandName}:`, error);
+        Sentry.captureException(error, {
+          tags: {
+            command: interaction.commandName,
+            userId: interaction.user.id,
+            guildId: interaction.guild?.id,
+          },
+        });
+      }
+    }
+    return;
+  }
+
+  if (!interaction.isChatInputCommand()) return;
+
+  const command = client.commands.get(interaction.commandName);
+
+  if (!command) {
+    logger.error(`No command matching ${interaction.commandName} was found.`);
+    return;
+  }
+
+  try {
+    await command.execute(interaction);
+  } catch (error) {
+    logger.error(`Error executing ${interaction.commandName}:`, error);
+
+    // Capture error in Sentry with context
+    Sentry.captureException(error, {
+      tags: {
+        command: interaction.commandName,
+        userId: interaction.user.id,
+        guildId: interaction.guild?.id,
+      },
+    });
+
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({
+          content: 'There was an error while executing this command!',
+          ephemeral: true,
+        });
+      } else {
+        await interaction.reply({
+          content: 'There was an error while executing this command!',
+          ephemeral: true,
+        });
+      }
+    } catch (replyError) {
+      logger.error('Failed to send error message:', replyError);
+    }
+  }
+});
+
+client.login(process.env.DISCORD_BOT_TOKEN).catch((err) => {
+  logger.error('Failed to login to Discord:', err);
+  process.exit(1);
+});

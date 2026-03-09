@@ -1,0 +1,151 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  discordId         String   @id
+  walletPubkey      String   @unique
+  encryptedPrivkey  String
+  keySalt           String
+  encryptedMnemonic String?
+  mnemonicSalt      String?
+  seedDelivered     Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  lastActive        DateTime @updatedAt
+
+  sentTips          Transaction[] @relation("SentTips")
+  receivedTips      Transaction[] @relation("ReceivedTips")
+  airdropsCreated   Airdrop[]     @relation("Creator")
+  participations    AirdropParticipant[]
+
+  @@index([walletPubkey])
+}
+
+model Transaction {
+  id                String   @id @default(uuid())
+  signature         String   @unique
+  fromId            String?
+  toId              String?
+  fromAddress       String?
+  toAddress         String?
+  from              User?    @relation("SentTips", fields: [fromId], references: [discordId])
+  to                User?    @relation("ReceivedTips", fields: [toId], references: [discordId])
+  amountUsd         Decimal  @db.Decimal(10, 2)
+  amountToken       Decimal  @db.Decimal(20, 9)
+  tokenMint         String
+  usdRate           Decimal  @db.Decimal(20, 9)
+  txType            TxType
+  status            TxStatus
+  createdAt         DateTime @default(now())
+
+  @@index([fromId, createdAt])
+  @@index([toId, createdAt])
+  @@index([status])
+}
+
+model Airdrop {
+  id                String   @id @default(uuid())
+  walletPubkey      String   @unique // Ephemeral wallet public key
+  encryptedPrivkey  String   // Ephemeral private key (encrypted)
+  keySalt           String   // Encryption salt
+  creatorId         String
+  creator           User     @relation("Creator", fields: [creatorId], references: [discordId])
+  amountTotal       Decimal  @db.Decimal(20, 9)
+  amountClaimed     Decimal  @default(0) @db.Decimal(20, 9)
+  tokenMint         String
+  maxParticipants   Int?     // Optional cap
+  participantCount  Int      @default(0)
+  status            AirdropStatus @default(ACTIVE)
+  expiresAt         DateTime
+  settledAt         DateTime?
+  cleanedUpAt       DateTime? // Timestamp when residual funds were drained
+  createdAt         DateTime @default(now())
+  channelId         String   // Channel where airdrop was created
+  messageId         String?  // ID of the embed message
+
+  participants      AirdropParticipant[]
+
+  @@index([status, expiresAt])
+  @@index([creatorId])
+  @@index([cleanedUpAt])
+}
+
+model AirdropParticipant {
+  id          String   @id @default(uuid())
+  airdropId   String
+  airdrop     Airdrop  @relation(fields: [airdropId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [discordId])
+  shareAmount Decimal  @db.Decimal(20, 9)
+  claimedAt   DateTime @default(now())
+  status      ParticipantStatus @default(PENDING)
+  txSignature String?
+
+  @@unique([airdropId, userId])
+  @@index([userId])
+}
+
+enum TxType {
+  TIP
+  DEPOSIT
+  WITHDRAWAL
+  AIRDROP_CLAIM
+}
+
+enum TxStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum AirdropStatus {
+  ACTIVE
+  SETTLING   // Distribution in progress — prevents double-processing
+  EXPIRED
+  SETTLED
+  FAILED     // Settlement failed permanently
+  RECLAIMED
+}
+
+enum ParticipantStatus {
+  PENDING
+  TRANSFERRED
+}
+
+model GuildSettings {
+  guildId       String   @id
+  prefix        String   @default("%")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([prefix])
+}
+
+model ApiKey {
+  id String @id @default(uuid())
+  key String @unique
+  discordId String
+  name String @default("Default")
+  lastUsedAt DateTime?
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+
+  @@index([discordId])
+  @@index([key])
+}
+
+model AirdropPoolWallet {
+  address String @id
+  encryptedPrivkey String
+  keySalt String
+  isBusy Boolean @default(false)
+  lastUsedAt DateTime @default(now())
+
+  @@index([isBusy, lastUsedAt])
+}
