@@ -1,0 +1,48 @@
+FROM node:20-alpine AS base
+
+# Install dependencies and build tools for native modules (bigint-buffer, etc.)
+RUN apk add --no-cache libc6-compat openssl python3 make g++
+
+WORKDIR /app
+
+# Copy source code first
+COPY . .
+
+# Install dependencies and global prisma (matching project version)
+# We need pnpm globally to run pnpm commands
+# Use --force to avoid interactive prompts in Docker
+RUN npm install -g pnpm && pnpm install --force
+
+# Build dependencies in correct order (database -> solana -> shared)
+RUN pnpm --filter fattips-database generate
+RUN pnpm --filter fattips-database build
+RUN pnpm --filter fattips-solana build
+RUN pnpm --filter fattips-shared build
+
+# Build the application
+RUN pnpm --filter fattips-bot build
+
+# Production image
+FROM node:20-alpine AS runner
+RUN apk add --no-cache openssl
+
+# Install pnpm for runtime scripts (migrations etc)
+RUN npm install -g pnpm
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Copy everything from base to ensure all dependencies and symlinks are preserved
+COPY --from=base /app .
+
+# Don't run as root
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 botuser
+USER botuser
+
+EXPOSE 3000
+
+# Update CMD to point to the correct path inside /app
+# The directory structure is preserved inside the container (apps/bot)
+CMD ["node", "apps/bot/dist/index.js"]

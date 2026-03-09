@@ -1,0 +1,134 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fattips-db
+    restart: unless-stopped
+    # Note: postgres:alpine runs as 'postgres' user (UID 70) by default
+    environment:
+      POSTGRES_USER: fattips_user
+      POSTGRES_DB: fattips
+    env_file:
+      - .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Port not exposed externally - containers connect via internal Docker network
+    # This allows nftables firewall to properly block external access
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U fattips_user -d fattips']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: 'journald'
+      options:
+        tag: '{{.Name}}'
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    image: redis:7-alpine
+    container_name: fattips-redis
+    restart: unless-stopped
+    # Note: redis:alpine runs as 'redis' user (UID 100) by default
+    volumes:
+      - redis_data:/data
+    # Port not exposed externally - containers connect via internal Docker network
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: 'journald'
+      options:
+        tag: '{{.Name}}'
+    security_opt:
+      - no-new-privileges:true
+
+  bot:
+    image: fattips-bot:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bot
+    container_name: fattips-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://fattips_user:${POSTGRES_PASSWORD}@postgres:5432/fattips
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs/bot:/app/apps/bot/logs
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
+
+  api:
+    image: fattips-api:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: fattips-api
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3001:3001'
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DATABASE_URL=postgresql://fattips_user:${POSTGRES_PASSWORD}@postgres:5432/fattips
+      - REDIS_HOST=redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: 'journald'
+      options:
+        tag: '{{.Name}}'
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres_data:
+  redis_data:

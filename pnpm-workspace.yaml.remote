@@ -1,0 +1,8 @@
+packages:
+  - 'api'
+  - 'bot'
+  - 'database'
+  - 'shared'
+  - 'solana'
+  - 'web'
+  - 'programs/*'
