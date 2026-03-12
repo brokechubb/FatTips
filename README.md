@@ -120,6 +120,15 @@ We take security seriously because we are dealing with real value.
 
 ## 🚀 Getting Started
 
+### Add to Discord
+
+Add FatTips to your server or install as a personal app:
+
+[**https://discord.com/oauth2/authorize?client_id=1469150968615669761**](https://discord.com/oauth2/authorize?client_id=1469150968615669761)
+
+- **Server Bot:** Add to any server you manage
+- **User App:** Install to your personal account and use in any server or DM
+
 ### Installation (Self-Host)
 
 FatTips is open source and can be self-hosted.
