@@ -80,6 +80,17 @@ Keep track of your spending and earnings.
 ### 5. Wallet Management
 
 ```
+/balance # Check balance & address
+/deposit # Get deposit address with QR code
+/wallet action:create # Create a new wallet
+/wallet action:export # Export recovery phrase (DM)
+/wallet action:clear-dms # Delete bot DMs for privacy
+/help # List all commands
+```
+
+### 6. QR Code Deposits 🆕
+
+Use `/deposit` or `fdeposit` to get a QR code for your wallet address. Scan with any Solana wallet app (Phantom, Solflare, etc.) to deposit easily.
 
 /balance # Check balance & address
 /wallet action:create # Create a new wallet
@@ -87,7 +98,7 @@ Keep track of your spending and earnings.
 /wallet action:clear-dms # Delete bot DMs for privacy
 /help # List all commands
 
-```
+````
 
 ### 6. User-Installed App 🆕
 
@@ -138,7 +149,7 @@ FatTips is open source and can be self-hosted.
    ```bash
    git clone https://github.com/brokechubb/FatTips.git
    cd FatTips
-   ```
+````
 
 2. **Install Dependencies**
 
