@@ -392,8 +392,8 @@ pnpm build
 - [ ] Git history clean
 - [ ] SECURITY.md published
 
-**Reviewed by:** ********\_********  
-**Date:** ********\_********
+**Reviewed by:** **\*\*\*\***\_**\*\*\*\***  
+**Date:** **\*\*\*\***\_**\*\*\*\***
 
 ### Code Quality Review
 
@@ -402,8 +402,8 @@ pnpm build
 - [ ] Documentation complete
 - [ ] Build successful
 
-**Reviewed by:** ********\_********  
-**Date:** ********\_********
+**Reviewed by:** **\*\*\*\***\_**\*\*\*\***  
+**Date:** **\*\*\*\***\_**\*\*\*\***
 
 ### Final Approval
 
@@ -411,7 +411,7 @@ pnpm build
 - [ ] Ready for public release
 
 **Approved by:** @brokechubb  
-**Date:** ********\_********
+**Date:** **\*\*\*\***\_**\*\*\*\***
 
 ---
 

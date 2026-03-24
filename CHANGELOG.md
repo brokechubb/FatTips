@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- QR code for deposit addresses - scan with mobile wallet to deposit easily
+- Privacy Policy and Terms of Service documentation
+
+### Changed
+
+- Deposit command now shows QR code with embedded address (slash, prefix, and balance interaction)
+- Code formatting improvements across transaction handlers
+
+### Removed
+
+- Temporary development documentation files (GIT_CLEANUP_INSTRUCTIONS.md, RELEASE_READINESS_SUMMARY.md, SECURITY.md, SECURITY_AUDIT.md)
+
 ## [0.1.0] - 2026-02-12
 
 ### Added

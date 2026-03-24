@@ -135,14 +135,21 @@ async function main() {
               } catch {
                 tx.add(
                   createAssociatedTokenAccountInstruction(
-                    keypair.publicKey, destAta, destPubkey, mintPubkey
+                    keypair.publicKey,
+                    destAta,
+                    destPubkey,
+                    mintPubkey
                   )
                 );
               }
-              tx.add(createTransferInstruction(sourceAta, destAta, keypair.publicKey, tokenBalance));
+              tx.add(
+                createTransferInstruction(sourceAta, destAta, keypair.publicKey, tokenBalance)
+              );
               const sig = await sendAndConfirmTransaction(connection, tx, [keypair]);
               const humanAmount = tokenBalance / 1e6;
-              console.log(`${colors.green}  ✅ Swept ${humanAmount.toFixed(2)} ${tokenName}${colors.reset}`);
+              console.log(
+                `${colors.green}  ✅ Swept ${humanAmount.toFixed(2)} ${tokenName}${colors.reset}`
+              );
               totalDrained += humanAmount; // Approximate as USD for summary
             }
           } catch (e) {

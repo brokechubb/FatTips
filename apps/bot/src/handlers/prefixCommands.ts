@@ -9,6 +9,7 @@ import {
   ButtonStyle,
   ChannelType,
   ComponentType,
+  AttachmentBuilder,
 } from 'discord.js';
 import { Connection } from '@solana/web3.js';
 import { prisma } from 'fattips-database';
@@ -25,6 +26,7 @@ import { AirdropPoolService } from 'fattips-shared';
 import { activityService } from '../services/activity';
 import { transactionQueue, generateJobId } from '../queues/transaction.queue';
 import { sendPrivateKeyDM, scheduleKeyRedaction } from '../utils/keyCleanup';
+import { generateDepositQR } from '../utils/qr';
 
 const poolService = new AirdropPoolService();
 
@@ -1843,7 +1845,22 @@ async function handleDeposit(message: Message, prefix: string) {
     return;
   }
 
-  await message.reply(
-    `**Your Deposit Address:**\n\`\`\`\n${user.walletPubkey}\n\`\`\`\nSend SOL, USDC, or USDT to this address to fund your wallet.`
-  );
+  const qrBuffer = await generateDepositQR(user.walletPubkey);
+  const attachment = new AttachmentBuilder(qrBuffer, { name: 'deposit-qr.png' });
+
+  const embed = new EmbedBuilder()
+    .setTitle('Your Deposit Address')
+    .setImage('attachment://deposit-qr.png')
+    .addFields({
+      name: 'Address',
+      value: `\`\`\`\n${user.walletPubkey}\n\`\`\``,
+    })
+    .setDescription('Scan with your wallet app or copy the address above to deposit.')
+    .setColor(0x00aaff)
+    .setTimestamp();
+
+  await message.reply({
+    embeds: [embed],
+    files: [attachment],
+  });
 }

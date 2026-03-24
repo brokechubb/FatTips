@@ -13,17 +13,17 @@ const colors = {
 
 async function checkAllTokens(connection, walletPubkey) {
   const pubkey = new PublicKey(walletPubkey);
-  
+
   // SOL balance
   const solBalance = await connection.getBalance(pubkey, 'confirmed');
-  
+
   // Token accounts
   const tokenAccounts = await connection.getParsedTokenAccountsByOwner(pubkey, {
-    programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
+    programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
   });
 
   const tokens = [];
-  tokenAccounts.value.forEach(account => {
+  tokenAccounts.value.forEach((account) => {
     const info = account.account.data.parsed.info;
     const mint = info.mint;
     const amount = info.tokenAmount.uiAmount;
@@ -34,7 +34,7 @@ async function checkAllTokens(connection, walletPubkey) {
 
   return {
     sol: solBalance / 1e9,
-    tokens
+    tokens,
   };
 }
 
@@ -56,18 +56,18 @@ async function main() {
       const wallet = wallets[i];
       try {
         const balances = await checkAllTokens(connection, wallet.address);
-        
+
         if (balances.sol > 0.001 || balances.tokens.length > 0) {
           console.log(`Wallet ${wallet.address}:`);
           console.log(`  SOL: ${balances.sol}`);
-          balances.tokens.forEach(t => {
+          balances.tokens.forEach((t) => {
             console.log(`  Token ${t.mint}: ${t.amount}`);
           });
         }
       } catch (err) {
         console.log(`Error checking ${wallet.address}: ${err.message}`);
       }
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 500));
     }
   } finally {
     await pgClient.end();

@@ -204,7 +204,7 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
     const msgContent = isAdjusted
       ? '✅ Tip Queued! Amount adjusted to fit balance. Watch the channel for confirmation.'
       : '✅ Tip Queued! Watch the channel for confirmation.';
-    
+
     await interaction.editReply({ content: msgContent });
 
     // Send PUBLIC placeholder for the worker to update
@@ -212,7 +212,9 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
     let publicMsg;
     if (interaction.channel) {
       try {
-        publicMsg = await (interaction.channel as TextChannel).send(`💸 **${interaction.user.username}** is sending a tip...`);
+        publicMsg = await (interaction.channel as TextChannel).send(
+          `💸 **${interaction.user.username}** is sending a tip...`
+        );
       } catch (err) {
         // If we can't send to channel, worker will likely fail to notify too, but transaction proceeds
         console.error('Failed to send public placeholder:', err);
@@ -241,10 +243,10 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
     if (newWalletKey) {
       const { sendPrivateKeyDM } = require('../utils/keyCleanup');
       const targetUser = await interaction.client.users.fetch(targetUserId);
-      const msg = 
-          `🆕 **New Wallet Created**\n` +
-          `A new wallet was created for you to receive this tip!\n\n` +
-          `**🔐 Private Key:**\n\`\`\`\n${newWalletKey}\n\`\`\`\n*Self-destructs in 15m.*`;
+      const msg =
+        `🆕 **New Wallet Created**\n` +
+        `A new wallet was created for you to receive this tip!\n\n` +
+        `**🔐 Private Key:**\n\`\`\`\n${newWalletKey}\n\`\`\`\n*Self-destructs in 15m.*`;
 
       await sendPrivateKeyDM(
         interaction.client as any,

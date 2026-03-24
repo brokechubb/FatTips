@@ -18,11 +18,14 @@ async function main() {
   console.log(`Found ${airdrops.length} existing airdrop records.`);
 
   // 2. Extract unique wallets
-  const uniqueWallets = new Map<string, { encryptedPrivkey: string; keySalt: string; isBusy: boolean }>();
+  const uniqueWallets = new Map<
+    string,
+    { encryptedPrivkey: string; keySalt: string; isBusy: boolean }
+  >();
 
   for (const ad of airdrops) {
     const isBusy = ad.status === 'ACTIVE' || ad.status === 'PENDING';
-    
+
     // If we already saw this wallet, update busy status if current record is active
     if (uniqueWallets.has(ad.walletPubkey)) {
       if (isBusy) {
