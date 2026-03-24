@@ -763,11 +763,7 @@ GET /api/activity/active-users?channelId=123456789012345678&minutes=15
   "channelId": "123456789012345678",
   "minutes": 15,
   "count": 10,
-  "users": [
-    "123456789",
-    "987654321",
-    "111222333"
-  ]
+  "users": ["123456789", "987654321", "111222333"]
 }
 ```
 
@@ -822,7 +818,6 @@ GET /api/activity/count?channelId=123456789012345678&minutes=15
   "count": 10
 }
 ```
-
 
 ---
 
@@ -1048,3 +1043,4 @@ const swap = await fetch('https://codestats.gg/api/swap/execute', {
     amountType: 'token',
   }),
 });
+```

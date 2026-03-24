@@ -89,7 +89,9 @@ export class TransactionService {
         );
         const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
         if (confirmation.value.err) {
-          throw new Error(`Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+          throw new Error(
+            `Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`
+          );
         }
         return signature;
       } catch (error: any) {
@@ -155,7 +157,9 @@ export class TransactionService {
       );
       const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
       if (confirmation.value.err) {
-        throw new Error(`Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+        throw new Error(
+          `Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`
+        );
       }
       return signature;
     } catch (error: any) {
@@ -204,7 +208,9 @@ export class TransactionService {
       );
       const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
       if (confirmation.value.err) {
-        throw new Error(`Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+        throw new Error(
+          `Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`
+        );
       }
       return signature;
     } catch (error: any) {
@@ -276,7 +282,9 @@ export class TransactionService {
       );
       const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
       if (confirmation.value.err) {
-        throw new Error(`Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+        throw new Error(
+          `Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`
+        );
       }
       return signature;
     } catch (error: any) {

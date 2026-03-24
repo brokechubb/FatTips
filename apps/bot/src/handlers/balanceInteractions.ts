@@ -6,6 +6,7 @@ import {
   TextInputStyle,
   ActionRowBuilder,
   ModalSubmitInteraction,
+  AttachmentBuilder,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { PublicKey } from '@solana/web3.js';
@@ -19,6 +20,7 @@ import {
 } from 'fattips-solana';
 import { logTransaction } from '../utils/logger';
 import { transactionQueue } from '../queues/transaction.queue';
+import { generateDepositQR } from '../utils/qr';
 
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
@@ -44,8 +46,23 @@ export async function handleBalanceDeposit(interaction: ButtonInteraction) {
       return;
     }
 
+    const qrBuffer = await generateDepositQR(user.walletPubkey);
+    const attachment = new AttachmentBuilder(qrBuffer, { name: 'deposit-qr.png' });
+
+    const embed = new EmbedBuilder()
+      .setTitle('Your Deposit Address')
+      .setImage('attachment://deposit-qr.png')
+      .addFields({
+        name: 'Address',
+        value: `\`\`\`\n${user.walletPubkey}\n\`\`\``,
+      })
+      .setDescription('Scan with your wallet app or copy the address above to deposit.')
+      .setColor(0x00aaff)
+      .setTimestamp();
+
     await interaction.editReply({
-      content: `**Your Deposit Address:**\n\`\`\`\n${user.walletPubkey}\n\`\`\`\nSend SOL, USDC, or USDT to this address to fund your wallet.`,
+      embeds: [embed],
+      files: [attachment],
     });
   } catch (error) {
     console.error('Error handling balance deposit:', error);

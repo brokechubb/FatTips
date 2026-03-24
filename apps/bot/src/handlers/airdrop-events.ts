@@ -88,7 +88,11 @@ export class AirdropEventHandler {
         )
         .setColor(0x00ff00)
         .addFields(
-          { name: 'Pot Size', value: `${event.potSize.toFixed(2)} ${event.token} (~$${event.totalUsd.toFixed(2)})`, inline: true },
+          {
+            name: 'Pot Size',
+            value: `${event.potSize.toFixed(2)} ${event.token} (~$${event.totalUsd.toFixed(2)})`,
+            inline: true,
+          },
           {
             name: 'Max Winners',
             value: event.maxWinners ? `${event.maxWinners}` : 'Unlimited',

@@ -1,4 +1,12 @@
-import { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel } from 'discord.js';
+import {
+  Client,
+  GatewayIntentBits,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  TextChannel,
+} from 'discord.js';
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
 
@@ -12,7 +20,7 @@ async function main() {
 
   const airdrop = await prisma.airdrop.findUnique({
     where: { id: AIRDROP_ID },
-    include: { creator: true }
+    include: { creator: true },
   });
 
   if (!airdrop) {
@@ -31,12 +39,16 @@ async function main() {
     console.log(`✅ Logged in as ${client.user?.tag}`);
 
     try {
-      const channel = await client.channels.fetch(airdrop.channelId) as TextChannel;
+      const channel = (await client.channels.fetch(airdrop.channelId)) as TextChannel;
       if (!channel) throw new Error('Channel not found');
 
       const amountToken = Number(airdrop.amountTotal);
-      const tokenSymbol = airdrop.tokenMint.includes('EPjFW') ? 'USDC' : (airdrop.tokenMint.includes('Es9vM') ? 'USDT' : 'SOL');
-      
+      const tokenSymbol = airdrop.tokenMint.includes('EPjFW')
+        ? 'USDC'
+        : airdrop.tokenMint.includes('Es9vM')
+          ? 'USDT'
+          : 'SOL';
+
       // Estimate USD (rough estimate for recovery message)
       const usdValue = 0; // We don't need exact USD for the repost
 
@@ -54,7 +66,11 @@ async function main() {
         .setColor(0x00ff00)
         .addFields(
           { name: 'Pot Size', value: `${amountToken.toFixed(2)} ${tokenSymbol}`, inline: true },
-          { name: 'Max Winners', value: airdrop.maxParticipants ? `${airdrop.maxParticipants}` : 'Unlimited', inline: true }
+          {
+            name: 'Max Winners',
+            value: airdrop.maxParticipants ? `${airdrop.maxParticipants}` : 'Unlimited',
+            inline: true,
+          }
         )
         .setFooter({ text: 'Funds are held securely in a temporary wallet. (Recovered)' });
 
@@ -65,17 +81,17 @@ async function main() {
           .setStyle(ButtonStyle.Success)
       );
 
-      const message = await channel.send({ 
+      const message = await channel.send({
         content: `⚠️ **Airdrop Restored:** Due to a network glitch, this airdrop was delayed. It is now active!`,
-        embeds: [embed], 
-        components: [row] 
+        embeds: [embed],
+        components: [row],
       });
 
       console.log(`✅ Message sent! ID: ${message.id}`);
 
       await prisma.airdrop.update({
         where: { id: airdrop.id },
-        data: { messageId: message.id }
+        data: { messageId: message.id },
       });
 
       console.log('✅ DB Updated with messageId.');

@@ -489,7 +489,11 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     )
     .setColor(0x00ff00)
     .addFields(
-      { name: 'Pot Size', value: `${amountToken.toFixed(2)} ${tokenSymbol} (~$${usdValue.toFixed(2)})`, inline: true },
+      {
+        name: 'Pot Size',
+        value: `${amountToken.toFixed(2)} ${tokenSymbol} (~$${usdValue.toFixed(2)})`,
+        inline: true,
+      },
       { name: 'Max Winners', value: maxWinners ? `${maxWinners}` : 'Unlimited', inline: true }
     )
     .setFooter({ text: 'Funds are held securely in a temporary wallet.' });

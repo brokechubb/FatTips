@@ -24,19 +24,18 @@ async function main() {
           balances.push({
             discordId: user.discordId,
             address: user.walletPubkey,
-            sol: bal / 1e9
+            sol: bal / 1e9,
           });
         }
       } catch (err) {}
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
     }
 
     balances.sort((a, b) => b.sol - a.sol);
     process.stdout.write('\nTop funded user wallets:\n');
-    balances.forEach(b => {
+    balances.forEach((b) => {
       process.stdout.write(`${b.discordId} (${b.address}): ${b.sol.toFixed(9)} SOL\n`);
     });
-
   } finally {
     await pgClient.end();
   }

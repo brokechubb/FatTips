@@ -80,9 +80,8 @@ export function initTransactionWorker(client: Client) {
 
         // Re-verify balance just before execution to prevent TOCTOU race conditions
         const balances = await balanceService.getBalances(sender.walletPubkey);
-        const totalAmount = type === 'WITHDRAWAL'
-          ? amountPerUser
-          : amountPerUser * (recipientWallets.length || 1);
+        const totalAmount =
+          type === 'WITHDRAWAL' ? amountPerUser : amountPerUser * (recipientWallets.length || 1);
 
         const MIN_RENT_EXEMPTION = 0.00089088;
         const FEE_BUFFER = 0.00002;
@@ -90,13 +89,12 @@ export function initTransactionWorker(client: Client) {
         if (tokenMint === TOKEN_MINTS.SOL) {
           // For withdrawals, the command handler already subtracted fees from the amount,
           // so only check that we have enough for the transfer itself
-          const required = type === 'WITHDRAWAL'
-            ? totalAmount
-            : totalAmount + FEE_BUFFER + MIN_RENT_EXEMPTION;
+          const required =
+            type === 'WITHDRAWAL' ? totalAmount : totalAmount + FEE_BUFFER + MIN_RENT_EXEMPTION;
           if (balances.sol < required) {
             throw new Error(
               `Insufficient SOL at execution time. Need ${required.toFixed(6)}, have ${balances.sol.toFixed(6)}. ` +
-              `Balance may have changed since the command was issued.`
+                `Balance may have changed since the command was issued.`
             );
           }
         } else {
@@ -104,7 +102,7 @@ export function initTransactionWorker(client: Client) {
           if (tokenBal < totalAmount) {
             throw new Error(
               `Insufficient ${tokenSymbol} at execution time. Need ${totalAmount.toFixed(6)}, have ${tokenBal.toFixed(6)}. ` +
-              `Balance may have changed since the command was issued.`
+                `Balance may have changed since the command was issued.`
             );
           }
           if (balances.sol < FEE_BUFFER) {
@@ -283,14 +281,18 @@ export function initTransactionWorker(client: Client) {
               try {
                 const originalMsg = await channel.messages.fetch(messageId);
                 if (originalMsg.author.id === client.user?.id) {
-                  await originalMsg.edit(`❌ Transaction failed for <@${senderDiscordId}>: ${userErrorMessage}`);
+                  await originalMsg.edit(
+                    `❌ Transaction failed for <@${senderDiscordId}>: ${userErrorMessage}`
+                  );
                 } else {
                   await originalMsg.reply(`❌ Transaction failed: ${userErrorMessage}`);
                 }
               } catch (msgError) {
                 // If original message deleted, maybe send fresh one? Or just log.
                 // Sending fresh one is safer to notify user.
-                await channel.send(`❌ Transaction failed for <@${senderDiscordId}>: ${userErrorMessage}`);
+                await channel.send(
+                  `❌ Transaction failed for <@${senderDiscordId}>: ${userErrorMessage}`
+                );
               }
             }
           } catch {}

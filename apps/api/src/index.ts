@@ -34,7 +34,7 @@ const globalLimiter = rateLimit({
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.headers['x-api-key'] as string || 'unknown',
+  keyGenerator: (req) => (req.headers['x-api-key'] as string) || 'unknown',
   message: { error: 'Too many requests. Please try again later.' },
 });
 
@@ -44,7 +44,7 @@ const financialLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.headers['x-api-key'] as string || 'unknown',
+  keyGenerator: (req) => (req.headers['x-api-key'] as string) || 'unknown',
   message: { error: 'Too many financial requests. Please slow down.' },
 });
 
