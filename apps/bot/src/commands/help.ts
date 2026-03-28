@@ -23,7 +23,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const embed = new EmbedBuilder()
     .setTitle('🤖 FatTips Help')
     .setDescription(
-      'FatTips is a non-custodial Solana tipping bot. You own your keys, we just make it easy to tip!\n\n' +
+      'FatTips is a non-custodial Solana tipping bot. NO transaction fees. You own your keys. The way it should be!\n\n' +
         (isGuild
           ? `**Prefix Commands:** Use \`${prefix}\` prefix (recommended for guilds)\n` +
             `**Slash Commands:** Also available with \`/\` prefix\n\n` +
@@ -76,6 +76,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           `\`${prefix}history\` - View your last 5 transactions.\n` +
           `\`${prefix}setprefix <new>\` - Change server prefix (Admin only).\n` +
           `*Slash:* \`/history\``,
+      },
+      {
+        name: '🆘 Support',
+        value: 'Need help? Join **CTRL-ALT-DEGEN** on Discord: https://discord.gg/9wArQgz6cB',
       }
     );
   } else {
@@ -109,11 +113,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       {
         name: '📜 History',
         value: '`/history` - View your last 5 transactions.',
+      },
+      {
+        name: '🆘 Support',
+        value: 'Need help? Join **CTRL-ALT-DEGEN** on Discord: https://discord.gg/9wArQgz6cB',
       }
     );
   }
 
-  embed.setFooter({ text: 'Not your keys, not your coins (but here, they ARE your keys!)' });
+  embed.setFooter({
+    text: 'Not your keys, not your coins (but here, they ARE your keys!) • Support: discord.gg/9wArQgz6cB',
+  });
 
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }

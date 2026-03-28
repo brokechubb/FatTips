@@ -100,6 +100,10 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
       usdValue = price ? amount * price.price : 0;
     }
 
+    // Round to token precision to eliminate floating-point epsilon artifacts
+    const TOKEN_DECIMALS = token === 'SOL' ? 9 : 6;
+    amountToken = Math.round(amountToken * 10 ** TOKEN_DECIMALS) / 10 ** TOKEN_DECIMALS;
+
     // Validate amount
     if (amountToken <= 0) {
       res.status(400).json({ error: 'Amount must be greater than 0' });
