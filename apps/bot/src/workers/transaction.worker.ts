@@ -110,6 +110,23 @@ export function initTransactionWorker(client: Client) {
           }
         }
 
+        // Helper: edit the "Processing..." message to show a congestion warning on retry
+        const onRetry = async (_attempt: number) => {
+          if (!channelId || !messageId) return;
+          try {
+            const channel = (await client.channels.fetch(channelId)) as TextChannel | null;
+            if (!channel) return;
+            const msg = await channel.messages.fetch(messageId);
+            if (msg.author.id === client.user?.id) {
+              await msg.edit(
+                `⏳ Still processing... The Solana network is experiencing congestion right now. Your transaction is being retried with a higher priority fee — hang tight.`
+              );
+            }
+          } catch {
+            // Non-critical — ignore if message is gone or inaccessible
+          }
+        };
+
         let signature: string;
 
         if (type === 'WITHDRAWAL') {
@@ -119,7 +136,7 @@ export function initTransactionWorker(client: Client) {
             targetPubkey,
             amountPerUser,
             tokenMint,
-            { priorityFee: !job.data.skipPriorityFee }
+            { priorityFee: !job.data.skipPriorityFee, onRetry }
           );
         } else if (recipientWallets.length === 1 && type !== 'RAIN') {
           // Single internal transfer
@@ -127,7 +144,8 @@ export function initTransactionWorker(client: Client) {
             senderKeypair,
             recipientWallets[0].walletPubkey,
             amountPerUser,
-            tokenMint
+            tokenMint,
+            { onRetry }
           );
         } else {
           // Batch transfer (Rain or Multi-tip)
@@ -135,7 +153,9 @@ export function initTransactionWorker(client: Client) {
             recipient: r.walletPubkey,
             amount: amountPerUser,
           }));
-          signature = await transactionService.batchTransfer(senderKeypair, transfers, tokenMint);
+          signature = await transactionService.batchTransfer(senderKeypair, transfers, tokenMint, {
+            onRetry,
+          });
         }
 
         // 4. Log Transactions
@@ -203,39 +223,69 @@ export function initTransactionWorker(client: Client) {
           }
         } else if (channelId && messageId) {
           // Only for tips/rain - edit/reply in channel
+          const userMentions = recipientWallets.map((r) => `<@${r.discordId}>`).join(', ');
+          const title = type === 'RAIN' ? '🌧️ Making it Rain!' : '💸 Tip Sent!';
+          const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setDescription(
+              `**<@${senderDiscordId}>** sent ${userMentions}\n\n` +
+                `**Amount:** ${amountPerUser.toFixed(4)} ${tokenSymbol} (~$${usdValuePerUser.toFixed(2)}) each\n` +
+                `[View on Solscan](https://solscan.io/tx/${signature})`
+            )
+            .setColor(0x00ff00)
+            .setTimestamp();
+
+          let notified = false;
           try {
-            const channel = (await client.channels.fetch(channelId)) as TextChannel;
+            const channel = (await client.channels.fetch(channelId)) as TextChannel | null;
             if (channel) {
-              const originalMsg = await channel.messages.fetch(messageId);
-              const userMentions = recipientWallets.map((r) => `<@${r.discordId}>`).join(', ');
-              const title = type === 'RAIN' ? '🌧️ Making it Rain!' : '💸 Tip Sent!';
-
-              const embed = new EmbedBuilder()
-                .setTitle(title)
-                .setDescription(
-                  `**<@${senderDiscordId}>** sent ${userMentions}\n\n` +
-                    `**Amount:** ${amountPerUser.toFixed(4)} ${tokenSymbol} (~$${usdValuePerUser.toFixed(2)}) each\n` +
-                    `[View on Solscan](https://solscan.io/tx/${signature})`
-                )
-                .setColor(0x00ff00)
-                .setTimestamp();
-
-              // If it was a "Processing..." message, edit it. Otherwise reply.
-              if (originalMsg.author.id === client.user?.id) {
-                await originalMsg.edit({ content: '', embeds: [embed] });
-              } else {
-                await originalMsg.reply({ embeds: [embed] });
+              try {
+                const originalMsg = await channel.messages.fetch(messageId);
+                // If it was a "Processing..." message, edit it. Otherwise reply.
+                if (originalMsg.author.id === client.user?.id) {
+                  await originalMsg.edit({ content: '', embeds: [embed] });
+                } else {
+                  await originalMsg.reply({ embeds: [embed] });
+                }
+                notified = true;
+              } catch (msgError: any) {
+                // 10008: Unknown Message (already deleted) — no cleanup needed, just send fresh
+                // Other codes: original message may still exist; delete it to avoid orphan
+                console.warn(
+                  `[Worker] Could not edit original message for job ${job.id} (code ${msgError.code}): falling back to channel.send`
+                );
+                await channel.send({ content: `<@${senderDiscordId}>`, embeds: [embed] });
+                notified = true;
+                if (msgError.code !== 10008) {
+                  // Best-effort delete of the stuck "Processing..." message
+                  try {
+                    const stuckMsg = await channel.messages.fetch(messageId!);
+                    await stuckMsg.delete();
+                  } catch {
+                    // Already gone or no permission — ignore
+                  }
+                }
               }
+            } else {
+              console.warn(`[Worker] Channel ${channelId} not found for job ${job.id}`);
             }
           } catch (discordError: any) {
-            // 50001: Missing Access (often due to closed DMs or blocked bot)
-            // 10008: Unknown Message (user deleted the message)
-            if (discordError.code === 50001 || discordError.code === 10008) {
-              console.warn(
-                `[Worker] Could not update notification for job ${job.id}: ${discordError.code === 50001 ? 'Missing Access (User likely blocked bot or closed DMs)' : 'Message was deleted by user'}`
+            // 50001: Missing Access
+            console.warn(
+              `[Worker] Could not post to channel ${channelId} for job ${job.id} (code ${discordError.code}): ${discordError.message}`
+            );
+          }
+
+          // Last-resort fallback: DM the sender so they know it went through
+          if (!notified) {
+            try {
+              const sender = await client.users.fetch(senderDiscordId);
+              await sender.send({ embeds: [embed] });
+            } catch (dmError: any) {
+              console.error(
+                `[Worker] Could not DM sender ${senderDiscordId} as fallback for job ${job.id}:`,
+                dmError
               );
-            } else {
-              console.error('Failed to send Discord notification:', discordError);
             }
           }
         }
@@ -272,12 +322,22 @@ export function initTransactionWorker(client: Client) {
           userErrorMessage = 'Insufficient token balance for this transaction.';
         }
 
+        // Check for network congestion / block height exceeded errors
+        if (
+          error.message?.includes('block height exceeded') ||
+          error.message?.includes('Blockhash not found') ||
+          error.message?.includes('currently congested')
+        ) {
+          userErrorMessage =
+            'The Solana network is currently congested and could not process this transaction in time. Please try again in a moment.';
+        }
+
         // Notify failure
+        let failureNotified = false;
         if (channelId && messageId) {
           try {
-            const channel = (await client.channels.fetch(channelId)) as TextChannel;
+            const channel = (await client.channels.fetch(channelId)) as TextChannel | null;
             if (channel) {
-              // Fix: Edit the "Processing..." message instead of sending a new error message
               try {
                 const originalMsg = await channel.messages.fetch(messageId);
                 if (originalMsg.author.id === client.user?.id) {
@@ -287,15 +347,47 @@ export function initTransactionWorker(client: Client) {
                 } else {
                   await originalMsg.reply(`❌ Transaction failed: ${userErrorMessage}`);
                 }
-              } catch (msgError) {
-                // If original message deleted, maybe send fresh one? Or just log.
-                // Sending fresh one is safer to notify user.
+              } catch (msgError: any) {
+                console.warn(
+                  `[Worker] Could not edit failure message for job ${job.id} (code ${msgError.code}): falling back to channel.send`
+                );
                 await channel.send(
                   `❌ Transaction failed for <@${senderDiscordId}>: ${userErrorMessage}`
                 );
+                if (msgError.code !== 10008) {
+                  // Best-effort delete of the stuck "Processing..." message
+                  try {
+                    const stuckMsg = await channel.messages.fetch(messageId!);
+                    await stuckMsg.delete();
+                  } catch {
+                    // Already gone or no permission — ignore
+                  }
+                }
               }
+              failureNotified = true;
+            } else {
+              console.warn(
+                `[Worker] Channel ${channelId} not found for failure notification, job ${job.id}`
+              );
             }
-          } catch {}
+          } catch (discordError: any) {
+            console.warn(
+              `[Worker] Could not post failure to channel ${channelId} for job ${job.id} (code ${discordError.code}): ${discordError.message}`
+            );
+          }
+        }
+
+        // Last-resort fallback: DM sender with failure
+        if (!failureNotified) {
+          try {
+            const sender = await client.users.fetch(senderDiscordId);
+            await sender.send(`❌ Transaction failed: ${userErrorMessage}`);
+          } catch (dmError: any) {
+            console.error(
+              `[Worker] Could not DM sender ${senderDiscordId} as failure fallback for job ${job.id}:`,
+              dmError
+            );
+          }
         }
 
         throw error;

@@ -395,12 +395,11 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
       }
     }
 
-    // Send processing message
+    // Show queued message — worker will DM the result, no further edit needed
     const msgContent = isAdjusted
-      ? '⏳ Processing transaction... (Amount automatically adjusted to fit available balance)'
-      : '⏳ Processing transaction...';
+      ? "✅ Withdrawal queued! (Amount adjusted to fit available balance) — you'll receive a DM when it completes."
+      : "✅ Withdrawal queued! You'll receive a DM when it completes.";
     await interaction.editReply({ content: msgContent });
-    const processingMsg = await interaction.fetchReply();
 
     // Add to Queue
     await transactionQueue.add('withdrawal', {
@@ -411,8 +410,6 @@ export async function handleWithdrawModal(interaction: ModalSubmitInteraction) {
       tokenMint,
       tokenSymbol,
       usdValuePerUser: usdValue,
-      channelId: interaction.channelId!,
-      messageId: processingMsg.id,
       skipPriorityFee: parsedAmount.type === 'max' && tokenSymbol === 'SOL',
     });
 
@@ -751,12 +748,11 @@ async function processSendTransaction(
     }
   }
 
-  // Send processing message
+  // Show queued message — worker will DM the result, no further edit needed
   const msgContent = isAdjusted
-    ? '⏳ Processing transaction... (Amount automatically adjusted to fit available balance)'
-    : '⏳ Processing transaction...';
+    ? "✅ Withdrawal queued! (Amount adjusted to fit available balance) — you'll receive a DM when it completes."
+    : "✅ Withdrawal queued! You'll receive a DM when it completes.";
   await interaction.editReply({ content: msgContent });
-  const processingMsg = await interaction.fetchReply();
 
   // Add to Queue
   await transactionQueue.add('withdrawal', {
@@ -767,8 +763,6 @@ async function processSendTransaction(
     tokenMint,
     tokenSymbol,
     usdValuePerUser: usdValue,
-    channelId: interaction.channelId!,
-    messageId: processingMsg.id,
     skipPriorityFee: parsedAmount.type === 'max' && tokenSymbol === 'SOL',
   });
 }

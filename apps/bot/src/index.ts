@@ -18,6 +18,9 @@ import {
 } from './handlers/balanceInteractions';
 import { initTransactionWorker } from './workers/transaction.worker';
 import { AirdropEventHandler } from './handlers/airdrop-events';
+import { NetworkMonitor } from 'fattips-solana';
+
+export const networkMonitor = new NetworkMonitor(process.env.SOLANA_RPC_URL!);
 
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
@@ -137,6 +140,25 @@ client.once('clientReady', () => {
   // Initialize Airdrop Event Handler (for API-created airdrops)
   new AirdropEventHandler(client);
   logger.info('Airdrop event handler initialized');
+
+  // Start Solana network monitor and keep bot presence in sync
+  networkMonitor.start();
+  logger.info('Network monitor started');
+
+  const updatePresence = () => {
+    client.user?.setPresence({
+      activities: [{ name: networkMonitor.getPresenceText() }],
+      status:
+        networkMonitor.getStatus() === 'congested'
+          ? 'dnd'
+          : networkMonitor.getStatus() === 'degraded'
+            ? 'idle'
+            : 'online',
+    });
+  };
+  // Initial presence update after first poll has had a moment to complete
+  setTimeout(updatePresence, 5000);
+  setInterval(updatePresence, 30_000);
 
   // Schedule airdrop settlement (every 10 seconds for responsiveness)
   setInterval(() => {

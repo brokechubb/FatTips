@@ -25,6 +25,7 @@ import {
 import { AirdropPoolService } from 'fattips-shared';
 import { activityService } from '../services/activity';
 import { transactionQueue, generateJobId } from '../queues/transaction.queue';
+import { networkMonitor } from '../index';
 import { sendPrivateKeyDM, scheduleKeyRedaction } from '../utils/keyCleanup';
 import { generateDepositQR } from '../utils/qr';
 
@@ -542,6 +543,10 @@ async function handleHelp(message: Message, prefix: string) {
         name: '⚙️ Info',
         value:
           `\`${p}help\` • \`${p}setprefix <new>\`\n` + `*Slash commands available for all actions*`,
+      },
+      {
+        name: '🆘 Support',
+        value: 'Need help? Join **CTRL-ALT-DEGEN** on Discord: https://discord.gg/9wArQgz6cB',
       }
     )
     .setFooter({
@@ -905,27 +910,37 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
     return;
   }
 
+  // Warn if network is degraded/congested
+  const networkWarning = networkMonitor.getWarningText();
+  if (networkWarning) await message.author.send(networkWarning).catch(() => {});
+
   // Send processing message
   const processingMsg = await message.reply('⏳ Processing transaction...');
 
   // Add to Queue
-  const jobId = generateJobId('TIP', sender.discordId, amountPerUser, tokenSymbol);
-  await transactionQueue.add(
-    'tip',
-    {
-      type: 'TIP',
-      senderDiscordId: sender.discordId,
-      senderUsername: message.author.username,
-      recipientDiscordIds: recipientWallets.map((r) => r.discordId),
-      amountPerUser,
-      tokenMint,
-      tokenSymbol,
-      usdValuePerUser: usdPerUser,
-      channelId: message.channel.id,
-      messageId: processingMsg.id,
-    },
-    { jobId }
-  );
+  try {
+    const jobId = generateJobId('TIP', sender.discordId, amountPerUser, tokenSymbol);
+    await transactionQueue.add(
+      'tip',
+      {
+        type: 'TIP',
+        senderDiscordId: sender.discordId,
+        senderUsername: message.author.username,
+        recipientDiscordIds: recipientWallets.map((r) => r.discordId),
+        amountPerUser,
+        tokenMint,
+        tokenSymbol,
+        usdValuePerUser: usdPerUser,
+        channelId: message.channel.id,
+        messageId: processingMsg.id,
+      },
+      { jobId }
+    );
+  } catch (queueError) {
+    console.error('Failed to queue tip job:', queueError);
+    await processingMsg.edit('❌ Failed to queue transaction. Please try again.').catch(() => {});
+    return;
+  }
 
   // Handle New Wallets (Send Keys immediately)
   for (const newWallet of newWallets) {
@@ -1070,27 +1085,38 @@ async function handleSend(message: Message, args: string[], prefix: string) {
     }
   }
 
-  // Send processing message
-  const processingMsg = await message.reply('⏳ Processing transaction...');
+  // Warn if network is degraded/congested
+  const networkWarning = networkMonitor.getWarningText();
+  if (networkWarning) await message.author.send(networkWarning).catch(() => {});
+
+  // Send processing message — worker sends DM on result, so reflect that here
+  const processingMsg = await message.reply(
+    "⏳ Processing withdrawal... you'll receive a DM when it completes."
+  );
 
   // Add to Queue
-  const jobId = generateJobId('WITHDRAWAL', sender.discordId, amountToken, tokenSymbol);
-  await transactionQueue.add(
-    'withdrawal',
-    {
-      type: 'WITHDRAWAL',
-      senderDiscordId: sender.discordId,
-      toAddress: address,
-      amountPerUser: amountToken,
-      tokenMint,
-      tokenSymbol,
-      usdValuePerUser: usdValue,
-      channelId: message.channel.id,
-      messageId: processingMsg.id,
-      skipPriorityFee: parsedAmount.type === 'max' && tokenSymbol === 'SOL',
-    },
-    { jobId }
-  );
+  try {
+    const jobId = generateJobId('WITHDRAWAL', sender.discordId, amountToken, tokenSymbol);
+    await transactionQueue.add(
+      'withdrawal',
+      {
+        type: 'WITHDRAWAL',
+        senderDiscordId: sender.discordId,
+        toAddress: address,
+        amountPerUser: amountToken,
+        tokenMint,
+        tokenSymbol,
+        usdValuePerUser: usdValue,
+        channelId: message.channel.id,
+        messageId: processingMsg.id,
+        skipPriorityFee: parsedAmount.type === 'max' && tokenSymbol === 'SOL',
+      },
+      { jobId }
+    );
+  } catch (queueError) {
+    console.error('Failed to queue withdrawal job:', queueError);
+    await processingMsg.edit('❌ Failed to queue withdrawal. Please try again.').catch(() => {});
+  }
 }
 
 // ============ HISTORY ============
@@ -1379,27 +1405,37 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     }
   }
 
+  // Warn if network is degraded/congested
+  const networkWarning = networkMonitor.getWarningText();
+  if (networkWarning) await message.author.send(networkWarning).catch(() => {});
+
   // Send processing message
   const processingMsg = await message.reply('⏳ Making it rain...');
 
   // Add to Queue
-  const jobId = generateJobId('RAIN', sender.discordId, amountPerUser, tokenSymbol);
-  await transactionQueue.add(
-    'rain',
-    {
-      type: 'RAIN',
-      senderDiscordId: sender.discordId,
-      senderUsername: message.author.username,
-      recipientDiscordIds: recipientWallets.map((r) => r.discordId),
-      amountPerUser,
-      tokenMint,
-      tokenSymbol,
-      usdValuePerUser: usdPerUser,
-      channelId: message.channel.id,
-      messageId: processingMsg.id,
-    },
-    { jobId }
-  );
+  try {
+    const jobId = generateJobId('RAIN', sender.discordId, amountPerUser, tokenSymbol);
+    await transactionQueue.add(
+      'rain',
+      {
+        type: 'RAIN',
+        senderDiscordId: sender.discordId,
+        senderUsername: message.author.username,
+        recipientDiscordIds: recipientWallets.map((r) => r.discordId),
+        amountPerUser,
+        tokenMint,
+        tokenSymbol,
+        usdValuePerUser: usdPerUser,
+        channelId: message.channel.id,
+        messageId: processingMsg.id,
+      },
+      { jobId }
+    );
+  } catch (queueError) {
+    console.error('Failed to queue rain job:', queueError);
+    await processingMsg.edit('❌ Failed to queue transaction. Please try again.').catch(() => {});
+    return;
+  }
 
   // Handle New Wallets (Send Keys immediately)
   for (const newWallet of newWallets) {
@@ -1546,6 +1582,11 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     usdValue = price ? amountToken * price.price : 0;
   }
 
+  // Round to token precision to eliminate floating-point epsilon artifacts
+  // (e.g. 1.297 + 0.00239 = 1.2993999...998 instead of 1.2994 due to IEEE 754)
+  const TOKEN_DECIMALS = tokenSymbol === 'SOL' ? 9 : 6;
+  amountToken = Math.round(amountToken * 10 ** TOKEN_DECIMALS) / 10 ** TOKEN_DECIMALS;
+
   // Validate amount
   if (amountToken <= 0) {
     await message.reply('❌ Amount must be greater than 0.');
@@ -1660,7 +1701,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     for (const sig of fundingSignatures) {
       await connection.confirmTransaction(sig, 'confirmed');
     }
-  } catch (confirmError) {
+  } catch (confirmError: any) {
     console.error('Transaction confirmation failed:', confirmError);
     // Release the pool wallet back if confirmation failed
     try {
@@ -1668,8 +1709,13 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     } catch (releaseError) {
       console.error('Failed to release pool wallet after confirmation failure:', releaseError);
     }
+    const isCongestion =
+      confirmError?.message?.includes('block height exceeded') ||
+      confirmError?.message?.includes('Blockhash not found');
     await message.reply(
-      '❌ Transaction confirmation failed. Please check your wallet and try again.'
+      isCongestion
+        ? '❌ The Solana network is currently congested and could not confirm the airdrop funding in time. Please try again in a moment.'
+        : '❌ Transaction confirmation failed. Please check your wallet and try again.'
     );
     return;
   }
