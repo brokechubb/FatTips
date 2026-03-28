@@ -12,8 +12,8 @@ const {
   Transaction,
   SystemProgram,
   LAMPORTS_PER_SOL,
-  sendAndConfirmTransaction,
   PublicKey,
+  ComputeBudgetProgram,
 } = require('@solana/web3.js');
 const {
   getAssociatedTokenAddress,
@@ -69,6 +69,99 @@ async function getTokenBalance(connection, walletPubkey, mint) {
   } catch {
     return 0;
   }
+}
+
+const PRIORITY_FEE_MICRO_LAMPORTS = 50_000;
+// CU budget: ATA creation ~25k, SPL transfer ~4k, SOL transfer ~450, overhead ~2k.
+// Use 60k to safely cover the worst case (ATA creation + SPL transfer).
+const CU_LIMIT = 60_000;
+
+/**
+ * Poll getSignatureStatus until confirmed/finalized or block height exceeded.
+ * Returns the signature on success, throws on failure or expiry.
+ */
+async function pollConfirmation(connection, sig, lastValidBlockHeight, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = await connection.getSignatureStatus(sig, { searchTransactionHistory: false });
+    const val = status?.value;
+    if (val) {
+      if (val.err) throw new Error(`Transaction failed on-chain: ${JSON.stringify(val.err)}`);
+      if (val.confirmationStatus === 'confirmed' || val.confirmationStatus === 'finalized') {
+        return sig;
+      }
+    }
+    // Check if the block window has passed so we don't poll forever
+    const currentHeight = await connection.getBlockHeight('confirmed');
+    if (currentHeight > lastValidBlockHeight) {
+      throw new Error('block height exceeded');
+    }
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  throw new Error('Confirmation timed out');
+}
+
+/**
+ * Build, sign, and send a transaction with priority fee + CU limit prepended.
+ * Retries with a fresh blockhash up to maxRetries times on block-height expiry.
+ * Other errors (on-chain failure, insufficient funds) throw immediately.
+ */
+async function sendWithRetry(connection, instructions, signer, maxRetries = 5) {
+  let lastError;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+
+    const tx = new Transaction();
+    // Always prepend priority fee + CU limit so validators prioritise this tx
+    tx.add(
+      ComputeBudgetProgram.setComputeUnitLimit({ units: CU_LIMIT }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_FEE_MICRO_LAMPORTS }),
+      ...instructions
+    );
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = signer.publicKey;
+    tx.sign(signer);
+
+    let sig;
+    try {
+      sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+    } catch (err) {
+      // sendRawTransaction failures (e.g. node rejection) are not expiry — throw immediately
+      throw err;
+    }
+
+    try {
+      await pollConfirmation(connection, sig, lastValidBlockHeight);
+      return sig;
+    } catch (err) {
+      lastError = err;
+      const isExpiry =
+        err.message?.includes('block height exceeded') ||
+        err.message?.includes('Block height exceeded');
+
+      if (isExpiry) {
+        // Double-check: tx may have landed even though our poll expired
+        const status = await connection.getSignatureStatus(sig, { searchTransactionHistory: true });
+        const val = status?.value;
+        if (
+          val &&
+          !val.err &&
+          (val.confirmationStatus === 'confirmed' || val.confirmationStatus === 'finalized')
+        ) {
+          return sig;
+        }
+        if (attempt < maxRetries - 1) {
+          console.log(
+            `    Block height exceeded, retrying (attempt ${attempt + 2}/${maxRetries})...`
+          );
+          await new Promise((r) => setTimeout(r, 3_000));
+          continue;
+        }
+      }
+      throw err;
+    }
+  }
+  throw lastError;
 }
 
 async function main() {
@@ -192,6 +285,8 @@ async function main() {
         const creatorPubkey = new PublicKey(row.creatorWallet);
         const signatures = [];
 
+        let anyTransferFailed = false;
+
         // Recover USDC
         if (usdcBalance > 0) {
           try {
@@ -199,14 +294,11 @@ async function main() {
             const fromTokenAccount = await getAssociatedTokenAddress(mintPubkey, pubkey);
             const toTokenAccount = await getAssociatedTokenAddress(mintPubkey, creatorPubkey);
 
-            const tx = new Transaction();
-
-            // Check if recipient token account exists
+            const ixs = [];
             try {
               await getAccount(connection, toTokenAccount);
             } catch {
-              // Create recipient token account
-              tx.add(
+              ixs.push(
                 createAssociatedTokenAccountInstruction(
                   keypair.publicKey,
                   toTokenAccount,
@@ -215,8 +307,7 @@ async function main() {
                 )
               );
             }
-
-            tx.add(
+            ixs.push(
               createTransferInstruction(
                 fromTokenAccount,
                 toTokenAccount,
@@ -225,16 +316,14 @@ async function main() {
               )
             );
 
-            const sig = await sendAndConfirmTransaction(connection, tx, [keypair], {
-              skipPreflight: true,
-              commitment: 'confirmed',
-            });
+            const sig = await sendWithRetry(connection, ixs, keypair);
             signatures.push({ token: 'USDC', amount: usdcBalance, sig });
             totalRecoveredUsdc += usdcBalance;
             console.log(
               `    ${colors.green}✓ Recovered ${usdcBalance.toFixed(2)} USDC${colors.reset}`
             );
           } catch (err) {
+            anyTransferFailed = true;
             console.log(`    ${colors.red}✗ Failed to recover USDC: ${err.message}${colors.reset}`);
           }
         }
@@ -246,12 +335,11 @@ async function main() {
             const fromTokenAccount = await getAssociatedTokenAddress(mintPubkey, pubkey);
             const toTokenAccount = await getAssociatedTokenAddress(mintPubkey, creatorPubkey);
 
-            const tx = new Transaction();
-
+            const ixs = [];
             try {
               await getAccount(connection, toTokenAccount);
             } catch {
-              tx.add(
+              ixs.push(
                 createAssociatedTokenAccountInstruction(
                   keypair.publicKey,
                   toTokenAccount,
@@ -260,8 +348,7 @@ async function main() {
                 )
               );
             }
-
-            tx.add(
+            ixs.push(
               createTransferInstruction(
                 fromTokenAccount,
                 toTokenAccount,
@@ -270,66 +357,68 @@ async function main() {
               )
             );
 
-            const sig = await sendAndConfirmTransaction(connection, tx, [keypair], {
-              skipPreflight: true,
-              commitment: 'confirmed',
-            });
+            const sig = await sendWithRetry(connection, ixs, keypair);
             signatures.push({ token: 'USDT', amount: usdtBalance, sig });
             totalRecoveredUsdt += usdtBalance;
             console.log(
               `    ${colors.green}✓ Recovered ${usdtBalance.toFixed(2)} USDT${colors.reset}`
             );
           } catch (err) {
+            anyTransferFailed = true;
             console.log(`    ${colors.red}✗ Failed to recover USDT: ${err.message}${colors.reset}`);
           }
         }
 
-        // Recover SOL (leave enough for rent + fees)
-        // Need to leave: rent exemption (0.00089) + tx fee (0.000005) + safety margin (0.0001)
-        const rentExemption = 0.00089;
-        const txFee = 0.000005;
-        const safetyMargin = 0.0001;
-        const minRequired = rentExemption + txFee + safetyMargin;
-        const recoverableSol = Math.max(0, solAmount - minRequired);
+        // Recover SOL last (it pays fees for SPL txs above).
+        // Re-fetch balance so we account for fees spent on SPL transfers above.
+        const solBalanceFresh = await connection.getBalance(pubkey, 'confirmed');
+        const solAmountFresh = solBalanceFresh / LAMPORTS_PER_SOL;
+        // Leave enough for rent exemption + one more tx fee + small safety margin
+        const minRequired = 0.00089 + 0.000005 + 0.0001;
+        const recoverableSol = Math.max(0, solAmountFresh - minRequired);
 
         if (recoverableSol > 0.00001) {
           try {
-            const tx = new Transaction().add(
+            const ixs = [
               SystemProgram.transfer({
                 fromPubkey: keypair.publicKey,
                 toPubkey: creatorPubkey,
                 lamports: Math.floor(recoverableSol * LAMPORTS_PER_SOL),
-              })
-            );
+              }),
+            ];
 
-            const sig = await sendAndConfirmTransaction(connection, tx, [keypair], {
-              skipPreflight: true,
-              commitment: 'confirmed',
-            });
+            const sig = await sendWithRetry(connection, ixs, keypair);
             signatures.push({ token: 'SOL', amount: recoverableSol, sig });
             totalRecoveredSol += recoverableSol;
             console.log(
               `    ${colors.green}✓ Recovered ${recoverableSol.toFixed(6)} SOL${colors.reset}`
             );
           } catch (err) {
+            anyTransferFailed = true;
             console.log(`    ${colors.red}✗ Failed to recover SOL: ${err.message}${colors.reset}`);
           }
         }
 
-        // Mark wallet as available
-        await pgClient.query(`UPDATE "AirdropPoolWallet" SET "isBusy" = false WHERE address = $1`, [
-          row.address,
-        ]);
-
-        // Add delay to avoid rate limiting
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-
-        // Update airdrop status if exists
-        if (row.airdropId) {
-          await pgClient.query(`UPDATE "Airdrop" SET status = 'RECLAIMED' WHERE id = $1`, [
-            row.airdropId,
-          ]);
+        // Only update DB if at least one transfer succeeded (or wallet is now empty).
+        // If everything failed, leave isBusy=true so the next run retries.
+        if (!anyTransferFailed || signatures.length > 0) {
+          await pgClient.query(
+            `UPDATE "AirdropPoolWallet" SET "isBusy" = false WHERE address = $1`,
+            [row.address]
+          );
+          if (row.airdropId) {
+            await pgClient.query(`UPDATE "Airdrop" SET status = 'RECLAIMED' WHERE id = $1`, [
+              row.airdropId,
+            ]);
+          }
+        } else {
+          console.log(
+            `  ${colors.yellow}⚠️ All transfers failed — wallet left busy for next run${colors.reset}`
+          );
         }
+
+        // Pace between wallets to avoid hammering the RPC
+        await new Promise((resolve) => setTimeout(resolve, 3_000));
 
         // Print signatures
         if (signatures.length > 0) {

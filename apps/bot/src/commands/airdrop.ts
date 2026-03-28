@@ -203,6 +203,11 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     usdValue = price ? amountToken * price.price : 0;
   }
 
+  // Round to token precision to eliminate floating-point epsilon artifacts
+  // (e.g. 1.297 + 0.00239 = 1.2993999...998 instead of 1.2994 due to IEEE 754)
+  const TOKEN_DECIMALS = tokenSymbol === 'SOL' ? 9 : 6;
+  amountToken = Math.round(amountToken * 10 ** TOKEN_DECIMALS) / 10 ** TOKEN_DECIMALS;
+
   // Validate amount
   if (amountToken <= 0) {
     await interaction.editReply({ content: '❌ Amount must be greater than 0.' });
@@ -355,7 +360,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     for (const sig of fundingSignatures) {
       await connection.confirmTransaction(sig, 'confirmed');
     }
-  } catch (confirmError) {
+  } catch (confirmError: any) {
     console.error('Transaction confirmation failed:', confirmError);
     logTransaction('AIRDROP', {
       status: 'FAILED',
@@ -367,8 +372,13 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     } catch (releaseError) {
       console.error('Failed to release pool wallet after confirmation failure:', releaseError);
     }
+    const isCongestion =
+      confirmError?.message?.includes('block height exceeded') ||
+      confirmError?.message?.includes('Blockhash not found');
     await interaction.editReply({
-      content: '❌ Transaction confirmation failed. Please check your wallet and try again.',
+      content: isCongestion
+        ? '❌ The Solana network is currently congested and could not confirm the airdrop funding in time. Please try again in a moment.'
+        : '❌ Transaction confirmation failed. Please check your wallet and try again.',
     });
     return;
   }

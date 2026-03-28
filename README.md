@@ -187,6 +187,14 @@ See `AGENTS.md` for detailed production deployment guidelines.
 
 ---
 
+## 💬 Support
+
+Need help? Join the **CTRL-ALT-DEGEN** community on Discord:
+
+**https://discord.gg/9wArQgz6cB**
+
+---
+
 ## 🤝 Contributing
 
 We welcome contributions! Whether it's adding new features, fixing bugs, or improving documentation, please feel free to fork the repo and submit a PR.
