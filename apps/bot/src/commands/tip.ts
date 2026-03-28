@@ -16,6 +16,7 @@ import {
   BalanceService,
 } from 'fattips-solana';
 import { Connection, PublicKey } from '@solana/web3.js';
+import { networkMonitor } from '../index';
 import { getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
 
 // Solana constants
@@ -104,6 +105,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   await interaction.deferReply();
+
+  // Warn if network is degraded/congested
+  const networkWarning = networkMonitor.getWarningText();
+  if (networkWarning)
+    await interaction.followUp({ content: networkWarning, ephemeral: true }).catch(() => {});
 
   try {
     // Parse the amount (we know amountStr is defined at this point)

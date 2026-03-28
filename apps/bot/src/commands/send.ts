@@ -21,6 +21,7 @@ import {
 } from 'fattips-solana';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
+import { networkMonitor } from '../index';
 
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
@@ -116,6 +117,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   await interaction.deferReply({ ephemeral: true });
+
+  // Warn if network is degraded/congested
+  const networkWarning = networkMonitor.getWarningText();
+  if (networkWarning)
+    await interaction.followUp({ content: networkWarning, ephemeral: true }).catch(() => {});
 
   try {
     // Validate the Solana address
@@ -420,8 +426,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       );
     } catch (error) {
       console.error('Transaction failed:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       await interaction.editReply({
-        content: `${interaction.user} ❌ Transaction failed. Please check your balance and try again.`,
+        content: `${interaction.user} ❌ Transaction failed: ${errorMessage}`,
       });
       return;
     }

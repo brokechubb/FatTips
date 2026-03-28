@@ -20,6 +20,7 @@ import {
 import { activityService } from '../services/activity';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
+import { networkMonitor } from '../index';
 
 // Discord error codes
 const DISCORD_CANNOT_DM = 50007;
@@ -91,6 +92,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const tokenPreference = interaction.options.getString('token') || 'SOL';
 
   await interaction.deferReply();
+
+  // Warn if network is degraded/congested
+  const networkWarning = networkMonitor.getWarningText();
+  if (networkWarning)
+    await interaction.followUp({ content: networkWarning, ephemeral: true }).catch(() => {});
 
   try {
     // 1. Get Active Users
