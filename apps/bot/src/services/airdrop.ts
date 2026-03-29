@@ -390,7 +390,7 @@ export class AirdropService {
         airdrop.keySalt
       );
       const tokenMint = airdrop.tokenMint;
-      const feePerTx = FEE_BUFFERS.BATCH; // Standard Solana fee per transaction
+      const feePerTx = FEE_BUFFERS.STANDARD; // Fee per transaction: base fee (0.000005) + priority fee headroom
       const rentBuffer = MIN_RENT_EXEMPTION; // Safety margin for rent exemption
 
       let tokenSymbol = 'SOL';
