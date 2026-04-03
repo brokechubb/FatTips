@@ -115,7 +115,7 @@ router.post('/execute', async (req, res) => {
 
     const userKeypair = await walletService.getKeypair(user.encryptedPrivkey, user.keySalt);
     const swapTransaction = await swapService.getSwapTransaction(quote, user.walletPubkey);
-    const signature = await swapService.executeSwap(userKeypair, swapTransaction);
+    const signature = await swapService.executeSwap(userKeypair, quote, swapTransaction);
 
     const inputPrice = await priceService.getTokenPrice(inputMint);
     const outputPrice = await priceService.getTokenPrice(outputMint);

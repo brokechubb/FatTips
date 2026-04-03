@@ -1,4 +1,9 @@
-import { Connection, Keypair, VersionedTransaction } from '@solana/web3.js';
+import {
+  Connection,
+  Keypair,
+  VersionedTransaction,
+  TransactionExpiredBlockheightExceededError,
+} from '@solana/web3.js';
 import { TOKEN_MINTS } from './price';
 
 export interface SwapQuote {
@@ -17,11 +22,18 @@ export interface SwapQuote {
   requestId?: string; // For Ultra API
 }
 
+// Priority fee constants — match TransactionService pattern
+const PRIORITY_FEE_FALLBACK_MICRO_LAMPORTS = 100_000;
+const PRIORITY_FEE_ESCALATION_MULTIPLIER = 3;
+const PRIORITY_FEE_CAP_MICRO_LAMPORTS = 5_000_000;
+
 export class JupiterSwapService {
   private connection: Connection;
+  private rpcUrl: string;
 
   constructor(rpcUrl: string) {
     this.connection = new Connection(rpcUrl);
+    this.rpcUrl = rpcUrl;
   }
 
   getDecimals(mint: string): number {
@@ -64,7 +76,11 @@ export class JupiterSwapService {
     return (await response.json()) as SwapQuote;
   }
 
-  async getSwapTransaction(quoteResponse: SwapQuote, userPublicKey: string): Promise<string> {
+  async getSwapTransaction(
+    quoteResponse: SwapQuote,
+    userPublicKey: string,
+    priorityFeeLamports: string | number = 'auto'
+  ): Promise<string> {
     const response = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
       method: 'POST',
       headers: {
@@ -74,8 +90,8 @@ export class JupiterSwapService {
         quoteResponse,
         userPublicKey: userPublicKey.toString(),
         wrapAndUnwrapSol: true,
-        dynamicComputeUnitLimit: true, // Prioritize inclusion
-        prioritizationFeeLamports: 'auto', // Use auto priority fee
+        dynamicComputeUnitLimit: true,
+        prioritizationFeeLamports: priorityFeeLamports,
       }),
     });
 
@@ -86,6 +102,45 @@ export class JupiterSwapService {
 
     const { swapTransaction } = (await response.json()) as { swapTransaction: string };
     return swapTransaction;
+  }
+
+  private async getDynamicPriorityFee(attempt: number = 0): Promise<number> {
+    try {
+      const response = await fetch(this.rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: '1',
+          method: 'getPriorityFeeEstimate',
+          params: [{ options: { recommended: true } }],
+        }),
+      });
+      const data = (await response.json()) as {
+        result?: { priorityFeeEstimate?: number };
+        error?: unknown;
+      };
+      if (data?.result?.priorityFeeEstimate != null) {
+        const base = data.result.priorityFeeEstimate;
+        const escalated = Math.round(base * Math.pow(PRIORITY_FEE_ESCALATION_MULTIPLIER, attempt));
+        const capped = Math.min(escalated, PRIORITY_FEE_CAP_MICRO_LAMPORTS);
+        if (attempt > 0) {
+          console.log(
+            `[JupiterSwapService] Dynamic priority fee: ${base} → ${capped} microLamports (attempt ${attempt + 1}, escalation ${PRIORITY_FEE_ESCALATION_MULTIPLIER}x)`
+          );
+        }
+        return capped;
+      }
+    } catch (err) {
+      console.warn(
+        '[JupiterSwapService] Failed to fetch dynamic priority fee, using fallback:',
+        err
+      );
+    }
+    const escalated = Math.round(
+      PRIORITY_FEE_FALLBACK_MICRO_LAMPORTS * Math.pow(PRIORITY_FEE_ESCALATION_MULTIPLIER, attempt)
+    );
+    return Math.min(escalated, PRIORITY_FEE_CAP_MICRO_LAMPORTS);
   }
 
   async getGaslessSwap(
@@ -196,69 +251,117 @@ export class JupiterSwapService {
     return txSignature;
   }
 
-  async executeSwap(userKeypair: Keypair, swapTransactionBase64: string): Promise<string> {
-    // Deserialize the transaction
-    const swapTransactionBuf = Buffer.from(swapTransactionBase64, 'base64');
-    const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
+  async executeSwap(
+    userKeypair: Keypair,
+    quoteResponse: SwapQuote,
+    initialSwapTransactionBase64?: string
+  ): Promise<string> {
+    const maxRetries = 3;
 
-    // Validate the transaction before signing
-    // 1. Verify user is a required signer
-    const message = transaction.message;
-    // Use staticAccountKeys for signer validation - required signers are always in static accounts
-    // (not in address lookup tables)
-    const userKeyStr = userKeypair.publicKey.toBase58();
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // Fetch fresh transaction with escalated priority fee on retries
+      let swapTransactionBase64: string;
+      if (attempt === 0 && initialSwapTransactionBase64) {
+        swapTransactionBase64 = initialSwapTransactionBase64;
+      } else {
+        const priorityFee = await this.getDynamicPriorityFee(attempt);
+        swapTransactionBase64 = await this.getSwapTransaction(
+          quoteResponse,
+          userKeypair.publicKey.toBase58(),
+          priorityFee
+        );
+      }
 
-    let userIsRequiredSigner = false;
-    for (let i = 0; i < message.header.numRequiredSignatures; i++) {
-      if (message.staticAccountKeys[i]?.toBase58() === userKeyStr) {
-        userIsRequiredSigner = true;
-        break;
+      // Deserialize the transaction
+      const swapTransactionBuf = Buffer.from(swapTransactionBase64, 'base64');
+      const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
+
+      // Validate the transaction before signing
+      const message = transaction.message;
+      const userKeyStr = userKeypair.publicKey.toBase58();
+
+      let userIsRequiredSigner = false;
+      for (let i = 0; i < message.header.numRequiredSignatures; i++) {
+        if (message.staticAccountKeys[i]?.toBase58() === userKeyStr) {
+          userIsRequiredSigner = true;
+          break;
+        }
+      }
+      if (!userIsRequiredSigner) {
+        throw new Error(
+          'Swap transaction validation failed: user wallet is not a required signer. ' +
+            'This may indicate a tampered transaction.'
+        );
+      }
+
+      const instructionCount = message.compiledInstructions.length;
+      if (instructionCount > 30) {
+        throw new Error(
+          `Swap transaction validation failed: suspicious instruction count (${instructionCount}). ` +
+            'Normal swaps have fewer instructions.'
+        );
+      }
+
+      // Sign the transaction
+      transaction.sign([userKeypair]);
+
+      // Get fresh blockhash for each attempt
+      const latestBlockhash = await this.connection.getLatestBlockhash('confirmed');
+
+      // Send the transaction
+      const signature = await this.connection.sendTransaction(transaction, {
+        skipPreflight: true,
+        maxRetries: 2,
+      });
+
+      try {
+        // Confirm transaction and check for errors
+        const confirmation = await this.connection.confirmTransaction(
+          {
+            signature,
+            blockhash: latestBlockhash.blockhash,
+            lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+          },
+          'confirmed'
+        );
+
+        if (confirmation.value.err) {
+          throw new Error(
+            `Swap transaction failed on-chain: ${JSON.stringify(confirmation.value.err)}`
+          );
+        }
+
+        return signature;
+      } catch (error: unknown) {
+        // Blockhash expired — check if tx actually landed before retrying
+        if (error instanceof TransactionExpiredBlockheightExceededError) {
+          const landed = await this.checkTransactionLanded(signature);
+          if (landed) {
+            return landed;
+          }
+
+          if (attempt < maxRetries - 1) {
+            continue; // Retry with fresh blockhash + escalated fee
+          }
+
+          throw new Error(
+            'The Solana network is currently congested and could not process this swap in time. Please try again in a moment.'
+          );
+        }
+
+        // Re-throw non-expiry errors immediately
+        throw error;
       }
     }
-    if (!userIsRequiredSigner) {
-      throw new Error(
-        'Swap transaction validation failed: user wallet is not a required signer. ' +
-          'This may indicate a tampered transaction.'
-      );
+
+    throw new Error('Swap failed after multiple attempts. Please try again.');
+  }
+
+  private async checkTransactionLanded(signature: string): Promise<string | null> {
+    const status = await this.connection.getSignatureStatus(signature);
+    if (status.value && !status.value.err) {
+      return signature;
     }
-
-    // 2. Sanity check: ensure the transaction doesn't have an excessive number of instructions
-    const instructionCount = message.compiledInstructions.length;
-    if (instructionCount > 30) {
-      throw new Error(
-        `Swap transaction validation failed: suspicious instruction count (${instructionCount}). ` +
-          'Normal swaps have fewer instructions.'
-      );
-    }
-
-    // Sign the transaction
-    transaction.sign([userKeypair]);
-
-    // Get blockhash BEFORE sending so we can use the same one for confirmation
-    const latestBlockhash = await this.connection.getLatestBlockhash('confirmed');
-
-    // Send the transaction
-    const signature = await this.connection.sendTransaction(transaction, {
-      skipPreflight: true,
-      maxRetries: 2,
-    });
-
-    // Confirm transaction and check for errors
-    const confirmation = await this.connection.confirmTransaction(
-      {
-        signature,
-        blockhash: latestBlockhash.blockhash,
-        lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-      },
-      'confirmed'
-    );
-
-    if (confirmation.value.err) {
-      throw new Error(
-        `Swap transaction failed on-chain: ${JSON.stringify(confirmation.value.err)}`
-      );
-    }
-
-    return signature;
+    return null;
   }
 }
