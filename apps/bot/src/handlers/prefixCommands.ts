@@ -440,7 +440,7 @@ async function handleSwap(message: Message, args: string[], prefix: string) {
                 quote,
                 user.walletPubkey
               );
-              signature = await swapService.executeSwap(userKeypair, swapTransactionBase64);
+              signature = await swapService.executeSwap(userKeypair, quote, swapTransactionBase64);
             } catch (stdError: unknown) {
               const errMsg = stdError instanceof Error ? stdError.message : String(stdError);
               const isInsufficientLamports =
