@@ -579,7 +579,9 @@ function parseAmountInput(input: string): ParsedAmount {
   if (maxTokenMatch)
     return { valid: true, type: 'max', value: 0, token: maxTokenMatch[2]?.toUpperCase() || 'SOL' };
 
-  const usdMatch = trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i);
+  const usdMatch =
+    trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i) ||
+    trimmed.match(/^(\d+\.?\d*)\$\s*([a-zA-Z]*)?$/i);
   if (usdMatch) {
     const value = parseFloat(usdMatch[1]);
     if (isNaN(value) || value <= 0) return { valid: false, value: 0, error: 'Invalid USD amount' };

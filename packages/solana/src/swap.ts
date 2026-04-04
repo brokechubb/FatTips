@@ -22,18 +22,16 @@ export interface SwapQuote {
   requestId?: string; // For Ultra API
 }
 
-// Priority fee constants — match TransactionService pattern
-const PRIORITY_FEE_FALLBACK_MICRO_LAMPORTS = 100_000;
-const PRIORITY_FEE_ESCALATION_MULTIPLIER = 3;
-const PRIORITY_FEE_CAP_MICRO_LAMPORTS = 5_000_000;
+// Priority levels accepted by Jupiter's priorityLevelWithMaxLamports parameter.
+// Escalated on each retry attempt to improve inclusion under congestion.
+const PRIORITY_LEVELS = ['high', 'veryHigh'] as const;
+const MAX_PRIORITY_FEE_LAMPORTS = 1_000_000; // 0.001 SOL cap — reasonable ceiling for a swap
 
 export class JupiterSwapService {
   private connection: Connection;
-  private rpcUrl: string;
 
   constructor(rpcUrl: string) {
     this.connection = new Connection(rpcUrl);
-    this.rpcUrl = rpcUrl;
   }
 
   getDecimals(mint: string): number {
@@ -79,7 +77,7 @@ export class JupiterSwapService {
   async getSwapTransaction(
     quoteResponse: SwapQuote,
     userPublicKey: string,
-    priorityFeeLamports: string | number = 'auto'
+    priorityLevel: string = 'high'
   ): Promise<string> {
     const response = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
       method: 'POST',
@@ -91,7 +89,13 @@ export class JupiterSwapService {
         userPublicKey: userPublicKey.toString(),
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
-        prioritizationFeeLamports: priorityFeeLamports,
+        dynamicSlippage: true,
+        prioritizationFeeLamports: {
+          priorityLevelWithMaxLamports: {
+            maxLamports: MAX_PRIORITY_FEE_LAMPORTS,
+            priorityLevel,
+          },
+        },
       }),
     });
 
@@ -102,45 +106,6 @@ export class JupiterSwapService {
 
     const { swapTransaction } = (await response.json()) as { swapTransaction: string };
     return swapTransaction;
-  }
-
-  private async getDynamicPriorityFee(attempt: number = 0): Promise<number> {
-    try {
-      const response = await fetch(this.rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: '1',
-          method: 'getPriorityFeeEstimate',
-          params: [{ options: { recommended: true } }],
-        }),
-      });
-      const data = (await response.json()) as {
-        result?: { priorityFeeEstimate?: number };
-        error?: unknown;
-      };
-      if (data?.result?.priorityFeeEstimate != null) {
-        const base = data.result.priorityFeeEstimate;
-        const escalated = Math.round(base * Math.pow(PRIORITY_FEE_ESCALATION_MULTIPLIER, attempt));
-        const capped = Math.min(escalated, PRIORITY_FEE_CAP_MICRO_LAMPORTS);
-        if (attempt > 0) {
-          console.log(
-            `[JupiterSwapService] Dynamic priority fee: ${base} → ${capped} microLamports (attempt ${attempt + 1}, escalation ${PRIORITY_FEE_ESCALATION_MULTIPLIER}x)`
-          );
-        }
-        return capped;
-      }
-    } catch (err) {
-      console.warn(
-        '[JupiterSwapService] Failed to fetch dynamic priority fee, using fallback:',
-        err
-      );
-    }
-    const escalated = Math.round(
-      PRIORITY_FEE_FALLBACK_MICRO_LAMPORTS * Math.pow(PRIORITY_FEE_ESCALATION_MULTIPLIER, attempt)
-    );
-    return Math.min(escalated, PRIORITY_FEE_CAP_MICRO_LAMPORTS);
   }
 
   async getGaslessSwap(
@@ -259,16 +224,19 @@ export class JupiterSwapService {
     const maxRetries = 3;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-      // Fetch fresh transaction with escalated priority fee on retries
+      // Fetch fresh transaction with escalated priority level on retries
       let swapTransactionBase64: string;
       if (attempt === 0 && initialSwapTransactionBase64) {
         swapTransactionBase64 = initialSwapTransactionBase64;
       } else {
-        const priorityFee = await this.getDynamicPriorityFee(attempt);
+        const level = PRIORITY_LEVELS[Math.min(attempt, PRIORITY_LEVELS.length - 1)];
+        console.log(
+          `[JupiterSwapService] Retry ${attempt + 1}/${maxRetries}: fetching fresh tx with priority "${level}"`
+        );
         swapTransactionBase64 = await this.getSwapTransaction(
           quoteResponse,
           userKeypair.publicKey.toBase58(),
-          priorityFee
+          level
         );
       }
 

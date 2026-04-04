@@ -86,7 +86,9 @@ function parseAmountInput(input: string): ParsedAmount {
   if (maxTokenMatch)
     return { valid: true, type: 'max', value: 0, token: maxTokenMatch[2]?.toUpperCase() || 'SOL' };
 
-  const usdMatch = trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i);
+  const usdMatch =
+    trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i) ||
+    trimmed.match(/^(\d+\.?\d*)\$\s*([a-zA-Z]*)?$/i);
   if (usdMatch) {
     const value = parseFloat(usdMatch[1]);
     if (isNaN(value) || value <= 0) return { valid: false, value: 0, error: 'Invalid USD amount' };
@@ -223,8 +225,9 @@ async function handleSwap(message: Message, args: string[], prefix: string) {
   const isMax = amountStr.toLowerCase() === 'max' || amountStr.toLowerCase() === 'all';
 
   if (!isMax) {
-    if (amountStr.startsWith('$')) {
-      const value = parseFloat(amountStr.substring(1));
+    const isUsd = amountStr.startsWith('$') || amountStr.endsWith('$');
+    if (isUsd) {
+      const value = parseFloat(amountStr.replace(/\$/g, ''));
       if (isNaN(value) || value <= 0) {
         await message.reply('❌ Invalid USD amount. Please enter a positive number.');
         return;
@@ -417,7 +420,7 @@ async function handleSwap(message: Message, args: string[], prefix: string) {
 
       if (confirmation.customId.startsWith('prefix_confirm_swap')) {
         await confirmation.update({
-          content: '🔄 Processing swap on Solana... (this may take up to 30s)',
+          content: '🔄 Processing swap on Solana... (this may take up to 60s)',
           embeds: [],
           components: [],
         });
