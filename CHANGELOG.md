@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Removed 2s delay before on-chain status check** on retry — eliminated wasted time on the failure path
 - **Withdrawal processing messages** (modal and prefix) now say "✅ Withdrawal queued — you'll receive a DM when it completes" instead of "⏳ Processing transaction...", accurately reflecting that the worker DMs the result
 - **`channelId`/`messageId` no longer passed to withdrawal jobs** from modal interactions — removes the dead code path since the WITHDRAWAL worker branch never used them
+- **Swap priority fees now use Jupiter's `priorityLevelWithMaxLamports`** format instead of raw microLamport values — fees were previously silently ignored by Jupiter, causing swap failures during network congestion
+- **Swap transactions include `dynamicSlippage: true`** per Jupiter's recommended configuration
+- **Swap retry priority escalation** — retries escalate from `"high"` to `"veryHigh"` priority level (capped at 0.001 SOL) instead of passing raw numbers Jupiter couldn't interpret
+- **USD amounts now accept trailing `$`** — `5$` works the same as `$5` across all commands (swap, tip, rain, send, airdrop, and all interaction handlers)
 
 ### Fixed
 
@@ -34,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bare `catch {}` in worker failure path** — replaced with logged warnings so channel fetch errors are no longer silently swallowed
 - **Orphaned "Processing..." messages** — prefix tip/rain/withdrawal commands now wrap `transactionQueue.add()` in try/catch and edit the processing message to show an error if queuing fails (e.g. Redis down)
 - **Ephemeral "Processing transaction..." stuck forever on withdrawals** — modal and send-form withdrawal interactions no longer leave the ephemeral reply in a permanent pending state
+- **Swap failures during network congestion** — `JupiterSwapService.executeSwap()` now retries up to 3 times with fresh blockhashes and escalated priority fees (matching `TransactionService` pattern), checks if transaction landed on-chain before retrying, and returns a user-friendly congestion message on exhaustion
+- **Swap "timed out" false positive** — the Discord button collector's 60s timer was overwriting the reply with "Swap timed out" while retries were still running and succeeding; collector is now stopped immediately when the user clicks confirm
 
 ### Removed
 
