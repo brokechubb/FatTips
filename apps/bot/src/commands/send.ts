@@ -520,7 +520,9 @@ function parseAmountInput(input: string): ParsedAmount {
 
   // Check for USD format: $5, $5.50, 5 USD
   // Also supports "$0.01 sol" or "$5 usdc" pattern
-  const usdMatch = trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i);
+  const usdMatch =
+    trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i) ||
+    trimmed.match(/^(\d+\.?\d*)\$\s*([a-zA-Z]*)?$/i);
   if (usdMatch) {
     const value = parseFloat(usdMatch[1]);
     const tokenHint = usdMatch[2]?.toUpperCase();

@@ -76,8 +76,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const isMax = amountStr.toLowerCase() === 'max' || amountStr.toLowerCase() === 'all';
 
   if (!isMax) {
-    if (amountStr.startsWith('$')) {
-      const value = parseFloat(amountStr.substring(1));
+    const isUsd = amountStr.startsWith('$') || amountStr.endsWith('$');
+    if (isUsd) {
+      const value = parseFloat(amountStr.replace(/\$/g, ''));
       if (isNaN(value) || value <= 0) {
         await interaction.reply({
           content: '❌ Invalid USD amount. Please enter a positive number.',
@@ -301,8 +302,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
 
       if (i.customId === 'confirm_swap') {
+        // Stop the collector immediately to prevent the 60s timeout from
+        // overwriting the reply with "Swap timed out" while retries are running.
+        collector.stop('confirmed');
+
         await i.update({
-          content: '🔄 Processing swap on Solana... (this may take up to 30s)',
+          content: '🔄 Processing swap on Solana... (this may take up to 60s)',
           embeds: [],
           components: [],
         });
@@ -385,7 +390,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             components: [],
           });
         }
-        collector.stop('completed');
       }
     });
 

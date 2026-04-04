@@ -565,7 +565,9 @@ function parseAmountInput(input: string) {
   if (maxTokenMatch)
     return { valid: true, type: 'max', value: 0, token: maxTokenMatch[2]?.toUpperCase() || 'SOL' };
 
-  const usdMatch = trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i);
+  const usdMatch =
+    trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i) ||
+    trimmed.match(/^(\d+\.?\d*)\$\s*([a-zA-Z]*)?$/i);
   if (usdMatch)
     return {
       valid: true,
