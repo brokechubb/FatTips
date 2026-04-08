@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - VPS with 4GB RAM, 4 vCPU minimum
-- Domain name (codestats.gg)
+- Domain name
 - SSL certificate (Let's Encrypt recommended)
 - Docker and Docker Compose installed
 
@@ -64,7 +64,7 @@ docker-compose down
 sudo apt install certbot
 
 # Obtain certificate
-sudo certbot certonly --standalone -d codestats.gg
+sudo certbot certonly --standalone -d domain.com
 
 # Auto-renewal is set up automatically
 ```

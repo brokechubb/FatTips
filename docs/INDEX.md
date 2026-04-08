@@ -299,7 +299,7 @@ This directory contains comprehensive architecture documentation for the FatTips
 - `/docs/` - This documentation directory
 - `/scripts/` - Operational scripts
 - `/docker/` - Docker configurations
-- `/.mega memory/` - Project knowledge graph
+- `scripts/` - Operational scripts
 
 ---
 

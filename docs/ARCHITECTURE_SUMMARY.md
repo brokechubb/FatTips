@@ -10,7 +10,7 @@
 1. **What:** Non-custodial Solana tipping bot for Discord
 2. **Stack:** TypeScript, Discord.js, Prisma, PostgreSQL, Redis, BullMQ
 3. **Architecture:** Monorepo (Turborepo) with 2 apps + 3 packages
-4. **Deployment:** Docker Compose on VPS (codestats.gg)
+4. **Deployment:** Docker Compose on VPS
 5. **Status:** Production-ready, actively maintained
 
 ---
@@ -131,9 +131,7 @@ Request → requireAuth → Validate API Key → requireOwnership → Process
 
 ### Environment
 
-- **Server:** VPS (codestats.gg)
-- **SSH:** Port 1337
-- **Path:** `/opt/FatTips`
+- **Server:** VPS
 - **Containers:** 4 (bot, api, postgres, redis)
 
 ### Deployment Command
@@ -400,7 +398,6 @@ const TOKEN_MINTS = {
 - **API:** 3001 (localhost only)
 - **PostgreSQL:** 5432 (internal)
 - **Redis:** 6379 (internal)
-- **SSH:** 1337
 
 ---
 

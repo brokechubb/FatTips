@@ -17,7 +17,7 @@ FatTips is a **non-custodial social tipping layer for Solana** integrated into D
 - **Database:** PostgreSQL 16 with Prisma ORM
 - **Caching:** Redis 7 (BullMQ queues + pub/sub + activity tracking)
 - **Blockchain:** Solana mainnet via Helius RPC
-- **Deployment:** Docker Compose on VPS (codestats.gg)
+- **Deployment:** Docker Compose on VPS
 
 ---
 
@@ -412,9 +412,8 @@ const balance = await connection.getBalance(publicKey, {
 
 ### 5.1 Production Environment
 
-**Server:** `codestats.gg` (VPS)  
-**SSH Port:** 1337  
-**Path:** `/opt/FatTips`
+**Server:** VPS  
+**Path:** `/path/to/app`
 
 ### 5.2 Docker Services
 
@@ -547,7 +546,7 @@ try {
 
 ```yaml
 postgres:
-  test: pg_isready -U fattips_user -d fattips
+  test: pg_isready
   interval: 10s
 
 redis:
@@ -576,8 +575,7 @@ pnpm db:studio
 
 **Weekly Cron:** Sundays at 3 AM  
 **Script:** `scripts/cleanup-airdrops.js`  
-**Purpose:** Drain residual funds from settled airdrops  
-**Destination:** `9HMqaDgnbvy4VYi9VpNVb6u3xv4vqD5RG12cyxcsVRFY`
+**Purpose:** Drain residual funds from settled airdrops
 
 ### 9.3 Recovery Procedures
 

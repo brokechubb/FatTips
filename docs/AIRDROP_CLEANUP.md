@@ -49,17 +49,17 @@ Installs the cleanup script as a weekly cron job (Sundays at 3 AM).
 
 ### Option 1: Cron Job (Recommended)
 
-1. Deploy the scripts to production:
+1. Deploy the scripts to your production server:
 
 ```bash
-scp scripts/cleanup-airdrops.js scripts/setup-cleanup-cron.sh chubb@codestats.gg:/opt/FatTips/scripts/
+scp scripts/cleanup-airdrops.js scripts/setup-cleanup-cron.sh <server>:/path/to/app/scripts/
 ```
 
 2. SSH into production and run setup:
 
 ```bash
-ssh chubb@codestats.gg
-cd /opt/FatTips
+ssh <server>
+cd /path/to/app
 ./scripts/setup-cleanup-cron.sh
 ```
 
@@ -75,17 +75,17 @@ crontab -l
 2. Run manually each week:
 
 ```bash
-ssh chubb@codestats.gg "cd /opt/FatTips && node scripts/cleanup-airdrops.js"
+ssh <server> "cd /path/to/app && node scripts/cleanup-airdrops.js"
 ```
 
 ## Logs
 
-Logs are stored in `/opt/FatTips/logs/airdrop-cleanup.log`
+Logs are stored in `/path/to/app/logs/airdrop-cleanup.log`
 
 View recent activity:
 
 ```bash
-tail -f /opt/FatTips/logs/airdrop-cleanup.log
+tail -f /path/to/app/logs/airdrop-cleanup.log
 ```
 
 ## Expected Results
@@ -107,9 +107,7 @@ Based on historical data:
 
 ## Destination Wallet
 
-Default: `9HMqaDgnbvy4VYi9VpNVb6u3xv4vqD5RG12cyxcsVRFY`
-
-This is the FatTips operational wallet. Change in `setup-cleanup-cron.sh` if needed.
+The default destination wallet is configured in `setup-cleanup-cron.sh`. Update this to your preferred wallet address.
 
 ## Troubleshooting
 

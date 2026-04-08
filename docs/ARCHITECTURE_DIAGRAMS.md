@@ -436,28 +436,20 @@ User: /airdrop amount:$10 duration:1h
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Production Server (VPS)                       │
-│                   codestats.gg (SSH: 1337)                      │
-│                   Path: /opt/FatTips                            │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Docker Network (isolated)                               │  │
 │  │                                                          │  │
 │  │  ┌──────────────────┐    ┌──────────────────┐           │  │
-│  │  │ fattips-bot      │    │ fattips-api      │           │  │
+│  │  │ bot              │    │ api              │           │  │
 │  │  │                  │    │                  │           │  │
-│  │  │ Image: fattips-  │    │ Image: fattips-  │           │  │
-│  │  │ bot:latest       │    │ api:latest       │           │  │
-│  │  │                  │    │ Port: 3001       │           │  │
 │  │  │ Depends:         │    │ Depends:         │           │  │
 │  │  │ - postgres       │    │ - postgres       │           │  │
 │  │  │ - redis          │    │ - redis          │           │  │
 │  │  └──────────────────┘    └──────────────────┘           │  │
 │  │                                                          │  │
 │  │  ┌──────────────────┐    ┌──────────────────┐           │  │
-│  │  │ fattips-db       │    │ fattips-redis    │           │  │
-│  │  │                  │    │                  │           │  │
-│  │  │ Image: postgres: │    │ Image: redis:7-  │           │  │
-│  │  │ 16-alpine        │    │ alpine           │           │  │
+│  │  │ postgres         │    │ redis            │           │  │
 │  │  │                  │    │                  │           │  │
 │  │  │ Volume:          │    │ Volume:          │           │  │
 │  │  │ postgres_data    │    │ redis_data       │           │  │
