@@ -187,7 +187,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
       // Get balance to calculate max
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00002; // Fixed fee buffer for single signature transaction
+      const feeBuffer = FEE_BUFFER; // Covers priority fees
       const rentReserve = MIN_RENT_EXEMPTION; // Keep account rent-exempt (~0.00089 SOL)
 
       // Determine which token to send max of
@@ -303,7 +303,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (parsedAmount.type !== 'max') {
       try {
         const balances = await balanceService.getBalances(sender.walletPubkey);
-        const feeBuffer = 0.00002; // Fixed fee buffer for single signature transaction
+        const feeBuffer = FEE_BUFFER; // Covers priority fees
         const rentReserve = MIN_RENT_EXEMPTION; // Minimum to keep account alive
 
         if (tokenSymbol === 'SOL') {
@@ -521,8 +521,8 @@ function parseAmountInput(input: string): ParsedAmount {
   // Check for USD format: $5, $5.50, 5 USD
   // Also supports "$0.01 sol" or "$5 usdc" pattern
   const usdMatch =
-    trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i) ||
-    trimmed.match(/^(\d+\.?\d*)\$\s*([a-zA-Z]*)?$/i);
+    trimmed.match(/^\$(\d+(?:\.\d+)?|\.\d+)\s*([a-zA-Z]*)?$/i) ||
+    trimmed.match(/^(\d+(?:\.\d+)?|\.\d+)\$\s*([a-zA-Z]*)?$/i);
   if (usdMatch) {
     const value = parseFloat(usdMatch[1]);
     const tokenHint = usdMatch[2]?.toUpperCase();

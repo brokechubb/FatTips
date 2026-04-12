@@ -4,6 +4,10 @@ import {
   PermissionFlagsBits,
   EmbedBuilder,
   InteractionContextType,
+  ButtonBuilder,
+  ButtonStyle,
+  ActionRowBuilder,
+  ComponentType,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logTransaction } from '../utils/logger';
@@ -208,7 +212,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       }
 
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00002; // Fixed fee buffer for single signature transaction
+      const feeBuffer = FEE_BUFFER; // Covers priority fees
       const rentReserve = MIN_RENT_EXEMPTION;
 
       if (tokenSymbol === 'SOL') {
@@ -295,9 +299,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
+    const MIN_PER_RECIPIENT = tokenSymbol === 'SOL' ? 0.0001 : 0.01;
+    if (amountPerUser < MIN_PER_RECIPIENT) {
+      await interaction.editReply({
+        content:
+          `❌ Per-recipient amount too small!\n` +
+          `**Each user would get:** ${formatTokenAmount(amountPerUser)} ${tokenSymbol}\n` +
+          `**Minimum:** ${MIN_PER_RECIPIENT} ${tokenSymbol} per person\n\n` +
+          `Try a larger amount or fewer recipients.`,
+      });
+      return;
+    }
+
     // Check Balance
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.00002; // Slightly higher buffer for batch tx
+    const feeBuffer = FEE_BUFFER; // Covers priority fees + batch overhead
     const rentReserve = MIN_RENT_EXEMPTION;
     const epsilon = 0.000001; // Tolerance for floating point precision issues
     let isAdjusted = false;
@@ -329,25 +345,80 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const requiredSol = totalAmountToken + feeBuffer + rentReserve + recipientRentReserve;
       // Use epsilon to handle floating point precision issues, especially for "max" amounts
       if (balances.sol + epsilon < requiredSol) {
-        // Auto-adjust logic
         const maxPossible = Math.max(
           0,
           balances.sol - feeBuffer - rentReserve - recipientRentReserve
         );
 
-        // If they have enough to send something, adjust it
-        if (maxPossible > 0) {
-          totalAmountToken = maxPossible;
-          amountPerUser = totalAmountToken / recipientWallets.length;
-          isAdjusted = true;
-
-          // Recalculate USD value
+        if (maxPossible > 0 && maxPossible < totalAmountToken) {
+          const adjustedPerUser = maxPossible / recipientWallets.length;
           try {
             const price = await priceService.getTokenPrice(tokenMint);
-            usdValuePerUser = price ? amountPerUser * price.price : 0;
+            usdValuePerUser = price ? adjustedPerUser * price.price : 0;
           } catch {
             usdValuePerUser = 0;
           }
+
+          const rentInfo =
+            estimatedNewWallets > 0
+              ? `\n• +${estimatedNewWallets} recipient${estimatedNewWallets > 1 ? 's' : ' needs'} rent exemption`
+              : '';
+
+          const confirmBtn = new ButtonBuilder()
+            .setCustomId('confirm_adjusted')
+            .setLabel(`Send ${formatTokenAmount(maxPossible)} SOL Instead`)
+            .setStyle(ButtonStyle.Success);
+          const cancelBtn = new ButtonBuilder()
+            .setCustomId('cancel_adjusted')
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary);
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(confirmBtn, cancelBtn);
+
+          const reply = await interaction.editReply({
+            content:
+              `⚠️ Insufficient balance for requested amount.\n\n` +
+              `**Requested:** ${formatTokenAmount(totalAmountToken)} SOL\n` +
+              `**Available:** ${formatTokenAmount(maxPossible)} SOL (after fees)${rentInfo}\n` +
+              `**Each user gets:** ${formatTokenAmount(adjustedPerUser)} SOL\n\n` +
+              `Send the adjusted amount instead?`,
+            components: [row],
+          });
+
+          const collector = reply.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 60000,
+          });
+
+          const confirmed = await new Promise<boolean>((resolve) => {
+            collector.on('collect', async (i) => {
+              if (i.user.id !== interaction.user.id) {
+                await i.reply({ content: 'Not your tip!', ephemeral: true });
+                return;
+              }
+              if (i.customId === 'cancel_adjusted') {
+                await i.update({ content: '❌ Tip cancelled.', components: [] });
+                collector.stop();
+                resolve(false);
+                return;
+              }
+              collector.stop();
+              resolve(true);
+            });
+            collector.on('end', (_collected, reason) => {
+              if (reason === 'time') {
+                interaction
+                  .editReply({ content: '❌ Tip timed out.', components: [] })
+                  .catch(() => {});
+                resolve(false);
+              }
+            });
+          });
+
+          if (!confirmed) return;
+
+          totalAmountToken = maxPossible;
+          amountPerUser = adjustedPerUser;
+          isAdjusted = true;
         } else {
           // Genuine insufficient funds (can't even pay fees/rent)
           const rentInfo =
@@ -580,8 +651,8 @@ function parseAmountInput(input: string): ParsedAmount {
     return { valid: true, type: 'max', value: 0, token: maxTokenMatch[2]?.toUpperCase() || 'SOL' };
 
   const usdMatch =
-    trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i) ||
-    trimmed.match(/^(\d+\.?\d*)\$\s*([a-zA-Z]*)?$/i);
+    trimmed.match(/^\$(\d+(?:\.\d+)?|\.\d+)\s*([a-zA-Z]*)?$/i) ||
+    trimmed.match(/^(\d+(?:\.\d+)?|\.\d+)\$\s*([a-zA-Z]*)?$/i);
   if (usdMatch) {
     const value = parseFloat(usdMatch[1]);
     if (isNaN(value) || value <= 0) return { valid: false, value: 0, error: 'Invalid USD amount' };

@@ -115,7 +115,7 @@ router.post('/tip', async (req: AuthenticatedRequest, res: Response) => {
     const { amountToken, usdValue, tokenMint } = await calculateAmounts(amount, token, amountType);
 
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.00002;
+    const feeBuffer = 0.001;
     const rentReserve = 0.00089088;
 
     if (token === 'SOL') {
@@ -232,7 +232,7 @@ router.post('/batch-tip', async (req: AuthenticatedRequest, res: Response) => {
     const amountPerUser = amountToken / recipientWallets.length;
 
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.00002;
+    const feeBuffer = 0.001;
     const rentReserve = 0.00089088;
 
     if (token === 'SOL') {
@@ -328,7 +328,7 @@ router.post('/withdraw', async (req: AuthenticatedRequest, res: Response) => {
     const { amountToken, usdValue } = await calculateAmounts(amount || 0, token, 'token');
 
     const balances = await balanceService.getBalances(user.walletPubkey);
-    const feeBuffer = 0.00002;
+    const feeBuffer = 0.001;
 
     let amountToSend = amountToken;
     if (token === 'SOL') {

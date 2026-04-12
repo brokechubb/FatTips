@@ -87,8 +87,8 @@ function parseAmountInput(input: string): ParsedAmount {
     return { valid: true, type: 'max', value: 0, token: maxTokenMatch[2]?.toUpperCase() || 'SOL' };
 
   const usdMatch =
-    trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i) ||
-    trimmed.match(/^(\d+\.?\d*)\$\s*([a-zA-Z]*)?$/i);
+    trimmed.match(/^\$(\d+(?:\.\d+)?|\.\d+)\s*([a-zA-Z]*)?$/i) ||
+    trimmed.match(/^(\d+(?:\.\d+)?|\.\d+)\$\s*([a-zA-Z]*)?$/i);
   if (usdMatch) {
     const value = parseFloat(usdMatch[1]);
     if (isNaN(value) || value <= 0) return { valid: false, value: 0, error: 'Invalid USD amount' };
@@ -176,6 +176,13 @@ export async function handlePrefixCommand(message: Message, client: Client) {
         break;
       case 'swap':
         await handleSwap(message, args, prefix);
+        break;
+      case 'leaderboard':
+      case 'lb':
+        await handleLeaderboard(message, args, prefix);
+        break;
+      case 'stats':
+        await handleStats(message);
         break;
       case 'setprefix':
         await handleSetPrefix(message, args);
@@ -543,6 +550,14 @@ async function handleHelp(message: Message, prefix: string) {
           `\`${p}swap 1 SOL USDC\` • \`${p}swap max USDC SOL\``,
       },
       {
+        name: '📊 Stats & Leaderboard',
+        value:
+          `\`${p}stats\` - Your tipping stats\n` +
+          `\`${p}lb airdrops\` - Top airdrop creators\n` +
+          `\`${p}lb rain\` - Top rain senders\n` +
+          `\`${p}lb guild\` - Server stats`,
+      },
+      {
         name: '⚙️ Info',
         value:
           `\`${p}help\` • \`${p}setprefix <new>\`\n` + `*Slash commands available for all actions*`,
@@ -843,6 +858,14 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
     return;
   }
 
+  const MIN_PER_RECIPIENT_TIP = tokenSymbol === 'SOL' ? 0.0001 : 0.01;
+  if (amountPerUser < MIN_PER_RECIPIENT_TIP) {
+    await message.reply(
+      `❌ Per-recipient amount too small! Each user would get ${formatTokenAmount(amountPerUser)} ${tokenSymbol}. Minimum is ${MIN_PER_RECIPIENT_TIP} ${tokenSymbol} per person.`
+    );
+    return;
+  }
+
   // Check balance (skip for 'max' since we calculated based on actual balance)
   const balances = await balanceService.getBalances(sender.walletPubkey);
 
@@ -880,14 +903,85 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
       tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
     if (available < required) {
-      const rentInfo =
-        estimatedNewRecipients > 0
-          ? `\n• +${estimatedNewRecipients} new recipient${estimatedNewRecipients > 1 ? 's need' : ' needs'} rent exemption`
-          : '';
-      await message.reply(
-        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol} (incl. fees/rent)${rentInfo}, have ${available.toFixed(4)}`
-      );
-      return;
+      if (tokenSymbol === 'SOL') {
+        const maxPossible = Math.max(
+          0,
+          balances.sol - PREFIX_FEE_BUFFER - MIN_RENT_EXEMPTION - recipientRent
+        );
+        if (maxPossible > 0 && maxPossible < amountToken) {
+          const adjustedPerUser = maxPossible / recipientWallets.length;
+          const confirmBtn = new ButtonBuilder()
+            .setCustomId('confirm_adjusted')
+            .setLabel(`Send ${formatTokenAmount(maxPossible)} SOL Instead`)
+            .setStyle(ButtonStyle.Success);
+          const cancelBtn = new ButtonBuilder()
+            .setCustomId('cancel_adjusted')
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary);
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(confirmBtn, cancelBtn);
+
+          const reply = await message.reply({
+            content:
+              `⚠️ Insufficient balance for requested amount.\n\n` +
+              `**Requested:** ${formatTokenAmount(amountToken)} SOL\n` +
+              `**Available:** ${formatTokenAmount(maxPossible)} SOL (after fees)\n` +
+              `**Each user gets:** ${formatTokenAmount(adjustedPerUser)} SOL\n\n` +
+              `Send the adjusted amount instead?`,
+            components: [row],
+          });
+
+          const collector = reply.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 60000,
+          });
+
+          const confirmed = await new Promise<boolean>((resolve) => {
+            collector.on('collect', async (i) => {
+              if (i.user.id !== message.author.id) {
+                await i.reply({ content: 'Not your tip!', ephemeral: true });
+                return;
+              }
+              if (i.customId === 'cancel_adjusted') {
+                await i.update({ content: '❌ Tip cancelled.', components: [] });
+                collector.stop();
+                resolve(false);
+                return;
+              }
+              collector.stop();
+              resolve(true);
+            });
+            collector.on('end', (_collected, reason) => {
+              if (reason === 'time') {
+                reply.edit({ content: '❌ Tip timed out.', components: [] }).catch(() => {});
+                resolve(false);
+              }
+            });
+          });
+
+          if (!confirmed) return;
+
+          amountToken = maxPossible;
+          usdValue = (await priceService.getTokenPrice(tokenMint))?.price
+            ? adjustedPerUser *
+              (await priceService.getTokenPrice(tokenMint))!.price *
+              recipientWallets.length
+            : 0;
+        } else {
+          const rentInfo =
+            estimatedNewRecipients > 0
+              ? `\n• +${estimatedNewRecipients} new recipient${estimatedNewRecipients > 1 ? 's need' : ' needs'} rent exemption`
+              : '';
+          await message.reply(
+            `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol} (incl. fees/rent)${rentInfo}, have ${available.toFixed(4)}`
+          );
+          return;
+        }
+      } else {
+        await message.reply(
+          `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
+        );
+        return;
+      }
     }
   }
 
@@ -936,6 +1030,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
         usdValuePerUser: usdPerUser,
         channelId: message.channel.id,
         messageId: processingMsg.id,
+        guildId: message.guild?.id,
       },
       { jobId }
     );
@@ -1022,7 +1117,6 @@ async function handleSend(message: Message, args: string[], prefix: string) {
   // Smart detection: If withdrawing "all" without specifying token, check balances
   if (parsedAmount.type === 'max' && !parsedAmount.token) {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    // If SOL is too low for fees/rent (using 0.00002 as safe buffer), try other tokens
     if (balances.sol < PREFIX_FEE_BUFFER) {
       if (balances.usdc > 0) tokenSymbol = 'USDC';
       else if (balances.usdt > 0) tokenSymbol = 'USDT';
@@ -1072,6 +1166,12 @@ async function handleSend(message: Message, args: string[], prefix: string) {
     return;
   }
 
+  const MIN_SEND_AMOUNT = tokenSymbol === 'SOL' ? 0.0001 : 0.01;
+  if (amountToken < MIN_SEND_AMOUNT) {
+    await message.reply(`❌ Amount too small! Minimum is ${MIN_SEND_AMOUNT} ${tokenSymbol}.`);
+    return;
+  }
+
   // Check balance (skip for 'max' since we calculated based on actual balance)
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
@@ -1113,6 +1213,7 @@ async function handleSend(message: Message, args: string[], prefix: string) {
         channelId: message.channel.id,
         messageId: processingMsg.id,
         skipPriorityFee: parsedAmount.type === 'max' && tokenSymbol === 'SOL',
+        guildId: message.guild?.id,
       },
       { jobId }
     );
@@ -1390,6 +1491,14 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     return;
   }
 
+  const MIN_PER_RECIPIENT_RAIN = tokenSymbol === 'SOL' ? 0.0001 : 0.01;
+  if (amountPerUser < MIN_PER_RECIPIENT_RAIN) {
+    await message.reply(
+      `❌ Per-recipient amount too small! Each user would get ${formatTokenAmount(amountPerUser)} ${tokenSymbol}. Minimum is ${MIN_PER_RECIPIENT_RAIN} ${tokenSymbol} per person. Try a larger amount or fewer recipients.`
+    );
+    return;
+  }
+
   // Check balance (skip for 'max' since we calculated based on actual balance)
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
@@ -1401,10 +1510,78 @@ async function handleRain(message: Message, args: string[], client: Client, pref
       tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
     if (available < required) {
-      await message.reply(
-        `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol} (incl. rent exemption), have ${available.toFixed(4)}`
-      );
-      return;
+      if (tokenSymbol === 'SOL') {
+        const maxPossible = Math.max(0, balances.sol - PREFIX_FEE_BUFFER - MIN_RENT_EXEMPTION);
+        if (maxPossible > 0 && maxPossible < totalAmountToken) {
+          const adjustedPerUser = maxPossible / recipientWallets.length;
+          const confirmBtn = new ButtonBuilder()
+            .setCustomId('confirm_rain_adjusted')
+            .setLabel(`Rain ${formatTokenAmount(maxPossible)} SOL Instead`)
+            .setStyle(ButtonStyle.Success);
+          const cancelBtn = new ButtonBuilder()
+            .setCustomId('cancel_rain_adjusted')
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary);
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(confirmBtn, cancelBtn);
+
+          const reply = await message.reply({
+            content:
+              `⚠️ Insufficient balance for requested amount.\n\n` +
+              `**Requested:** ${formatTokenAmount(totalAmountToken)} SOL\n` +
+              `**Available:** ${formatTokenAmount(maxPossible)} SOL (after fees)\n` +
+              `**Each user gets:** ${formatTokenAmount(adjustedPerUser)} SOL\n\n` +
+              `Send the adjusted amount instead?`,
+            components: [row],
+          });
+
+          const collector = reply.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 60000,
+          });
+
+          const confirmed = await new Promise<boolean>((resolve) => {
+            collector.on('collect', async (i) => {
+              if (i.user.id !== message.author.id) {
+                await i.reply({ content: 'Not your rain!', ephemeral: true });
+                return;
+              }
+              if (i.customId === 'cancel_rain_adjusted') {
+                await i.update({ content: '❌ Rain cancelled.', components: [] });
+                collector.stop();
+                resolve(false);
+                return;
+              }
+              collector.stop();
+              resolve(true);
+            });
+            collector.on('end', (_collected, reason) => {
+              if (reason === 'time') {
+                reply.edit({ content: '❌ Rain timed out.', components: [] }).catch(() => {});
+                resolve(false);
+              }
+            });
+          });
+
+          if (!confirmed) return;
+
+          totalAmountToken = maxPossible;
+          usdValue = (await priceService.getTokenPrice(tokenMint))
+            ? adjustedPerUser *
+              (await priceService.getTokenPrice(tokenMint))!.price *
+              recipientWallets.length
+            : 0;
+        } else {
+          await message.reply(
+            `❌ Insufficient balance! Need ${required.toFixed(4)} SOL (incl. rent exemption), have ${available.toFixed(4)}`
+          );
+          return;
+        }
+      } else {
+        await message.reply(
+          `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
+        );
+        return;
+      }
     }
   }
 
@@ -1431,6 +1608,7 @@ async function handleRain(message: Message, args: string[], client: Client, pref
         usdValuePerUser: usdPerUser,
         channelId: message.channel.id,
         messageId: processingMsg.id,
+        guildId: message.guild?.id,
       },
       { jobId }
     );
@@ -1755,6 +1933,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
               expiresAt,
               channelId: message.channel.id,
               status: 'FAILED',
+              guildId: message.guild?.id,
             },
           });
           await message.reply(
@@ -1786,6 +1965,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
               expiresAt,
               channelId: message.channel.id,
               status: 'FAILED',
+              guildId: message.guild?.id,
             },
           });
           await message.reply(
@@ -1823,6 +2003,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
       maxParticipants: maxWinners ?? 0,
       expiresAt,
       channelId: message.channel.id,
+      guildId: message.guild?.id,
     },
   });
 
@@ -1912,4 +2093,284 @@ async function handleDeposit(message: Message, prefix: string) {
     embeds: [embed],
     files: [attachment],
   });
+}
+
+// ============ LEADERBOARD ============
+async function handleLeaderboard(message: Message, args: string[], prefix: string) {
+  if (!message.guild) {
+    await message.reply('Leaderboards are only available in servers.');
+    return;
+  }
+
+  const type = args[0]?.toLowerCase() || 'airdrops';
+  const limit = Math.min(parseInt(args[1]) || 10, 20);
+  const guildId = message.guild.id;
+
+  try {
+    switch (type) {
+      case 'airdrops':
+        await showPrefixTopAirdropCreators(message, guildId, limit);
+        break;
+      case 'rain':
+        await showPrefixTopRainSenders(message, guildId, limit);
+        break;
+      case 'guild':
+        await showPrefixGuildStats(message, guildId);
+        break;
+      default:
+        await message.reply(
+          `Usage: \`${prefix}leaderboard [airdrops|rain|guild] [limit]\`\n` +
+            `Example: \`${prefix}lb airdrops 10\`, \`${prefix}lb rain\`, \`${prefix}lb guild\``
+        );
+    }
+  } catch (error) {
+    logger.error('Error in leaderboard prefix command:', error);
+    await message.reply('❌ Failed to fetch leaderboard. Please try again.').catch(() => {});
+  }
+}
+
+async function showPrefixTopAirdropCreators(message: Message, guildId: string, limit: number) {
+  const topCreators = await prisma.airdrop.groupBy({
+    by: ['creatorId'],
+    _sum: {
+      amountClaimed: true,
+    },
+    _count: {
+      id: true,
+    },
+    orderBy: {
+      _sum: {
+        amountClaimed: 'desc',
+      },
+    },
+    take: limit,
+    where: {
+      status: 'SETTLED',
+      guildId: guildId,
+    },
+  });
+
+  if (topCreators.length === 0) {
+    await message.reply('No settled airdrops in this server yet.');
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('🎁 Top Airdrop Creators')
+    .setColor(0xff6b6b)
+    .setTimestamp();
+
+  let description = '';
+  let rank = 1;
+
+  for (const creator of topCreators) {
+    if (!creator.creatorId) continue;
+
+    const totalDistributed = creator._sum.amountClaimed
+      ? Number(creator._sum.amountClaimed).toFixed(2)
+      : '0.00';
+    const airdropCount = creator._count.id;
+    const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
+    description += `${medal} <@${creator.creatorId}> — **${totalDistributed}** distributed (${airdropCount} airdrop${airdropCount !== 1 ? 's' : ''})\n`;
+    rank++;
+  }
+
+  embed.setDescription(description || 'No data available.');
+  await message.reply({ embeds: [embed] });
+}
+
+async function showPrefixTopRainSenders(message: Message, guildId: string, limit: number) {
+  const topRainSenders = await prisma.transaction.groupBy({
+    by: ['fromId'],
+    _sum: { amountUsd: true },
+    _count: { id: true },
+    orderBy: { _sum: { amountUsd: 'desc' } },
+    take: limit,
+    where: { txType: 'TIP', status: 'CONFIRMED', guildId: guildId, fromId: { not: null } },
+  });
+
+  if (topRainSenders.length === 0) {
+    await message.reply('No tips sent in this server yet.');
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('🌧️ Top Rain Senders')
+    .setColor(0x00aaff)
+    .setTimestamp();
+
+  let description = '';
+  let rank = 1;
+
+  for (const sender of topRainSenders) {
+    if (!sender.fromId) continue;
+
+    const totalUsd = sender._sum.amountUsd ? Number(sender._sum.amountUsd).toFixed(2) : '0.00';
+    const tipCount = sender._count.id;
+    const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
+    description += `${medal} <@${sender.fromId}> — **$${totalUsd}** (${tipCount} tip${tipCount !== 1 ? 's' : ''})\n`;
+    rank++;
+  }
+
+  embed.setDescription(description || 'No data available.');
+  await message.reply({ embeds: [embed] });
+}
+
+async function showPrefixGuildStats(message: Message, guildId: string) {
+  const tipStats = await prisma.transaction.aggregate({
+    where: {
+      txType: 'TIP',
+      status: 'CONFIRMED',
+      guildId: guildId,
+    },
+    _sum: {
+      amountUsd: true,
+    },
+    _count: {
+      id: true,
+    },
+  });
+
+  const airdropStats = await prisma.airdrop.aggregate({
+    where: {
+      guildId: guildId,
+      status: 'SETTLED',
+    },
+    _sum: {
+      amountClaimed: true,
+    },
+    _count: {
+      id: true,
+    },
+  });
+
+  const uniqueTippers = await prisma.transaction.findMany({
+    where: {
+      txType: 'TIP',
+      status: 'CONFIRMED',
+      guildId: guildId,
+    },
+    select: { fromId: true },
+    distinct: ['fromId'],
+  });
+
+  const uniqueReceivers = await prisma.transaction.findMany({
+    where: {
+      txType: 'TIP',
+      status: 'CONFIRMED',
+      guildId: guildId,
+      toId: { not: null },
+    },
+    select: { toId: true },
+    distinct: ['toId'],
+  });
+
+  const totalTipVolume = tipStats._sum.amountUsd
+    ? Number(tipStats._sum.amountUsd).toFixed(2)
+    : '0.00';
+  const totalAirdropVolume = airdropStats._sum.amountClaimed
+    ? Number(airdropStats._sum.amountClaimed).toFixed(2)
+    : '0.00';
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 ${message.guild!.name} Stats`)
+    .setColor(0x5865f2)
+    .setTimestamp();
+
+  embed.addFields(
+    {
+      name: '💸 Tips & Rain',
+      value: `**${tipStats._count.id}** tips sent\n**$${totalTipVolume}** total volume\n**${uniqueTippers.length}** unique senders\n**${uniqueReceivers.length}** unique receivers`,
+      inline: true,
+    },
+    {
+      name: '🎁 Airdrops',
+      value: `**${airdropStats._count.id}** airdrops settled\n**${totalAirdropVolume}** total distributed`,
+      inline: true,
+    }
+  );
+
+  await message.reply({ embeds: [embed] });
+}
+
+// ============ STATS ============
+async function handleStats(message: Message) {
+  const user = await prisma.user.findUnique({
+    where: { discordId: message.author.id },
+  });
+
+  if (!user) {
+    await message.reply("You don't have a wallet yet! Use `f wallet create` to get started.");
+    return;
+  }
+
+  const sentTips = await prisma.transaction.aggregate({
+    where: {
+      fromId: message.author.id,
+      txType: 'TIP',
+      status: 'CONFIRMED',
+    },
+    _sum: { amountUsd: true },
+    _count: { id: true },
+  });
+
+  const receivedTips = await prisma.transaction.aggregate({
+    where: {
+      toId: message.author.id,
+      txType: 'TIP',
+      status: 'CONFIRMED',
+    },
+    _sum: { amountUsd: true },
+    _count: { id: true },
+  });
+
+  const airdropsCreated = await prisma.airdrop.aggregate({
+    where: {
+      creatorId: message.author.id,
+      status: 'SETTLED',
+    },
+    _sum: { amountClaimed: true },
+    _count: { id: true },
+  });
+
+  const airdropsWon = await prisma.airdropParticipant.count({
+    where: {
+      userId: message.author.id,
+    },
+  });
+
+  const sentTotal = sentTips._sum.amountUsd ? Number(sentTips._sum.amountUsd).toFixed(2) : '0.00';
+  const receivedTotal = receivedTips._sum.amountUsd
+    ? Number(receivedTips._sum.amountUsd).toFixed(2)
+    : '0.00';
+  const airdropTotal = airdropsCreated._sum.amountClaimed
+    ? Number(airdropsCreated._sum.amountClaimed).toFixed(2)
+    : '0.00';
+
+  const embed = new EmbedBuilder().setTitle(`📊 Your Stats`).setColor(0x5865f2).setTimestamp();
+
+  embed.addFields(
+    {
+      name: '💸 Tips Sent',
+      value: `**${sentTips._count.id}** tips\n**$${sentTotal}** total`,
+      inline: true,
+    },
+    {
+      name: '📥 Tips Received',
+      value: `**${receivedTips._count.id}** tips\n**$${receivedTotal}** total`,
+      inline: true,
+    },
+    {
+      name: '🎁 Airdrops Created',
+      value: `**${airdropsCreated._count.id}** airdrops\n**${airdropTotal}** distributed`,
+      inline: true,
+    },
+    {
+      name: '🏆 Airdrops Won',
+      value: `**${airdropsWon}** claims`,
+      inline: true,
+    }
+  );
+
+  await message.reply({ embeds: [embed] });
 }

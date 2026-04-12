@@ -6,6 +6,10 @@ import {
   InteractionContextType,
   ApplicationIntegrationType,
   TextChannel,
+  ButtonBuilder,
+  ButtonStyle,
+  ActionRowBuilder,
+  ComponentType,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { logTransaction } from '../utils/logger';
@@ -194,7 +198,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (parsedAmount.type === 'max' && !preferredToken) {
       // Auto-detect based on available balance
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00002;
+      const feeBuffer = FEE_BUFFER;
       const rentReserve = MIN_RENT_EXEMPTION;
 
       // Check which token has significant balance
@@ -218,7 +222,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     if (parsedAmount.type === 'max') {
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00002;
+      const feeBuffer = FEE_BUFFER;
       const rentReserve = MIN_RENT_EXEMPTION;
 
       if (tokenSymbol === 'SOL') {
@@ -277,31 +281,95 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
+    // Minimum per-recipient amount check
+    const MIN_PER_RECIPIENT = tokenSymbol === 'SOL' ? 0.0001 : 0.01;
+    if (amountPerUser < MIN_PER_RECIPIENT) {
+      await interaction.editReply({
+        content:
+          `❌ Per-recipient amount too small!\n` +
+          `**Each user would get:** ${formatTokenAmount(amountPerUser)} ${tokenSymbol}\n` +
+          `**Minimum:** ${MIN_PER_RECIPIENT} ${tokenSymbol} per person\n\n` +
+          `Try a larger amount or fewer recipients.`,
+      });
+      return;
+    }
+
     // 5. Check Balance
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = 0.00002;
+    const feeBuffer = FEE_BUFFER; // Covers priority fees
     const rentReserve = MIN_RENT_EXEMPTION;
     let isAdjusted = false;
 
     if (tokenSymbol === 'SOL') {
       const requiredSol = totalAmountToken + feeBuffer + rentReserve;
       if (balances.sol < requiredSol) {
-        // Auto-adjust logic
         const maxPossible = Math.max(0, balances.sol - feeBuffer - rentReserve);
 
-        // If they have enough to send something, adjust it
-        if (maxPossible > 0) {
-          totalAmountToken = maxPossible;
-          amountPerUser = totalAmountToken / recipientWallets.length;
-          isAdjusted = true;
-
-          // Recalculate USD value
+        if (maxPossible > 0 && maxPossible < totalAmountToken) {
+          // Show confirmation with adjusted amount
+          const adjustedPerUser = maxPossible / recipientWallets.length;
           try {
             const price = await priceService.getTokenPrice(tokenMint);
-            usdValuePerUser = price ? amountPerUser * price.price : 0;
+            usdValuePerUser = price ? adjustedPerUser * price.price : 0;
           } catch {
             usdValuePerUser = 0;
           }
+
+          const confirmBtn = new ButtonBuilder()
+            .setCustomId('confirm_adjusted')
+            .setLabel(`Send ${formatTokenAmount(maxPossible)} SOL Instead`)
+            .setStyle(ButtonStyle.Success);
+          const cancelBtn = new ButtonBuilder()
+            .setCustomId('cancel_adjusted')
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary);
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(confirmBtn, cancelBtn);
+
+          const reply = await interaction.editReply({
+            content:
+              `⚠️ Insufficient balance for requested amount.\n\n` +
+              `**Requested:** ${formatTokenAmount(totalAmountToken)} ${tokenSymbol}\n` +
+              `**Available:** ${formatTokenAmount(maxPossible)} ${tokenSymbol} (after fees)\n` +
+              `**Each user gets:** ${formatTokenAmount(adjustedPerUser)} ${tokenSymbol}\n\n` +
+              `Send the adjusted amount instead?`,
+            components: [row],
+          });
+
+          const collector = reply.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 60000,
+          });
+
+          const confirmed = await new Promise<boolean>((resolve) => {
+            collector.on('collect', async (i) => {
+              if (i.user.id !== interaction.user.id) {
+                await i.reply({ content: 'Not your rain!', ephemeral: true });
+                return;
+              }
+              if (i.customId === 'cancel_adjusted') {
+                await i.update({ content: '❌ Rain cancelled.', components: [] });
+                collector.stop();
+                resolve(false);
+                return;
+              }
+              collector.stop();
+              resolve(true);
+            });
+            collector.on('end', (_collected, reason) => {
+              if (reason === 'time') {
+                interaction
+                  .editReply({ content: '❌ Rain timed out.', components: [] })
+                  .catch(() => {});
+                resolve(false);
+              }
+            });
+          });
+
+          if (!confirmed) return;
+
+          totalAmountToken = maxPossible;
+          amountPerUser = adjustedPerUser;
+          isAdjusted = true;
         } else {
           await interaction.editReply({
             content: `${interaction.user} ❌ Insufficient funds!\n**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n**Available:** ${balances.sol.toFixed(5)} SOL`,
@@ -532,8 +600,8 @@ function parseAmountInput(input: string): ParsedAmount {
     return { valid: true, type: 'max', value: 0, token: maxTokenMatch[2]?.toUpperCase() || 'SOL' };
 
   const usdMatch =
-    trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i) ||
-    trimmed.match(/^(\d+\.?\d*)\$\s*([a-zA-Z]*)?$/i);
+    trimmed.match(/^\$(\d+(?:\.\d+)?|\.\d+)\s*([a-zA-Z]*)?$/i) ||
+    trimmed.match(/^(\d+(?:\.\d+)?|\.\d+)\$\s*([a-zA-Z]*)?$/i);
   if (usdMatch) {
     const value = parseFloat(usdMatch[1]);
     if (isNaN(value) || value <= 0) return { valid: false, value: 0, error: 'Invalid USD amount' };

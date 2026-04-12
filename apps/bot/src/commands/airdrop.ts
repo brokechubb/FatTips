@@ -416,6 +416,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
               expiresAt,
               channelId: interaction.channelId,
               status: 'FAILED',
+              guildId: interaction.guildId,
             },
           });
           await interaction.editReply({
@@ -448,6 +449,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
               expiresAt,
               channelId: interaction.channelId,
               status: 'FAILED',
+              guildId: interaction.guildId,
             },
           });
           await interaction.editReply({
@@ -485,6 +487,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
       maxParticipants: maxWinners ?? 0, // Use 0 for "unlimited" if integer required, or fix type
       expiresAt,
       channelId: interaction.channelId,
+      guildId: interaction.guildId,
     },
   });
 
@@ -566,8 +569,8 @@ function parseAmountInput(input: string) {
     return { valid: true, type: 'max', value: 0, token: maxTokenMatch[2]?.toUpperCase() || 'SOL' };
 
   const usdMatch =
-    trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i) ||
-    trimmed.match(/^(\d+\.?\d*)\$\s*([a-zA-Z]*)?$/i);
+    trimmed.match(/^\$(\d+(?:\.\d+)?|\.\d+)\s*([a-zA-Z]*)?$/i) ||
+    trimmed.match(/^(\d+(?:\.\d+)?|\.\d+)\$\s*([a-zA-Z]*)?$/i);
   if (usdMatch)
     return {
       valid: true,

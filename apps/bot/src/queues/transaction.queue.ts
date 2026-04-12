@@ -29,6 +29,7 @@ export interface TransferJobData {
   messageId?: string; // Original message to reply to/edit
   replyToUserId?: string; // DM fallback
   skipPriorityFee?: boolean; // For closing accounts (exact math)
+  guildId?: string;
 }
 
 export const transactionQueue = new Queue<TransferJobData>('transactions', {
