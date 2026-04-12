@@ -10,8 +10,8 @@ export const FEE_BUFFERS = {
   // Small buffer for single transactions
   TINY: 0.00001, // SOL
 
-  // Standard buffer for most operations
-  STANDARD: 0.00002, // SOL
+  // Standard buffer for most operations (covers priority fees)
+  STANDARD: 0.001, // SOL
 
   // Larger buffer for batch operations
   BATCH: 0.000005, // SOL per transaction

@@ -9,7 +9,7 @@ import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from '
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
 const FEE_BUFFERS = {
   TINY: 0.00001, // SOL - for single transactions
-  STANDARD: 0.00002, // SOL - for most operations
+  STANDARD: 0.001, // SOL - for most operations (covers priority fees)
   BATCH: 0.000005, // SOL - per transaction in batch
   AIRDROP_GAS: 0.003, // SOL - for ephemeral wallets
 };

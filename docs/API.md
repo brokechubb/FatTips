@@ -821,42 +821,221 @@ GET /api/activity/count?channelId=123456789012345678&minutes=15
 
 ---
 
-## Leaderboard
+## Leaderboard & Reports
 
-### Get Top Tippers
+All endpoints require `X-API-Key` header. Date parameters use ISO 8601 format (e.g. `2026-03-01`).
+
+### Get Top Airdrop Creators
 
 ```http
-GET /api/leaderboard/top-tippers?limit=10
+GET /api/leaderboard/top-airdrop-creators?limit=10&guildId=123&status=SETTLED&fromDate=2026-03-01&toDate=2026-04-01
 ```
+
+| Parameter  | Type   | Default | Description                 |
+| ---------- | ------ | ------- | --------------------------- |
+| `limit`    | int    | 10      | Max results (max 50)        |
+| `guildId`  | string | -       | Filter to a specific server |
+| `status`   | string | SETTLED | Airdrop status filter       |
+| `fromDate` | string | -       | Created after this date     |
+| `toDate`   | string | -       | Created before this date    |
 
 Response:
 
 ```json
 [
   {
+    "rank": 1,
     "discordId": "123456789",
     "wallet": "abc123...",
-    "totalTippedUsd": 5000.0
+    "airdropCount": 5,
+    "totalAllocated": "50.000000000",
+    "totalDistributed": "45.000000000"
   }
 ]
 ```
 
-### Get Top Receivers
+### Get Top Rain/Tips Senders
 
 ```http
-GET /api/leaderboard/top-receivers?limit=10
+GET /api/leaderboard/top-rain-senders?limit=10&guildId=123&fromDate=2026-03-01
 ```
+
+| Parameter  | Type   | Default | Description                 |
+| ---------- | ------ | ------- | --------------------------- |
+| `limit`    | int    | 10      | Max results (max 50)        |
+| `guildId`  | string | -       | Filter to a specific server |
+| `fromDate` | string | -       | Created after this date     |
+| `toDate`   | string | -       | Created before this date    |
 
 Response:
 
 ```json
 [
   {
+    "rank": 1,
     "discordId": "123456789",
     "wallet": "abc123...",
-    "totalReceivedUsd": 3500.0
+    "tipCount": 42,
+    "totalUsd": "1500.00"
   }
 ]
+```
+
+### Get Guild Stats
+
+```http
+GET /api/leaderboard/guild-stats?guildId=123456789&fromDate=2026-03-01
+```
+
+| Parameter  | Type   | Required | Description              |
+| ---------- | ------ | -------- | ------------------------ |
+| `guildId`  | string | Yes      | Discord guild ID         |
+| `fromDate` | string | No       | Created after this date  |
+| `toDate`   | string | No       | Created before this date |
+
+Response:
+
+```json
+{
+  "guildId": "123456789",
+  "tips": {
+    "count": 500,
+    "totalVolumeUsd": "15000.00",
+    "uniqueSenders": 80,
+    "uniqueReceivers": 120
+  },
+  "airdrops": {
+    "count": 30,
+    "totalDistributed": "500.000000000"
+  }
+}
+```
+
+### Get User Stats
+
+```http
+GET /api/leaderboard/user-stats?discordId=123456789&guildId=987654321&fromDate=2026-03-01
+```
+
+| Parameter   | Type   | Required | Description                 |
+| ----------- | ------ | -------- | --------------------------- |
+| `discordId` | string | Yes      | Discord user ID             |
+| `guildId`   | string | No       | Filter to a specific server |
+| `fromDate`  | string | No       | Created after this date     |
+| `toDate`    | string | No       | Created before this date    |
+
+Response:
+
+```json
+{
+  "discordId": "123456789",
+  "tipsSent": { "count": 25, "totalUsd": "500.00" },
+  "tipsReceived": { "count": 10, "totalUsd": "200.00" },
+  "airdropsCreated": { "count": 3, "totalDistributed": "150.000000000" },
+  "airdropsWon": 7
+}
+```
+
+### Transaction Report
+
+Fully filterable transaction list with pagination.
+
+```http
+GET /api/leaderboard/transactions?guildId=123&txType=TIP&status=CONFIRMED&minAmountUsd=10&fromDate=2026-03-13&limit=50&offset=0&sortBy=createdAt&sortOrder=desc
+```
+
+| Parameter      | Type   | Default   | Description                                     |
+| -------------- | ------ | --------- | ----------------------------------------------- |
+| `limit`        | int    | 50        | Max results (max 200)                           |
+| `offset`       | int    | 0         | Pagination offset                               |
+| `guildId`      | string | -         | Filter to a specific server                     |
+| `fromId`       | string | -         | Sender Discord ID                               |
+| `toId`         | string | -         | Receiver Discord ID                             |
+| `txType`       | string | -         | `TIP`, `DEPOSIT`, `WITHDRAWAL`, `AIRDROP_CLAIM` |
+| `status`       | string | -         | `PENDING`, `CONFIRMED`, `FAILED`                |
+| `tokenMint`    | string | -         | Token mint address                              |
+| `minAmountUsd` | float  | -         | Minimum USD amount                              |
+| `maxAmountUsd` | float  | -         | Maximum USD amount                              |
+| `fromDate`     | string | -         | Created after this date                         |
+| `toDate`       | string | -         | Created before this date                        |
+| `sortBy`       | string | createdAt | `createdAt`, `amountUsd`, `amountToken`         |
+| `sortOrder`    | string | desc      | `asc` or `desc`                                 |
+
+Response:
+
+```json
+{
+  "total": 1500,
+  "offset": 0,
+  "limit": 50,
+  "data": [
+    {
+      "id": "uuid",
+      "signature": "5Kj8...",
+      "fromId": "123456789",
+      "toId": "987654321",
+      "fromAddress": null,
+      "toAddress": null,
+      "amountUsd": "15.00",
+      "amountToken": "0.100000000",
+      "tokenMint": "So11111111111111111111111111111111111111112",
+      "txType": "TIP",
+      "status": "CONFIRMED",
+      "guildId": "123456789",
+      "createdAt": "2026-03-15T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+### Airdrop Report
+
+Fully filterable airdrop list with pagination.
+
+```http
+GET /api/leaderboard/airdrops?guildId=123&creatorId=456&status=SETTLED&minAmountTotal=10&fromDate=2026-03-13&limit=50&offset=0
+```
+
+| Parameter        | Type   | Default   | Description                                                     |
+| ---------------- | ------ | --------- | --------------------------------------------------------------- |
+| `limit`          | int    | 50        | Max results (max 200)                                           |
+| `offset`         | int    | 0         | Pagination offset                                               |
+| `guildId`        | string | -         | Filter to a specific server                                     |
+| `creatorId`      | string | -         | Creator Discord ID                                              |
+| `status`         | string | -         | `ACTIVE`, `SETTLING`, `SETTLED`, `FAILED`, `RECLAIMED`          |
+| `tokenMint`      | string | -         | Token mint address                                              |
+| `minAmountTotal` | float  | -         | Minimum total amount                                            |
+| `maxAmountTotal` | float  | -         | Maximum total amount                                            |
+| `fromDate`       | string | -         | Created after this date                                         |
+| `toDate`         | string | -         | Created before this date                                        |
+| `sortBy`         | string | createdAt | `createdAt`, `amountTotal`, `amountClaimed`, `participantCount` |
+| `sortOrder`      | string | desc      | `asc` or `desc`                                                 |
+
+Response:
+
+```json
+{
+  "total": 200,
+  "offset": 0,
+  "limit": 50,
+  "data": [
+    {
+      "id": "uuid",
+      "creatorId": "123456789",
+      "amountTotal": "10.000000000",
+      "amountClaimed": "9.500000000",
+      "tokenMint": "So11111111111111111111111111111111111111112",
+      "maxParticipants": 10,
+      "participantCount": 8,
+      "status": "SETTLED",
+      "guildId": "987654321",
+      "channelId": "111222333",
+      "createdAt": "2026-03-15T12:00:00.000Z",
+      "expiresAt": "2026-03-15T13:00:00.000Z",
+      "settledAt": "2026-03-15T13:00:05.000Z"
+    }
+  ]
+}
 ```
 
 ---

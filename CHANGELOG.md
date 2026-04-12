@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/leaderboard` command** (slash + prefix `f lb`) — guild-scoped leaderboards for airdrop creators and rain/tip senders
+- **`/stats` command** (slash + prefix `f stats`) — personal tipping stats (tips sent/received, airdrops created/won)
+- **Guild stats** — server-wide tip volume, unique senders/receivers, and airdrop totals via `f lb guild`
+- **`guildId` field** on Transaction and Airdrop models — enables per-guild reporting and leaderboards
+- **API report endpoints** with full filtering:
+  - `GET /api/leaderboard/transactions` — filterable by guildId, fromId, toId, txType, status, tokenMint, minAmountUsd, maxAmountUsd, date range, sorting, pagination
+  - `GET /api/leaderboard/airdrops` — filterable by guildId, creatorId, status, tokenMint, minAmountTotal, maxAmountTotal, date range, sorting, pagination
+  - `GET /api/leaderboard/user-stats` — per-user stats with optional guildId and date range filters
+  - `GET /api/leaderboard/guild-stats` — guild-wide stats with date range filter
+  - `GET /api/leaderboard/top-airdrop-creators` and `top-rain-senders` — with guildId, status, and date range filters
 - QR code for deposit addresses - scan with mobile wallet to deposit easily
 - Privacy Policy and Terms of Service documentation
 - **Solana network monitor** (`NetworkMonitor` in `packages/solana`) — polls TPS and priority fees every 30s, classifies network as `healthy`, `degraded`, or `congested`

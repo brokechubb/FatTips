@@ -71,11 +71,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           'ℹ️ *On-chain network fees are automatically deducted from the total pot.*',
       },
       {
-        name: '📜 History & Settings',
+        name: '📜 History & Stats',
         value:
           `\`${prefix}history\` - View your last 5 transactions.\n` +
+          `\`${prefix}stats\` - View your tipping stats.\n` +
+          `\`${prefix}leaderboard\` - View server leaderboards (airdrops/rain).\n` +
           `\`${prefix}setprefix <new>\` - Change server prefix (Admin only).\n` +
-          `*Slash:* \`/history\``,
+          `*Slash:* \`/history\`, \`/stats\`, \`/leaderboard\``,
       },
       {
         name: '🆘 Support',
@@ -111,8 +113,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           'ℹ️ *Note: A minimum reserve of ~0.0009 SOL is kept to keep your wallet active.*',
       },
       {
-        name: '📜 History',
-        value: '`/history` - View your last 5 transactions.',
+        name: '📜 History & Stats',
+        value:
+          '`/history` - View your last 5 transactions.\n' + '`/stats` - View your tipping stats.',
       },
       {
         name: '🆘 Support',

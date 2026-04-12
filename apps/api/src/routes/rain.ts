@@ -119,7 +119,7 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
     }
 
     const balances = await balanceService.getBalances(creator.walletPubkey);
-    const feeBuffer = 0.00002;
+    const feeBuffer = 0.001;
     const rentReserve = 0.00089088;
 
     if (token === 'SOL') {

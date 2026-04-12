@@ -21,7 +21,7 @@ import { transactionQueue, generateJobId } from '../queues/transaction.queue';
 
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
-const FEE_BUFFER = 0.00002; // SOL - standard fee buffer
+const FEE_BUFFER = 0.001; // SOL - standard fee buffer (~$0.15)
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
@@ -106,7 +106,7 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
     if (parsedAmount.type === 'max') {
       // Handle max/all - calculate based on actual balance
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00002;
+      const feeBuffer = FEE_BUFFER;
       const rentReserve = MIN_RENT_EXEMPTION;
 
       if (tokenSymbol === 'SOL') {
@@ -157,7 +157,7 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
     let isAdjusted = false;
     if (!skipBalanceCheck) {
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = 0.00002;
+      const feeBuffer = FEE_BUFFER;
       const rentReserve = MIN_RENT_EXEMPTION;
       const epsilon = 0.000001;
 
@@ -236,6 +236,7 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
         usdValuePerUser: usdValue,
         channelId: interaction.channelId!,
         messageId: publicMsg?.id, // Pass the PUBLIC message ID
+        guildId: interaction.guildId ?? undefined,
       },
       { jobId }
     );
@@ -286,8 +287,8 @@ function parseAmountInput(input: string): ParsedAmount {
     return { valid: true, type: 'max', value: 0, token: maxTokenMatch[2]?.toUpperCase() || 'SOL' };
 
   const usdMatch =
-    trimmed.match(/^\$(\d+\.?\d*)\s*([a-zA-Z]*)?$/i) ||
-    trimmed.match(/^(\d+\.?\d*)\$\s*([a-zA-Z]*)?$/i);
+    trimmed.match(/^\$(\d+(?:\.\d+)?|\.\d+)\s*([a-zA-Z]*)?$/i) ||
+    trimmed.match(/^(\d+(?:\.\d+)?|\.\d+)\$\s*([a-zA-Z]*)?$/i);
   if (usdMatch) {
     const value = parseFloat(usdMatch[1]);
     if (isNaN(value) || value <= 0) return { valid: false, value: 0, error: 'Invalid USD amount' };

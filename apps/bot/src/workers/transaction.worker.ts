@@ -31,6 +31,7 @@ export function initTransactionWorker(client: Client) {
         usdValuePerUser,
         channelId,
         messageId,
+        guildId,
       } = job.data;
 
       console.log(`[Worker] Processing job ${job.id}: ${type} from ${senderDiscordId}`);
@@ -84,7 +85,7 @@ export function initTransactionWorker(client: Client) {
           type === 'WITHDRAWAL' ? amountPerUser : amountPerUser * (recipientWallets.length || 1);
 
         const MIN_RENT_EXEMPTION = 0.00089088;
-        const FEE_BUFFER = 0.00002;
+        const FEE_BUFFER = 0.001;
 
         if (tokenMint === TOKEN_MINTS.SOL) {
           // For withdrawals, the command handler already subtracted fees from the amount,
@@ -171,6 +172,7 @@ export function initTransactionWorker(client: Client) {
               usdRate: usdValuePerUser > 0 ? usdValuePerUser / amountPerUser : 0,
               txType: 'WITHDRAWAL',
               status: 'CONFIRMED',
+              guildId: guildId,
             },
           });
         } else {
@@ -189,6 +191,7 @@ export function initTransactionWorker(client: Client) {
                 usdRate: usdValuePerUser > 0 ? usdValuePerUser / amountPerUser : 0,
                 txType: type === 'RAIN' ? 'TIP' : type,
                 status: 'CONFIRMED',
+                guildId: guildId,
               },
             });
           }

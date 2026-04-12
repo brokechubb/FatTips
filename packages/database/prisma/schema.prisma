@@ -41,38 +41,42 @@ model Transaction {
   usdRate           Decimal  @db.Decimal(20, 9)
   txType            TxType
   status            TxStatus
+  guildId           String?
   createdAt         DateTime @default(now())
 
   @@index([fromId, createdAt])
   @@index([toId, createdAt])
   @@index([status])
+  @@index([guildId])
 }
 
 model Airdrop {
-  id                String   @id @default(uuid())
-  walletPubkey      String   @unique // Ephemeral wallet public key
-  encryptedPrivkey  String   // Ephemeral private key (encrypted)
-  keySalt           String   // Encryption salt
-  creatorId         String
-  creator           User     @relation("Creator", fields: [creatorId], references: [discordId])
-  amountTotal       Decimal  @db.Decimal(20, 9)
-  amountClaimed     Decimal  @default(0) @db.Decimal(20, 9)
-  tokenMint         String
-  maxParticipants   Int?     // Optional cap
-  participantCount  Int      @default(0)
-  status            AirdropStatus @default(ACTIVE)
-  expiresAt         DateTime
-  settledAt         DateTime?
-  cleanedUpAt       DateTime? // Timestamp when residual funds were drained
-  createdAt         DateTime @default(now())
-  channelId         String   // Channel where airdrop was created
-  messageId         String?  // ID of the embed message
+  id              String        @id @default(uuid())
+  walletPubkey    String        @unique // Ephemeral wallet public key
+  encryptedPrivkey String      // Ephemeral private key (encrypted)
+  keySalt         String        // Encryption salt
+  creatorId       String
+  creator         User          @relation("Creator", fields: [creatorId], references: [discordId])
+  amountTotal     Decimal       @db.Decimal(20, 9)
+  amountClaimed   Decimal       @default(0) @db.Decimal(20, 9)
+  tokenMint       String
+  maxParticipants Int?          // Optional cap
+  participantCount Int          @default(0)
+  status          AirdropStatus @default(ACTIVE)
+  expiresAt       DateTime
+  settledAt       DateTime?
+  cleanedUpAt     DateTime? // Timestamp when residual funds were drained
+  createdAt       DateTime      @default(now())
+  guildId         String?
+  channelId       String        // Channel where airdrop was created
+  messageId       String?       // ID of the embed message
 
-  participants      AirdropParticipant[]
+  participants AirdropParticipant[]
 
   @@index([status, expiresAt])
   @@index([creatorId])
   @@index([cleanedUpAt])
+  @@index([guildId])
 }
 
 model AirdropParticipant {
