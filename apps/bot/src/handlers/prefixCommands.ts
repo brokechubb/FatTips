@@ -2295,18 +2295,26 @@ async function showPrefixGuildStats(message: Message, guildId: string) {
 
 // ============ STATS ============
 async function handleStats(message: Message) {
+  const mentionedUser = message.mentions.users.first();
+  const targetId = mentionedUser?.id || message.author.id;
+  const isSelf = targetId === message.author.id;
+
   const user = await prisma.user.findUnique({
-    where: { discordId: message.author.id },
+    where: { discordId: targetId },
   });
 
   if (!user) {
-    await message.reply("You don't have a wallet yet! Use `f wallet create` to get started.");
+    await message.reply(
+      isSelf
+        ? "You don't have a wallet yet! Use `f wallet create` to get started."
+        : `<@${targetId}> doesn't have a wallet yet.`
+    );
     return;
   }
 
   const sentTips = await prisma.transaction.aggregate({
     where: {
-      fromId: message.author.id,
+      fromId: targetId,
       txType: 'TIP',
       status: 'CONFIRMED',
     },
@@ -2316,7 +2324,7 @@ async function handleStats(message: Message) {
 
   const receivedTips = await prisma.transaction.aggregate({
     where: {
-      toId: message.author.id,
+      toId: targetId,
       txType: 'TIP',
       status: 'CONFIRMED',
     },
@@ -2326,7 +2334,7 @@ async function handleStats(message: Message) {
 
   const airdropsCreated = await prisma.airdrop.aggregate({
     where: {
-      creatorId: message.author.id,
+      creatorId: targetId,
       status: 'SETTLED',
     },
     _sum: { amountClaimed: true },
@@ -2335,7 +2343,7 @@ async function handleStats(message: Message) {
 
   const airdropsWon = await prisma.airdropParticipant.count({
     where: {
-      userId: message.author.id,
+      userId: targetId,
     },
   });
 
@@ -2347,7 +2355,9 @@ async function handleStats(message: Message) {
     ? Number(airdropsCreated._sum.amountClaimed).toFixed(2)
     : '0.00';
 
-  const embed = new EmbedBuilder().setTitle(`📊 Your Stats`).setColor(0x5865f2).setTimestamp();
+  const title = isSelf ? '📊 Your Stats' : `📊 ${mentionedUser!.username}'s Stats`;
+
+  const embed = new EmbedBuilder().setTitle(title).setColor(0x5865f2).setTimestamp();
 
   embed.addFields(
     {
