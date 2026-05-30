@@ -5,7 +5,6 @@ import {
   EmbedBuilder,
   InteractionContextType,
   ApplicationIntegrationType,
-  TextChannel,
   ButtonBuilder,
   ButtonStyle,
   ActionRowBuilder,
@@ -26,13 +25,8 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
 import { networkMonitor } from '../index';
 
-// Discord error codes
-const DISCORD_CANNOT_DM = 50007;
-
-// Solana constants
-const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
-const FEE_BUFFER = 0.001; // SOL - standard fee buffer (~$0.15)
-const MIN_SOL_FOR_GAS = 0.001; // Minimum SOL required for gas fees
+const MIN_RENT_EXEMPTION = 0.00089088;
+const MIN_SOL_FOR_GAS = 0.001;
 const ATA_RENT_EXEMPTION = 0.002; // SOL - rent for creating associated token account
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
@@ -162,7 +156,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           newWallets.push({ id: recipientId, key: wallet.privateKeyBase58 });
         } catch (error) {
           console.error(`Error creating wallet for ${recipientId}:`, error);
-          continue; // Skip failed creations
+          await interaction.editReply({
+            content: '❌ Failed to create a wallet for one of the recipients. Please try again.',
+          });
+          return;
         }
       }
       recipientWallets.push(recipient);
@@ -180,8 +177,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    let tokenSymbol: string;
-    let tokenMint: string;
     let totalAmountToken: number;
     let amountPerUser: number;
     let usdValuePerUser: number;
@@ -192,17 +187,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       USDT: { symbol: 'USDT', mint: TOKEN_MINTS.USDT },
     };
 
-    // Smart token detection for max
     let preferredToken = parsedAmount.token ? parsedAmount.token.toUpperCase() : null;
 
     if (parsedAmount.type === 'max' && !preferredToken) {
-      // Auto-detect based on available balance
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = FEE_BUFFER;
-      const rentReserve = MIN_RENT_EXEMPTION;
 
-      // Check which token has significant balance
-      if (balances.sol > feeBuffer + rentReserve) {
+      if (balances.sol > MIN_SOL_FOR_GAS + MIN_RENT_EXEMPTION) {
         preferredToken = 'SOL';
       } else if (balances.usdc > 0) {
         preferredToken = 'USDC';
@@ -217,16 +207,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (!preferredToken) preferredToken = tokenPreference;
 
     const selectedToken = tokenMap[preferredToken] || tokenMap['SOL'];
-    tokenSymbol = selectedToken.symbol;
-    tokenMint = selectedToken.mint;
+    const tokenSymbol = selectedToken.symbol;
+    const tokenMint = selectedToken.mint;
 
     if (parsedAmount.type === 'max') {
       const balances = await balanceService.getBalances(sender.walletPubkey);
-      const feeBuffer = FEE_BUFFER;
-      const rentReserve = MIN_RENT_EXEMPTION;
 
       if (tokenSymbol === 'SOL') {
-        totalAmountToken = Math.max(0, balances.sol - feeBuffer - rentReserve);
+        totalAmountToken = Math.max(0, balances.sol - MIN_SOL_FOR_GAS - MIN_RENT_EXEMPTION);
       } else if (tokenSymbol === 'USDC') {
         totalAmountToken = balances.usdc;
       } else {
@@ -296,7 +284,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     // 5. Check Balance
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = FEE_BUFFER; // Covers priority fees
+    const feeBuffer = MIN_SOL_FOR_GAS;
     const rentReserve = MIN_RENT_EXEMPTION;
     let isAdjusted = false;
 
@@ -352,6 +340,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                 resolve(false);
                 return;
               }
+              await i.deferUpdate();
               collector.stop();
               resolve(true);
             });
@@ -458,23 +447,28 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // 7. Log & Respond
     // For batch transactions, append an index to the signature to satisfy the unique constraint
     // The real Solana signature can be extracted by splitting on ':'
-    for (let i = 0; i < recipientWallets.length; i++) {
-      const recipient = recipientWallets[i];
-      const batchSignature = recipientWallets.length > 1 ? `${signature}:${i}` : signature;
-      await prisma.transaction.create({
-        data: {
-          signature: batchSignature,
-          fromId: sender.discordId,
-          toId: recipient.discordId,
-          amountUsd: usdValuePerUser,
-          amountToken: amountPerUser,
-          tokenMint,
-          usdRate: usdValuePerUser > 0 ? usdValuePerUser / amountPerUser : 0,
-          txType: 'TIP', // Rain is a type of tip
-          status: 'CONFIRMED',
-        },
-      });
-
+    const logEntries = recipientWallets.map((recipient, i) => ({
+      recipient,
+      batchSignature: recipientWallets.length > 1 ? `${signature}:${i}` : signature,
+    }));
+    await prisma.$transaction(
+      logEntries.map(({ recipient, batchSignature }) =>
+        prisma.transaction.create({
+          data: {
+            signature: batchSignature,
+            fromId: sender.discordId,
+            toId: recipient.discordId,
+            amountUsd: usdValuePerUser,
+            amountToken: amountPerUser,
+            tokenMint,
+            usdRate: usdValuePerUser > 0 ? usdValuePerUser / amountPerUser : 0,
+            txType: 'TIP', // Rain is a type of tip
+            status: 'CONFIRMED',
+          },
+        })
+      )
+    );
+    for (const { recipient, batchSignature } of logEntries) {
       logTransaction('TIP', {
         fromId: sender.discordId,
         toId: recipient.discordId,
@@ -533,8 +527,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           setTimeout(async () => {
             try {
               await sentMsg.edit('🔒 **Key removed for security.**');
-            } catch {}
-          }, 900000);
+    } catch {
+      // Key redaction failed, non-critical
+    }
+  }, 900000);
 
           const guideEmbed = new EmbedBuilder()
             .setTitle('🚀 Welcome to FatTips')
@@ -549,7 +545,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         } else {
           await user.send(msg);
         }
-      } catch (error: any) {
+      } catch {
         const isNew = newWallets.find((w) => w.id === recipient.discordId);
         if (isNew) {
           failedDMs.push(recipient.discordId);
@@ -572,13 +568,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           content: fallbackMsg,
           allowedMentions: { users: failedDMs },
         });
-      } catch {}
+      } catch {
+        // followUp failed, non-critical
+      }
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error in rain command:', error);
     try {
       await interaction.editReply({ content: '❌ An unexpected error occurred.' });
-    } catch {}
+    } catch {
+      // editReply failed
+    }
   }
 }
 

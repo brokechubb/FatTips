@@ -28,25 +28,25 @@ router.post('/create', async (req, res) => {
 
     const wallet = await walletService.createEncryptedWallet();
 
-    const user = await prisma.user.create({
-      data: {
-        discordId,
-        walletPubkey: wallet.publicKey,
-        encryptedPrivkey: wallet.encryptedPrivateKey,
-        keySalt: wallet.keySalt,
-        encryptedMnemonic: wallet.encryptedMnemonic,
-        mnemonicSalt: wallet.mnemonicSalt,
-        seedDelivered: false,
-      },
-    });
-
-    res.json({
-      success: true,
+  await prisma.user.create({
+    data: {
       discordId,
       walletPubkey: wallet.publicKey,
-      privateKey: wallet.privateKeyBase58,
-      mnemonic: wallet.mnemonic,
-    });
+      encryptedPrivkey: wallet.encryptedPrivateKey,
+      keySalt: wallet.keySalt,
+      encryptedMnemonic: wallet.encryptedMnemonic,
+      mnemonicSalt: wallet.mnemonicSalt,
+      seedDelivered: false,
+    },
+  });
+
+  res.json({
+    success: true,
+    discordId,
+    walletPubkey: wallet.publicKey,
+    privateKey: wallet.privateKeyBase58,
+    mnemonic: wallet.mnemonic,
+  });
   } catch (error) {
     console.error('Error creating wallet:', error);
     res.status(500).json({ error: 'Failed to create wallet' });

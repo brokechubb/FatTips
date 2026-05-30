@@ -39,7 +39,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         name: '💰 Balance & Wallet',
         value:
           `\`${prefix}balance\` - View your SOL/USDC/USDT balance and public address.\n` +
-          `\`${prefix}deposit\` - Show your wallet address for deposits.\n` +
+          `\`${prefix}deposit\` - Show your Solana address for deposits.\n` +
           `\`${prefix}wallet create\` - Create a new wallet (if you don't have one).\n` +
           `\`${prefix}wallet export-key\` - Reveal your private key (DM only).\n` +
           `*Slash:* \`/balance\`, \`/deposit\`, \`/wallet action:create\`, \`/wallet action:export-key\``,
@@ -91,7 +91,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         name: '💰 Balance & Wallet',
         value:
           '`/balance` - View your SOL/USDC/USDT balance and public address.\n' +
-          '`/deposit` - Show your wallet address for deposits.\n' +
+          '`/deposit` - Show your Solana address for deposits.\n' +
           "`/wallet action:create` - Create a new wallet (if you don't have one).\n" +
           '`/wallet action:export-key` - Reveal your private key (DM only).\n' +
           '`/wallet action:clear-dms` - Delete bot messages from your DMs.',

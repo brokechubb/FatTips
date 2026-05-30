@@ -18,7 +18,7 @@ export class ActivityService {
     // Try to write to Redis for cross-instance sharing
     try {
       await redisActivityService.recordActivity(userId, channelId);
-    } catch (error) {
+    } catch {
       console.warn('Redis activity write failed, using memory cache only');
     }
   }
@@ -34,7 +34,7 @@ export class ActivityService {
       if (redisUsers.length > 0) {
         return redisUsers;
       }
-    } catch (error) {
+    } catch {
       console.warn('Redis activity read failed, using memory cache');
     }
 

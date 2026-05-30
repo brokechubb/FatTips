@@ -36,13 +36,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const attachment = new AttachmentBuilder(qrBuffer, { name: 'deposit-qr.png' });
 
     const embed = new EmbedBuilder()
-      .setTitle('Your Deposit Address')
+      .setTitle('Your Solana Deposit Address')
       .setImage('attachment://deposit-qr.png')
       .addFields({
-        name: 'Address',
+        name: 'Solana Address',
         value: `\`\`\`\n${user.walletPubkey}\n\`\`\``,
       })
-      .setDescription('Scan with your wallet app or copy the address above to deposit.')
+      .setDescription('Scan with your Solana wallet app or copy the address above to deposit SOL, USDC, or USDT.')
       .setColor(0x00aaff)
       .setTimestamp();
 
@@ -50,6 +50,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       embeds: [embed],
       files: [attachment],
     });
+
+    try {
+      await interaction.user.send(
+        `Your FatTips Solana deposit address:\n\`\`\`\n${user.walletPubkey}\n\`\`\`\nKeep this message for easy copying. Only send SOL, USDC, or USDT on the Solana network to this address.`
+      );
+    } catch {
+      // DMs disabled — user already has the ephemeral response
+    }
   } catch (error) {
     console.error('Error fetching deposit address:', error);
     await interaction.editReply({

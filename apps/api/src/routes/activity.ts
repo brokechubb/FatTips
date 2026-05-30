@@ -3,11 +3,6 @@ import { redisActivityService } from 'fattips-shared';
 
 const router: Router = Router();
 
-interface ActiveUsersRequest {
-  channelId: string;
-  minutes?: number;
-}
-
 /**
  * GET /api/activity/active-users
  * Get list of active users in a Discord channel

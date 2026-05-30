@@ -352,6 +352,22 @@ export class TransactionService {
           }
         }
 
+        // Transient RPC error (e.g. Helius "Internal error", -32603) — retry with fresh blockhash
+        const isRpcError =
+          error instanceof Error &&
+          (error.message.includes('Internal error') ||
+            error.message.includes('failed to get signature status') ||
+            (error as any).code === -32603 ||
+            (error as any).code === -32000);
+        if (isRpcError && attempt < maxRetries - 1) {
+          console.warn(
+            `[TransactionService] Transient RPC error on attempt ${attempt + 1}/${maxRetries}, retrying: ${(error as Error).message}`
+          );
+          await new Promise((r) => setTimeout(r, 2_000));
+          onRetry?.(attempt + 1);
+          continue;
+        }
+
         // Unknown error — throw immediately
         throw error;
       }
