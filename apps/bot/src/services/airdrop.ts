@@ -4,21 +4,17 @@ import { prisma } from 'fattips-database';
 import { withDatabaseRetry } from 'fattips-database/dist/utils';
 import { logger, logTransaction } from '../utils/logger';
 import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
+import { Connection, PublicKey } from '@solana/web3.js';
 
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
 const FEE_BUFFERS = {
-  TINY: 0.00001, // SOL - for single transactions
-  STANDARD: 0.001, // SOL - for most operations (covers priority fees)
-  BATCH: 0.000005, // SOL - per transaction in batch
-  AIRDROP_GAS: 0.003, // SOL - for ephemeral wallets
-};
-const RENT_RESERVES = {
-  STANDARD: MIN_RENT_EXEMPTION,
-  SAFETY: 0.001, // SOL - old value for compatibility
+  TINY: 0.00001,
+  STANDARD: 0.001,
+  BATCH: 0.000005,
+  AIRDROP_GAS: 0.003,
 };
 
-// Discord error codes
 const DISCORD_ERRORS = {
   CANNOT_DM_USER: 50007,
   MISSING_ACCESS: 50001,
@@ -32,7 +28,6 @@ export class AirdropService {
   private transactionService: TransactionService;
   private walletService: WalletService;
   private balanceService: BalanceService;
-  private settleRetryCount: Map<string, number> = new Map();
 
   constructor() {
     this.transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
@@ -150,7 +145,7 @@ export class AirdropService {
           newWalletCreated = true;
 
           // Try to send DM with private key using robust utility
-          const { sendPrivateKeyDM } = require('../utils/keyCleanup');
+          const { sendPrivateKeyDM } = await import('../utils/keyCleanup.js');
           const dmResult = await sendPrivateKeyDM(
             interaction.client as Client,
             interaction.user.id,
@@ -248,10 +243,14 @@ export class AirdropService {
         updatedAirdrop.maxParticipants &&
         updatedAirdrop.participantCount >= updatedAirdrop.maxParticipants
       ) {
-        // Trigger settlement immediately
+        // Trigger settlement immediately (non-blocking — don't await so the claim reply sends first)
         logger.info(`Airdrop ${airdropId} reached max participants. Settling...`);
-        // Use setImmediate to not block the reply
-        setImmediate(() => this.settleAirdrop(updatedAirdrop, interaction.client));
+        setImmediate(() => {
+          this.settleAirdrop(updatedAirdrop, interaction.client).catch((err) => {
+            logger.error(`[AIRDROP] Settlement failed for ${airdropId} after max participants reached:`, err);
+            Sentry.captureException(err, { tags: { airdropId, trigger: 'max_participants' } });
+          });
+        });
       }
     } catch (error) {
       logger.error('Error claiming airdrop:', error);
@@ -380,7 +379,6 @@ export class AirdropService {
             data: { status: 'FAILED', amountClaimed: 0, settledAt: new Date() },
           })
         );
-        this.settleRetryCount.delete(airdrop.id);
         return;
       }
 
@@ -469,8 +467,6 @@ export class AirdropService {
               data: { status: 'EXPIRED', settledAt: new Date() },
             })
           );
-
-          this.settleRetryCount.delete(airdrop.id);
 
           // Update original message only
           await this.endAirdropMessage(client, airdrop, 0, 0, tokenSymbol);
@@ -643,9 +639,17 @@ export class AirdropService {
       }
 
       // 2. Distribute Funds (walletKeypair already initialized above)
-      let successCount = 0;
+      // Count already-transferred winners so successCount stays accurate on retries
+      let successCount = winners.filter((w: any) => w.status === 'TRANSFERRED').length;
+
+      // Connection for on-chain account existence checks
+      const connection = new Connection(process.env.SOLANA_RPC_URL!, 'confirmed');
+      const rentExemptMin = await connection.getMinimumBalanceForRentExemption(0);
 
       for (const winner of winners) {
+        // Skip winners already paid (handles crash-recovery retries without double-paying)
+        if (winner.status === 'TRANSFERRED') continue;
+
         try {
           // Get or Create Winner Wallet
           let user = await withDatabaseRetry(() =>
@@ -681,7 +685,9 @@ export class AirdropService {
                       await dmMsg.edit(
                         '🔒 **Private Key removed for security.** Use `/wallet action:export-key` to view it again.'
                       );
-                    } catch {}
+                    } catch {
+                      // Key redaction failed, non-critical
+                    }
                   }, 900000);
                 },
               }
@@ -697,11 +703,27 @@ export class AirdropService {
             }
           }
 
+          // For SOL transfers: if the recipient account doesn't exist on-chain, the runtime
+          // requires the transfer to be at least rent-exempt (0.00089088 SOL) or it will fail.
+          // Send the larger of the promised share or the rent-exempt minimum.
+          let amountToSend = share;
+          if (tokenMint === TOKEN_MINTS.SOL) {
+            const recipientInfo = await connection.getAccountInfo(
+              new PublicKey(user.walletPubkey),
+              'confirmed'
+            );
+            const recipientBalance = recipientInfo?.lamports ?? 0;
+            const rentExemptSol = (rentExemptMin + 1000) / 1e9; // lamports → SOL with buffer
+            if (recipientBalance < rentExemptMin && share < rentExemptSol) {
+              amountToSend = rentExemptSol;
+            }
+          }
+
           // Transfer
           const signature = await this.transactionService.transfer(
             walletKeypair,
             user.walletPubkey,
-            share,
+            amountToSend,
             tokenMint
           );
 
@@ -756,6 +778,17 @@ export class AirdropService {
         }
       }
 
+      // 3. Fail if any participants weren't paid — triggers retry in catch block
+      if (successCount < winners.length) {
+        const failedCount = winners.length - successCount;
+        logger.error(
+          `[AIRDROP] ${failedCount}/${winners.length} winners failed to pay. Reverting to ACTIVE for retry.`
+        );
+        throw new Error(
+          `Failed to pay ${failedCount}/${winners.length} winners. Reverting to ACTIVE for retry.`
+        );
+      }
+
       // 3. Update Status
       await withDatabaseRetry(() =>
         prisma.airdrop.update({
@@ -770,8 +803,10 @@ export class AirdropService {
         })
       );
 
-      // Clear retry counter on success
-      this.settleRetryCount.delete(airdrop.id);
+      // Reset retry counter on success
+      await withDatabaseRetry(() =>
+        prisma.airdrop.update({ where: { id: airdrop.id }, data: { settleRetries: 0 } })
+      );
 
       // 4. Notify (Updating original message only, no new message)
       // this.notifyChannel(...) // Removed as per request
@@ -787,23 +822,34 @@ export class AirdropService {
         },
       });
 
-      // Track retry count
-      const retries = (this.settleRetryCount.get(airdrop.id) || 0) + 1;
-      this.settleRetryCount.set(airdrop.id, retries);
+      // Increment persistent retry count (survives process restarts)
+      const retries = (airdrop.settleRetries ?? 0) + 1;
+      await withDatabaseRetry(() =>
+        prisma.airdrop.update({ where: { id: airdrop.id }, data: { settleRetries: retries } })
+      ).catch(() => {}); // best-effort — don't mask the original error
 
       if (retries >= MAX_SETTLE_RETRIES) {
-        // Max retries exceeded — mark as FAILED to stop the loop
+        // Max retries exceeded — mark as FAILED to stop the loop.
+        // Preserve amountClaimed for any participants that were successfully paid before the crash.
         logger.error(
           `[AIRDROP] Airdrop ${airdrop.id} failed ${retries} times. Marking as FAILED to stop retry loop.`
         );
         try {
+          const alreadyPaid = await prisma.airdropParticipant.aggregate({
+            where: { airdropId: airdrop.id, status: 'TRANSFERRED' },
+            _sum: { shareAmount: true },
+          });
+          const paidAmount = Number(alreadyPaid._sum.shareAmount ?? 0);
           await withDatabaseRetry(() =>
             prisma.airdrop.update({
               where: { id: airdrop.id },
-              data: { status: 'FAILED', amountClaimed: 0, settledAt: new Date() },
+              data: {
+                status: 'FAILED',
+                amountClaimed: paidAmount > 0 ? paidAmount : 0,
+                settledAt: new Date(),
+              },
             })
           );
-          this.settleRetryCount.delete(airdrop.id);
         } catch (failError) {
           logger.error(
             `[AIRDROP] CRITICAL: Failed to mark airdrop ${airdrop.id} as FAILED:`,
@@ -811,7 +857,8 @@ export class AirdropService {
           );
         }
       } else {
-        // Revert to ACTIVE so the settlement loop will retry (up to MAX_SETTLE_RETRIES)
+        // Revert to ACTIVE so the settlement loop will retry (up to MAX_SETTLE_RETRIES).
+        // The retry will skip already-TRANSFERRED participants.
         try {
           await withDatabaseRetry(() =>
             prisma.airdrop.updateMany({

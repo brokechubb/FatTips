@@ -130,16 +130,13 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
       },
     });
 
-    // Calculate gas buffer for the airdrop wallet
-    // The airdrop wallet needs:
-    // 1. Rent exemption (0.00089 SOL) - minimum to keep the account alive
-    // 2. Transaction fees (0.000005 SOL per winner) - actual cost to send transactions
-    // 3. Safety buffer (0.001 SOL) - for priority fees and unexpected costs
+    // Calculate gas buffer for the airdrop wallet.
+    // Settlement reserves FEE_BUFFERS.STANDARD (0.001 SOL) per winner for fees + priority fees,
+    // plus rent exemption for the pool wallet itself.
     const winnerCount = maxWinners || 100; // Default to 100 if not specified
-    const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption (one-time, not per winner!)
-    const TX_FEE = 0.000005; // Per transaction fee
-    const SAFETY_BUFFER = 0.001; // Extra buffer for priority fees
-    const GAS_BUFFER = RENT_EXEMPTION + winnerCount * TX_FEE + SAFETY_BUFFER;
+    const RENT_EXEMPTION = 0.00089088; // Rent-exempt minimum for the pool wallet account
+    const FEE_PER_WINNER = 0.001; // Matches FEE_BUFFERS.STANDARD used by settlement
+    const GAS_BUFFER = RENT_EXEMPTION + winnerCount * FEE_PER_WINNER;
 
     let fundingAmountSol = 0;
     let fundingAmountToken = 0;

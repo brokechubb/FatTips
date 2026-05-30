@@ -92,7 +92,7 @@ export function initTransactionWorker(client: Client) {
           // so only check that we have enough for the transfer itself
           const required =
             type === 'WITHDRAWAL' ? totalAmount : totalAmount + FEE_BUFFER + MIN_RENT_EXEMPTION;
-          if (balances.sol < required) {
+          if (balances.sol < required - 0.000001) {
             throw new Error(
               `Insufficient SOL at execution time. Need ${required.toFixed(6)}, have ${balances.sol.toFixed(6)}. ` +
                 `Balance may have changed since the command was issued.`
@@ -100,7 +100,7 @@ export function initTransactionWorker(client: Client) {
           }
         } else {
           const tokenBal = tokenMint === TOKEN_MINTS.USDC ? balances.usdc : balances.usdt;
-          if (tokenBal < totalAmount) {
+          if (tokenBal < totalAmount - 0.000001) {
             throw new Error(
               `Insufficient ${tokenSymbol} at execution time. Need ${totalAmount.toFixed(6)}, have ${tokenBal.toFixed(6)}. ` +
                 `Balance may have changed since the command was issued.`
@@ -300,8 +300,8 @@ export function initTransactionWorker(client: Client) {
               const user = await client.users.fetch(recipient.discordId);
               const msg = `💸 You received **${amountPerUser.toFixed(4)} ${tokenSymbol}** (~$${usdValuePerUser.toFixed(2)}) from ${senderUsername || 'a user'}!`;
               await user.send(msg);
-            } catch (e) {
-              console.error(`Failed to DM user ${recipient.discordId}`);
+            } catch {
+              // DM failed, non-critical
             }
           }
         }

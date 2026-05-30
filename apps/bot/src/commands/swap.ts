@@ -397,8 +397,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       if (reason === 'time') {
         try {
           await interaction.editReply({ content: '❌ Swap timed out.', components: [] });
-        } catch (e) {
-          // ignore
+        } catch {
+          // ignore edit failure on timeout
         }
       }
     });

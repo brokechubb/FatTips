@@ -165,7 +165,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           newWallets.push({ id: recipientId, key: wallet.privateKeyBase58 });
         } catch (error) {
           console.error(`Error creating wallet for ${recipientId}:`, error);
-          continue; // Skip failed creations
+          await interaction.editReply({
+            content: '❌ Failed to create a wallet for one of the recipients. Please try again.',
+          });
+          return;
         }
       }
       recipientWallets.push(recipient);
@@ -401,6 +404,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                 resolve(false);
                 return;
               }
+              await i.deferUpdate();
               collector.stop();
               resolve(true);
             });
@@ -507,23 +511,28 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // 1. Log Transactions to DB
     // For batch transactions, append an index to the signature to satisfy the unique constraint
     // The real Solana signature can be extracted by splitting on ':'
-    for (let i = 0; i < recipientWallets.length; i++) {
-      const recipient = recipientWallets[i];
-      const batchSignature = recipientWallets.length > 1 ? `${signature}:${i}` : signature;
-      await prisma.transaction.create({
-        data: {
-          signature: batchSignature,
-          fromId: sender.discordId,
-          toId: recipient.discordId,
-          amountUsd: usdValuePerUser,
-          amountToken: amountPerUser,
-          tokenMint,
-          usdRate: usdValuePerUser > 0 ? usdValuePerUser / amountPerUser : 0,
-          txType: 'TIP',
-          status: 'CONFIRMED',
-        },
-      });
-
+    const logEntries = recipientWallets.map((recipient, i) => ({
+      recipient,
+      batchSignature: recipientWallets.length > 1 ? `${signature}:${i}` : signature,
+    }));
+    await prisma.$transaction(
+      logEntries.map(({ recipient, batchSignature }) =>
+        prisma.transaction.create({
+          data: {
+            signature: batchSignature,
+            fromId: sender.discordId,
+            toId: recipient.discordId,
+            amountUsd: usdValuePerUser,
+            amountToken: amountPerUser,
+            tokenMint,
+            usdRate: usdValuePerUser > 0 ? usdValuePerUser / amountPerUser : 0,
+            txType: 'TIP',
+            status: 'CONFIRMED',
+          },
+        })
+      )
+    );
+    for (const { recipient, batchSignature } of logEntries) {
       logTransaction('TIP', {
         fromId: sender.discordId,
         toId: recipient.discordId,
@@ -571,7 +580,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         const user = await interaction.client.users.fetch(recipient.discordId);
         const isNew = newWallets.find((w) => w.id === recipient.discordId);
 
-        let msg = `🎉 You received **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** (~$${usdValuePerUser.toFixed(2)}) from ${interaction.user.username}!`;
+        const msg = `🎉 You received **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** (~$${usdValuePerUser.toFixed(2)}) from ${interaction.user.username}!`;
 
         if (isNew) {
           await user.send(msg);

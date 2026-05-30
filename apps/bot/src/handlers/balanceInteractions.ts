@@ -10,25 +10,14 @@ import {
 } from 'discord.js';
 import { prisma } from 'fattips-database';
 import { PublicKey } from '@solana/web3.js';
-import {
-  BalanceService,
-  PriceService,
-  TransactionService,
-  WalletService,
-  TOKEN_MINTS,
-  ConversionResult,
-} from 'fattips-solana';
-import { logTransaction } from '../utils/logger';
+import { BalanceService, PriceService, TOKEN_MINTS } from 'fattips-solana';
 import { transactionQueue } from '../queues/transaction.queue';
 import { generateDepositQR } from '../utils/qr';
 
-// Solana constants
-const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
-const FEE_BUFFER = 0.001; // SOL - standard fee buffer (~$0.15)
+const MIN_RENT_EXEMPTION = 0.00089088;
+const FEE_BUFFER = 0.001;
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
-const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
-const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
 const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
 
 export async function handleBalanceDeposit(interaction: ButtonInteraction) {
@@ -50,13 +39,13 @@ export async function handleBalanceDeposit(interaction: ButtonInteraction) {
     const attachment = new AttachmentBuilder(qrBuffer, { name: 'deposit-qr.png' });
 
     const embed = new EmbedBuilder()
-      .setTitle('Your Deposit Address')
+      .setTitle('Your Solana Deposit Address')
       .setImage('attachment://deposit-qr.png')
       .addFields({
-        name: 'Address',
+        name: 'Solana Address',
         value: `\`\`\`\n${user.walletPubkey}\n\`\`\``,
       })
-      .setDescription('Scan with your wallet app or copy the address above to deposit.')
+      .setDescription('Scan with your Solana wallet app or copy the address above to deposit SOL, USDC, or USDT.')
       .setColor(0x00aaff)
       .setTimestamp();
 
@@ -459,13 +448,6 @@ function parseAmountInput(input: string): ParsedAmount {
   }
 
   return { valid: false, value: 0, error: 'Invalid format. Try: $5, 0.5 SOL, or max' };
-}
-
-function formatTokenAmount(amount: number): string {
-  if (amount < 0.0001) return amount.toExponential(2);
-  if (amount < 1) return amount.toFixed(6);
-  if (amount < 100) return amount.toFixed(4);
-  return amount.toFixed(2);
 }
 
 // Handle /send and /withdraw form modals

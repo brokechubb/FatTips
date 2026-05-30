@@ -14,7 +14,6 @@ import { logTransaction } from '../utils/logger';
 import {
   PriceService,
   TOKEN_MINTS,
-  ConversionResult,
   TransactionService,
   WalletService,
   BalanceService,
@@ -214,43 +213,41 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // Calculate gas buffer for the airdrop wallet
-  // The airdrop wallet needs:
-  // 1. Rent exemption (0.00089 SOL) - minimum to keep the account alive
-  // 2. Transaction fees (0.000005 SOL per winner) - actual cost to send transactions
-  // 3. Safety buffer (0.001 SOL) - for priority fees and unexpected costs
-  const winnerCount = maxWinners || 100; // Default to 100 if not specified
-  const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption (one-time, not per winner!)
-  const TX_FEE = 0.000005; // Per transaction fee
-  const SAFETY_BUFFER = 0.001; // Extra buffer for priority fees
-  const GAS_BUFFER = RENT_EXEMPTION + winnerCount * TX_FEE + SAFETY_BUFFER;
+// Calculate gas buffer for the airdrop wallet.
+// Settlement reserves FEE_BUFFERS.STANDARD (0.001 SOL) per winner for fees + priority fees,
+// plus rent exemption for the pool wallet itself.
+// When max-winners is not set (unlimited), we use a conservative default of 10
+// because the actual gas cost depends on how many users claim — not a fixed 100.
+const winnerCount = maxWinners || 10;
+const RENT_EXEMPTION = 0.00089088; // Rent-exempt minimum for the pool wallet account
+const FEE_PER_WINNER = 0.001; // Matches FEE_BUFFERS.STANDARD used by settlement
+const GAS_BUFFER = RENT_EXEMPTION + winnerCount * FEE_PER_WINNER;
 
-  // Warn about high gas costs for small SOL airdrops
-  if (tokenSymbol === 'SOL' && parsedAmount.type !== 'max') {
-    const totalCost = amountToken + GAS_BUFFER;
-    const gasPercentage = (GAS_BUFFER / totalCost) * 100;
+// Block airdrops where gas would exceed 50% of the total cost (SOL airdrops only)
+if (tokenSymbol === 'SOL' && parsedAmount.type !== 'max') {
+  const totalCost = amountToken + GAS_BUFFER;
+  const gasPercentage = (GAS_BUFFER / totalCost) * 100;
 
-    // If gas is more than 50% of the total cost, warn the user
-    if (gasPercentage > 50) {
-      const price = await priceService.getTokenPrice(TOKEN_MINTS.SOL);
-      const solPrice = price ? price.price : 0;
-      const gasUsd = GAS_BUFFER * solPrice;
-      const amountUsd = amountToken * solPrice;
+  if (gasPercentage > 50) {
+    const price = await priceService.getTokenPrice(TOKEN_MINTS.SOL);
+    const solPrice = price ? price.price : 0;
+    const gasUsd = GAS_BUFFER * solPrice;
+    const amountUsd = amountToken * solPrice;
 
-      await interaction.editReply({
-        content:
-          `⚠️ **High Gas Cost Warning**\n\n` +
-          `You're about to create a **$${amountUsd.toFixed(2)}** SOL airdrop, ` +
-          `but the gas buffer will cost an additional **$${gasUsd.toFixed(2)}**.\n\n` +
-          `**Total cost: $${(amountUsd + gasUsd).toFixed(2)}** (${GAS_BUFFER.toFixed(4)} SOL gas buffer)\n\n` +
-          `Consider:\n` +
-          `• Using USDC or USDT instead (lower gas costs)\n` +
-          `• Increasing the airdrop amount\n` +
-          `• Reducing max winners (currently ${winnerCount})`,
-      });
-      return;
-    }
+    await interaction.editReply({
+      content:
+        `❌ **Gas cost too high — airdrop cancelled**\n\n` +
+        `Your **$${amountUsd.toFixed(2)}** SOL airdrop would require **$${gasUsd.toFixed(2)}** in gas ` +
+        `(${GAS_BUFFER.toFixed(4)} SOL buffer for ${winnerCount} winner${winnerCount !== 1 ? 's' : ''}).\n` +
+        `Gas would be **${gasPercentage.toFixed(0)}%** of the total cost.\n\n` +
+        `**Suggestions:**\n` +
+        `• Use USDC or USDT instead (much lower gas)\n` +
+        `• Increase the airdrop amount\n` +
+        `• Set a max-winner count with \`/airdrop amount duration max-winners\``,
+    });
+    return;
   }
+}
 
   // 5. Get Pool Wallet
   // Use pool wallet instead of ephemeral wallet - it's already in the database
@@ -509,7 +506,12 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
       },
       { name: 'Max Winners', value: maxWinners ? `${maxWinners}` : 'Unlimited', inline: true }
     )
-    .setFooter({ text: 'Funds are held securely in a temporary wallet.' });
+    .addFields({
+    name: 'Airdrop Wallet',
+    value: `[${poolWallet.address.substring(0, 6)}...${poolWallet.address.substring(poolWallet.address.length - 4)}](https://solscan.io/account/${poolWallet.address})`,
+    inline: true,
+  })
+  .setFooter({ text: 'Funds are held securely in a temporary wallet. Residual gas is returned after settlement.' });
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()

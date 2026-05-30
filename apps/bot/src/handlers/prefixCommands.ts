@@ -2,7 +2,6 @@ import {
   Message,
   Client,
   EmbedBuilder,
-  TextChannel,
   PermissionFlagsBits,
   ActionRowBuilder,
   ButtonBuilder,
@@ -32,13 +31,10 @@ import { generateDepositQR } from '../utils/qr';
 const poolService = new AirdropPoolService();
 
 export const DEFAULT_PREFIX = 'f';
-const DISCORD_CANNOT_DM = 50007;
 
-// Solana constants
-const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
-const FEE_BUFFER = 0.001; // SOL - standard fee buffer for transactions (~$0.15)
-const PREFIX_FEE_BUFFER = 0.001; // SOL - consistent fee buffer for prefix commands
-const MIN_SOL_FOR_GAS = 0.001; // Minimum SOL required for gas fees
+const MIN_RENT_EXEMPTION = 0.00089088;
+const PREFIX_FEE_BUFFER = 0.001;
+const MIN_SOL_FOR_GAS = 0.001;
 
 // Cache for guild prefixes (refresh every 5 minutes)
 const prefixCache = new Map<string, { prefix: string; expiresAt: number }>();
@@ -509,8 +505,7 @@ async function handleSwap(message: Message, args: string[], prefix: string) {
           });
         }
       }
-    } catch (e) {
-      // Timeout
+    } catch {
       await responseMsg.edit({ content: '❌ Swap timed out.', components: [] }).catch(() => {});
     }
   } catch (error) {
@@ -575,74 +570,10 @@ async function handleHelp(message: Message, prefix: string) {
 }
 
 // ============ BALANCE ============
-async function handleBalance(message: Message, prefix: string) {
-  const user = await prisma.user.findUnique({
-    where: { discordId: message.author.id },
-  });
-
-  if (!user) {
-    await message.reply(
-      `❌ You don't have a wallet yet! Use \`${prefix}wallet create\` to create one.`
-    );
-    return;
-  }
-
-  // Fetch balances from Solana with timeout
-  let balances = { sol: 0, usdc: 0, usdt: 0 };
-  try {
-    const balancePromise = balanceService.getBalances(user.walletPubkey);
-    const timeoutPromise = new Promise<typeof balances>((_, reject) =>
-      setTimeout(() => reject(new Error('Balance fetch timeout')), 10000)
-    );
-    balances = await Promise.race([balancePromise, timeoutPromise]);
-  } catch (error) {
-    logger.error('Error fetching balances from Solana:', error);
-    // Continue with zero balances
-  }
-
-  // Fetch SOL price for USD calculation
-  let solUsdValue = 0;
-  let showUsdValues = false;
-  try {
-    const solPrice = await priceService.getTokenPrice(TOKEN_MINTS.SOL);
-    if (solPrice) {
-      solUsdValue = balances.sol * solPrice.price;
-      showUsdValues = true;
-    }
-  } catch {
-    logger.warn('Price API unavailable, showing balances without USD values');
-  }
-
-  // Format balances
-  const solFormatted = BalanceService.formatBalance(balances.sol);
-  const usdcFormatted = BalanceService.formatBalance(balances.usdc);
-  const usdtFormatted = BalanceService.formatBalance(balances.usdt);
-
-  // Calculate total USD value
-  const totalUsd = solUsdValue + balances.usdc + balances.usdt;
-
-  let description = `\`${user.walletPubkey}\``;
-  if (showUsdValues) {
-    description += `\n\n**Total Value:** $${totalUsd.toFixed(2)} USD`;
-  }
-  description += `\n\n*💡 For privacy, use \`/balance\` (slash command) as the preferred way to check your balance - only you will see it.*`;
-
-  const embed = new EmbedBuilder()
-    .setTitle('💰 Your Wallet')
-    .setDescription(description)
-    .addFields(
-      {
-        name: 'SOL',
-        value: showUsdValues ? `${solFormatted} ($${solUsdValue.toFixed(2)})` : solFormatted,
-        inline: true,
-      },
-      { name: 'USDC', value: usdcFormatted, inline: true },
-      { name: 'USDT', value: usdtFormatted, inline: true }
-    )
-    .setColor(0x00ff00)
-    .setTimestamp();
-
-  await message.reply({ embeds: [embed] });
+async function handleBalance(message: Message, _prefix: string) {
+  await message.reply(
+    `🔒 Use the \`/balance\` slash command to check your balance — it's private and only visible to you.`
+  );
 }
 
 // ============ WALLET ============
@@ -793,7 +724,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
   const recipientWallets = [];
   const newWallets: { id: string; key: string }[] = [];
 
-  for (const [recipientId, recipientUser] of targetUsers) {
+  for (const [recipientId] of targetUsers) {
     let recipient = await prisma.user.findUnique({
       where: { discordId: recipientId },
     });
@@ -947,6 +878,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
                 resolve(false);
                 return;
               }
+              await i.deferUpdate();
               collector.stop();
               resolve(true);
             });
@@ -1139,7 +1071,6 @@ async function handleSend(message: Message, args: string[], prefix: string) {
     usdValue = parsedAmount.value;
   } else if (parsedAmount.type === 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
-    const feeBuffer = PREFIX_FEE_BUFFER;
 
     if (tokenSymbol === 'SOL') {
       // For MAX withdrawal, we allow closing the account by transferring everything minus fixed fee.
@@ -1551,6 +1482,7 @@ async function handleRain(message: Message, args: string[], client: Client, pref
                 resolve(false);
                 return;
               }
+              await i.deferUpdate();
               collector.stop();
               resolve(true);
             });
@@ -1647,7 +1579,7 @@ async function handleRain(message: Message, args: string[], client: Client, pref
           data: { seedDelivered: true },
         });
       }
-    } catch (error) {
+    } catch {
       // Failed to DM key
     }
   }
@@ -1774,23 +1706,21 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     return;
   }
 
-  // Calculate gas buffer for the airdrop wallet
-  // The airdrop wallet needs:
-  // 1. Rent exemption (0.00089 SOL) - minimum to keep the account alive
-  // 2. Transaction fees (0.000005 SOL per winner) - actual cost to send transactions
-  // 3. Safety buffer (0.001 SOL) - for priority fees and unexpected costs
-  const winnerCount = maxWinners || 100; // Default to 100 if not specified
-  const RENT_EXEMPTION = 0.00089; // Minimum balance for rent exemption (one-time, not per winner!)
-  const TX_FEE = 0.000005; // Per transaction fee
-  const SAFETY_BUFFER = 0.001; // Extra buffer for priority fees
-  const GAS_BUFFER = RENT_EXEMPTION + winnerCount * TX_FEE + SAFETY_BUFFER;
+  // Calculate gas buffer for the airdrop wallet.
+  // Settlement reserves FEE_BUFFERS.STANDARD (0.001 SOL) per winner for fees + priority fees,
+  // plus rent exemption for the pool wallet itself.
+  // When max-winners is not set (unlimited), we use a conservative default of 10
+  // because the actual gas cost depends on how many users claim — not a fixed 100.
+  const winnerCount = maxWinners || 10;
+  const RENT_EXEMPTION = 0.00089088; // Rent-exempt minimum for the pool wallet account
+  const FEE_PER_WINNER = 0.001; // Matches FEE_BUFFERS.STANDARD used by settlement
+  const GAS_BUFFER = RENT_EXEMPTION + winnerCount * FEE_PER_WINNER;
 
-  // Warn about high gas costs for small SOL airdrops
+  // Block airdrops where gas would exceed 50% of the total cost (SOL airdrops only)
   if (tokenSymbol === 'SOL' && parsedAmount.type !== 'max') {
     const totalCost = amountToken + GAS_BUFFER;
     const gasPercentage = (GAS_BUFFER / totalCost) * 100;
 
-    // If gas is more than 50% of the total cost, warn the user
     if (gasPercentage > 50) {
       const price = await priceService.getTokenPrice(TOKEN_MINTS.SOL);
       const solPrice = price ? price.price : 0;
@@ -1798,14 +1728,14 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
       const amountUsd = amountToken * solPrice;
 
       await message.reply(
-        `⚠️ **High Gas Cost Warning**\n\n` +
-          `You're about to create a **$${amountUsd.toFixed(2)}** SOL airdrop, ` +
-          `but the gas buffer will cost an additional **$${gasUsd.toFixed(2)}**.\n\n` +
-          `**Total cost: $${(amountUsd + gasUsd).toFixed(2)}** (${GAS_BUFFER.toFixed(4)} SOL gas buffer)\n\n` +
-          `Consider:\n` +
-          `• Using USDC or USDT instead (lower gas costs)\n` +
-          `• Increasing the airdrop amount\n` +
-          `• Reducing max winners (currently ${winnerCount})`
+        `❌ **Gas cost too high — airdrop cancelled**\n\n` +
+          `Your **$${amountUsd.toFixed(2)}** SOL airdrop would require **$${gasUsd.toFixed(2)}** in gas ` +
+          `(${GAS_BUFFER.toFixed(4)} SOL buffer for ${winnerCount} winner${winnerCount !== 1 ? 's' : ''}).\n` +
+          `Gas would be **${gasPercentage.toFixed(0)}%** of the total cost.\n\n` +
+          `**Suggestions:**\n` +
+          `• Use USDC or USDT instead (much lower gas)\n` +
+          `• Increase the airdrop amount\n` +
+          `• Set a max-winner count: \`${prefix}airdrop $10 10m 5\``
       );
       return;
     }
@@ -2017,15 +1947,20 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
         `⏳ Ends: <t:${endTimestamp}:R>`
     )
     .setColor(0x00ff00)
-    .addFields(
-      {
-        name: 'Pot Size',
-        value: `${amountToken.toFixed(2)} ${tokenSymbol} (~$${usdValue.toFixed(2)})`,
-        inline: true,
-      },
-      { name: 'Max Winners', value: maxWinners ? `${maxWinners}` : 'Unlimited', inline: true }
-    )
-    .setFooter({ text: 'Funds are held securely in a temporary wallet.' });
+  .addFields(
+    {
+      name: 'Pot Size',
+      value: `${amountToken.toFixed(2)} ${tokenSymbol} (~$${usdValue.toFixed(2)})`,
+      inline: true,
+    },
+    { name: 'Max Winners', value: maxWinners ? `${maxWinners}` : 'Unlimited', inline: true },
+    {
+      name: 'Airdrop Wallet',
+      value: `[${poolWallet.address.substring(0, 6)}...${poolWallet.address.substring(poolWallet.address.length - 4)}](https://solscan.io/account/${poolWallet.address})`,
+      inline: true,
+    }
+  )
+  .setFooter({ text: 'Funds are held securely in a temporary wallet. Residual gas is returned after settlement.' });
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -2079,13 +2014,13 @@ async function handleDeposit(message: Message, prefix: string) {
   const attachment = new AttachmentBuilder(qrBuffer, { name: 'deposit-qr.png' });
 
   const embed = new EmbedBuilder()
-    .setTitle('Your Deposit Address')
+    .setTitle('Your Solana Deposit Address')
     .setImage('attachment://deposit-qr.png')
     .addFields({
-      name: 'Address',
+      name: 'Solana Address',
       value: `\`\`\`\n${user.walletPubkey}\n\`\`\``,
     })
-    .setDescription('Scan with your wallet app or copy the address above to deposit.')
+    .setDescription('Scan with your Solana wallet app or copy the address above to deposit SOL, USDC, or USDT.')
     .setColor(0x00aaff)
     .setTimestamp();
 
@@ -2093,6 +2028,14 @@ async function handleDeposit(message: Message, prefix: string) {
     embeds: [embed],
     files: [attachment],
   });
+
+  try {
+    await message.author.send(
+      `Your FatTips Solana deposit address:\n\`\`\`\n${user.walletPubkey}\n\`\`\`\nKeep this message for easy copying. Only send SOL, USDC, or USDT on the Solana network to this address.`
+    );
+  } catch {
+    // DMs disabled — address already shown in channel
+  }
 }
 
 // ============ LEADERBOARD ============

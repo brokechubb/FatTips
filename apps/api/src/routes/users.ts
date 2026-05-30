@@ -13,7 +13,12 @@ router.get('/:discordId', async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { discordId },
-      include: {
+      select: {
+        discordId: true,
+        walletPubkey: true,
+        seedDelivered: true,
+        createdAt: true,
+        lastActive: true,
         _count: {
           select: {
             sentTips: true,
@@ -30,11 +35,7 @@ router.get('/:discordId', async (req, res) => {
       return;
     }
 
-    // Exclude sensitive data
-    // @ts-ignore - dynamic destructuring
-    const { encryptedPrivkey, keySalt, encryptedMnemonic, mnemonicSalt, ...safeUser } = user;
-
-    res.json(safeUser);
+    res.json(user);
   } catch (error) {
     console.error('Error fetching user:', error);
     res.status(500).json({ error: 'Internal Server Error' });

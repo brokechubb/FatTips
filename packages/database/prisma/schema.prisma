@@ -63,6 +63,7 @@ model Airdrop {
   maxParticipants Int?          // Optional cap
   participantCount Int          @default(0)
   status          AirdropStatus @default(ACTIVE)
+  settleRetries   Int           @default(0) // Persists retry count across restarts
   expiresAt       DateTime
   settledAt       DateTime?
   cleanedUpAt     DateTime? // Timestamp when residual funds were drained

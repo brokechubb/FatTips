@@ -1,30 +1,16 @@
 import {
   StringSelectMenuInteraction,
   ModalSubmitInteraction,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  ActionRowBuilder,
-  EmbedBuilder,
   TextChannel,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
-import { logTransaction } from '../utils/logger';
-import {
-  PriceService,
-  TOKEN_MINTS,
-  TransactionService,
-  WalletService,
-  BalanceService,
-} from 'fattips-solana';
+import { PriceService, TOKEN_MINTS, WalletService, BalanceService } from 'fattips-solana';
 import { transactionQueue, generateJobId } from '../queues/transaction.queue';
 
-// Solana constants
-const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
-const FEE_BUFFER = 0.001; // SOL - standard fee buffer (~$0.15)
+const MIN_RENT_EXEMPTION = 0.00089088;
+const FEE_BUFFER = 0.001;
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
-const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
 const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
 
@@ -242,8 +228,7 @@ export async function handleTipModal(interaction: ModalSubmitInteraction) {
     );
 
     if (newWalletKey) {
-      const { sendPrivateKeyDM } = require('../utils/keyCleanup');
-      const targetUser = await interaction.client.users.fetch(targetUserId);
+      const { sendPrivateKeyDM } = await import('../utils/keyCleanup.js');
       const msg =
         `🆕 **New Wallet Created**\n` +
         `A new wallet was created for you to receive this tip!\n\n` +
@@ -304,11 +289,4 @@ function parseAmountInput(input: string): ParsedAmount {
   }
 
   return { valid: false, value: 0, error: 'Invalid format. Try: $5, 0.5 SOL, or max' };
-}
-
-function formatTokenAmount(amount: number): string {
-  if (amount < 0.0001) return amount.toExponential(2);
-  if (amount < 1) return amount.toFixed(6);
-  if (amount < 100) return amount.toFixed(4);
-  return amount.toFixed(2);
 }
