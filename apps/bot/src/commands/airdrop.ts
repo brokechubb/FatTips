@@ -48,16 +48,6 @@ export const data = new SlashCommandBuilder()
   )
   .addIntegerOption((option) =>
     option.setName('max-winners').setDescription('Max number of winners (optional)')
-  )
-  .addStringOption((option) =>
-    option
-      .setName('token')
-      .setDescription('Token to drop (default: SOL)')
-      .addChoices(
-        { name: 'SOL', value: 'SOL' },
-        { name: 'USDC', value: 'USDC' },
-        { name: 'USDT', value: 'USDT' }
-      )
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -89,7 +79,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   const amountStr = interaction.options.getString('amount', true);
   const durationStr = interaction.options.getString('duration', true);
   const maxWinners = interaction.options.getInteger('max-winners') || null;
-  const tokenPreference = interaction.options.getString('token') || 'SOL';
+  const tokenPreference = 'SOL';
 
   // 1. Parse Duration
   const durationMs = parseDuration(durationStr);
@@ -112,6 +102,14 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // Airdrops are SOL-only
+  if (parsedAmount.token && parsedAmount.token !== 'SOL') {
+    await interaction.editReply({
+      content: `❌ **Airdrops are SOL-only.**\n\nSwap your ${parsedAmount.token} to SOL first using \`/swap\`.`,
+    });
+    return;
+  }
+
   // 3. Get Creator Wallet
   const creator = await prisma.user.findUnique({
     where: { discordId: interaction.user.id },
@@ -129,24 +127,6 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   let tokenMint = TOKEN_MINTS.SOL;
   let amountToken = 0;
   let usdValue = 0;
-
-  // Smart token detection for max
-  if (parsedAmount.type === 'max' && !parsedAmount.token) {
-    // Auto-detect based on available balance
-    const balances = await balanceService.getBalances(creator.walletPubkey);
-    const gasBuffer = 0.003;
-
-    // Check which token has significant balance
-    if (balances.sol > gasBuffer) {
-      tokenSymbol = 'SOL';
-    } else if (balances.usdc > 0) {
-      tokenSymbol = 'USDC';
-    } else if (balances.usdt > 0) {
-      tokenSymbol = 'USDT';
-    } else {
-      tokenSymbol = 'SOL';
-    }
-  }
 
   // Determine token
   if (parsedAmount.type === 'max') {
@@ -210,6 +190,20 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
   // Validate amount
   if (amountToken <= 0) {
     await interaction.editReply({ content: '❌ Amount must be greater than 0.' });
+    return;
+  }
+
+  // Enforce $1 minimum
+  if (usdValue <= 0) {
+    await interaction.editReply({
+      content: '❌ Unable to determine the USD value of your airdrop. Please try again.',
+    });
+    return;
+  }
+  if (usdValue < 1) {
+    await interaction.editReply({
+      content: `❌ **Minimum airdrop amount is $1.00.**\n\nYour airdrop is only worth ~$${usdValue.toFixed(2)}.`,
+    });
     return;
   }
 

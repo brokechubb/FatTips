@@ -4,6 +4,7 @@ import { prisma } from 'fattips-database';
 import { withDatabaseRetry } from 'fattips-database/dist/utils';
 import { logger, logTransaction } from '../utils/logger';
 import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
+import { AirdropPoolService } from 'fattips-shared';
 import { Connection, PublicKey } from '@solana/web3.js';
 
 // Solana constants
@@ -28,11 +29,13 @@ export class AirdropService {
   private transactionService: TransactionService;
   private walletService: WalletService;
   private balanceService: BalanceService;
+  private poolService: AirdropPoolService;
 
   constructor() {
     this.transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
     this.walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
     this.balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
+    this.poolService = new AirdropPoolService();
   }
 
   /**
@@ -379,6 +382,9 @@ export class AirdropService {
             data: { status: 'FAILED', amountClaimed: 0, settledAt: new Date() },
           })
         );
+        if (airdrop.poolWalletAddress) {
+          await this.poolService.releaseWallet(airdrop.poolWalletAddress, airdrop.id);
+        }
         return;
       }
 
@@ -470,6 +476,12 @@ export class AirdropService {
 
           // Update original message only
           await this.endAirdropMessage(client, airdrop, 0, 0, tokenSymbol);
+
+          // Release pool wallet back to the pool
+          if (airdrop.poolWalletAddress) {
+            await this.poolService.releaseWallet(airdrop.poolWalletAddress, airdrop.id);
+          }
+
           return;
         } catch (refundError) {
           console.error('Failed to refund creator:', refundError);
@@ -573,6 +585,9 @@ export class AirdropService {
               [],
               'Settlement failed: Insufficient SOL for gas fees.'
             );
+            if (airdrop.poolWalletAddress) {
+              await this.poolService.releaseWallet(airdrop.poolWalletAddress, airdrop.id);
+            }
             return;
           }
           // For tokens, we usually distribute exactly what was promised or what's in the wallet
@@ -606,6 +621,9 @@ export class AirdropService {
           [],
           'Settlement failed: Airdrop wallet is empty.'
         );
+        if (airdrop.poolWalletAddress) {
+          await this.poolService.releaseWallet(airdrop.poolWalletAddress, airdrop.id);
+        }
         return;
       }
 
@@ -635,6 +653,9 @@ export class AirdropService {
           [],
           'Settlement failed: Could not compute valid share amount.'
         );
+        if (airdrop.poolWalletAddress) {
+          await this.poolService.releaseWallet(airdrop.poolWalletAddress, airdrop.id);
+        }
         return;
       }
 
@@ -813,6 +834,11 @@ export class AirdropService {
 
       // 5. Update Original Message
       await this.endAirdropMessage(client, airdrop, successCount, share, tokenSymbol, winners);
+
+      // 6. Release pool wallet back to the pool (sweep residual dust first)
+      if (airdrop.poolWalletAddress) {
+        await this.poolService.releaseWallet(airdrop.poolWalletAddress, airdrop.id);
+      }
     } catch (error) {
       logger.error('Settlement critical error:', error);
       Sentry.captureException(error, {
@@ -850,6 +876,11 @@ export class AirdropService {
               },
             })
           );
+          if (airdrop.poolWalletAddress) {
+            await this.poolService.releaseWallet(airdrop.poolWalletAddress, airdrop.id).catch(
+              (e: unknown) => logger.error('[AIRDROP] Failed to release pool wallet after max retries:', e)
+            );
+          }
         } catch (failError) {
           logger.error(
             `[AIRDROP] CRITICAL: Failed to mark airdrop ${airdrop.id} as FAILED:`,
