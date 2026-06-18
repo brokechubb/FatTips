@@ -7,9 +7,14 @@
 
 ## Authentication
 
-Each user API key is tied to a specific Discord user and can only access that user's wallet.
+There are two types of API keys:
 
-### Getting a User API Key
+| Type | Owned By | How to Send | Use Case |
+|------|----------|-------------|----------|
+| **User-bound** | A Discord user | Must include `fromDiscordId` matching the user | External bot acting on behalf of a user |
+| **App wallet** | The API key itself (standalone wallet) | Omit `fromDiscordId`, app wallet is used automatically | Bot tipping users from its own funds |
+
+### Getting a User-Bound API Key
 
 User API keys must be created by an admin using the `ADMIN_API_KEY` environment variable:
 
@@ -18,7 +23,7 @@ User API keys must be created by an admin using the `ADMIN_API_KEY` environment 
 ADMIN_API_KEY=your-admin-master-key
 ```
 
-Then create a user API key:
+Then create a user API key. The Discord user must already have a wallet:
 
 ```http
 POST /api/keys/create
@@ -45,12 +50,19 @@ Response:
 
 **Important:** Store user API keys securely - they are only shown once.
 
-### Using a User API Key
+### Getting an App Wallet API Key
 
-Include in header:
+App wallet keys are not tied to any Discord user. They own their own Solana wallet, funded externally (e.g., from a centralized exchange). Create one with `type: "app"`:
 
-```
-X-API-Key: ft_abc123...
+```http
+POST /api/keys/create
+X-Admin-API-Key: your-admin-master-key
+Content-Type: application/json
+
+{
+  "type": "app",
+  "name": "Stake Code Tips"
+}
 ```
 
 Response:
@@ -58,14 +70,17 @@ Response:
 ```json
 {
   "success": true,
-  "apiKey": "ft_abc123...",
-  "discordId": "123456789",
-  "name": "Jakey Bot",
-  "createdAt": "2024-01-15T12:00:00.000Z"
+  "type": "app",
+  "apiKey": "ft_def456...",
+  "name": "Stake Code Tips",
+  "createdAt": "2024-01-15T12:00:00.000Z",
+  "walletPubkey": "7nYhPEv6s6DkXwJv7QxQwJ6Qz9H2LZv6rK5hLM8Jz3Tm",
+  "privateKey": "4Z7v...",
+  "mnemonic": "apple banana cherry date..."
 }
 ```
 
-**Important:** The API key is only shown once. Store it securely.
+**Important:** The private key and mnemonic are only shown once. Store them securely. Fund the wallet by sending SOL to `walletPubkey` from an exchange or another wallet.
 
 ### Using the API Key
 
@@ -77,10 +92,9 @@ X-API-Key: ft_abc123...
 
 ### Security
 
-- Each API key is bound to one Discord user
-- The key can only access its own wallet
-- Attempting to access another user's wallet returns 403 Forbidden
-- Keys can be listed and revoked at any time
+- **User-bound keys:** Each key is bound to one Discord user. The key can only access that user's wallet. Attempting to access another user's wallet returns 403 Forbidden.
+- **App wallet keys:** The key owns its own standalone wallet. No Discord user is involved. All tips/withdrawals use the app wallet directly.
+- Keys can be listed and revoked at any time.
 
 ---
 
@@ -89,6 +103,8 @@ X-API-Key: ft_abc123...
 API keys are managed using the `ADMIN_API_KEY` environment variable on the server. This prevents unauthorized users from creating API keys for other users.
 
 #### Create API Key
+
+**User-bound key** (requires existing Discord user with wallet):
 
 ```http
 POST /api/keys/create
@@ -101,7 +117,20 @@ Content-Type: application/json
 }
 ```
 
-Response:
+**App wallet key** (creates a new standalone wallet):
+
+```http
+POST /api/keys/create
+X-Admin-API-Key: your-admin-master-key
+Content-Type: application/json
+
+{
+  "type": "app",
+  "name": "Stake Code Tips"
+}
+```
+
+Response (user-bound):
 
 ```json
 {
@@ -113,7 +142,48 @@ Response:
 }
 ```
 
-**Note:** Store the API key securely - it is only shown once.
+Response (app wallet):
+
+```json
+{
+  "success": true,
+  "type": "app",
+  "apiKey": "ft_def456...",
+  "name": "Stake Code Tips",
+  "createdAt": "2024-01-15T12:00:00.000Z",
+  "walletPubkey": "7nYhPEv6s6DkXwJv7QxQwJ6Qz9H2LZv6rK5hLM8Jz3Tm",
+  "privateKey": "4Z7v...",
+  "mnemonic": "apple banana cherry date..."
+}
+```
+
+**Note:** Store the API key and wallet credentials securely - they are only shown once.
+
+#### Add App Wallet to Existing Key
+
+If an API key already exists without a wallet, an admin can attach one:
+
+```http
+POST /api/wallet/app/create
+X-Admin-API-Key: your-admin-master-key
+Content-Type: application/json
+
+{
+  "apiKey": "ft_abc123..."
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "apiKey": "ft_abc123...",
+  "walletPubkey": "7nYhPEv6s6DkXwJv7QxQwJ6Qz9H2LZv6rK5hLM8Jz3Tm",
+  "privateKey": "4Z7v...",
+  "mnemonic": "apple banana cherry date..."
+}
+```
 
 #### List API Keys
 
@@ -210,7 +280,7 @@ Response:
 
 ### Wallet
 
-#### Create Wallet
+#### Create User Wallet
 
 ```http
 POST /api/wallet/create
@@ -235,7 +305,7 @@ Response:
 
 **⚠️ Security Note:** The private key and mnemonic are returned once. Store securely. Never expose in logs or client-side code.
 
-#### Get Wallet Info
+#### Get User Wallet Info
 
 ```http
 GET /api/wallet/:discordId
@@ -252,7 +322,7 @@ Response:
 }
 ```
 
-#### Delete Wallet
+#### Delete User Wallet
 
 ```http
 DELETE /api/wallet/:discordId
@@ -268,6 +338,23 @@ Response:
 }
 ```
 
+#### Get App Wallet Info
+
+Returns the app wallet attached to the authenticated API key.
+
+```http
+GET /api/wallet/app
+X-API-Key: ft_...
+```
+
+Response:
+
+```json
+{
+  "walletPubkey": "7nYhPEv6s6DkXwJv7QxQwJ6Qz9H2LZv6rK5hLM8Jz3Tm"
+}
+```
+
 ---
 
 ### Balance
@@ -276,6 +363,7 @@ Response:
 
 ```http
 GET /api/balance/:discordId
+X-API-Key: ft_...
 ```
 
 Response:
@@ -292,14 +380,41 @@ Response:
 }
 ```
 
+#### Get App Wallet Balance
+
+Returns the balance of the app wallet attached to the authenticated API key.
+
+```http
+GET /api/balance/app
+X-API-Key: ft_...
+```
+
+Response:
+
+```json
+{
+  "walletPubkey": "7nYhPEv6s6DkXwJv7QxQwJ6Qz9H2LZv6rK5hLM8Jz3Tm",
+  "balances": {
+    "sol": 2.5,
+    "usdc": 500.0,
+    "usdt": 200.0
+  }
+}
+```
+
 ---
 
 ### Send & Tips
 
+> **Note on `fromDiscordId`:** This field is **required** for user-bound API keys but **optional** for app wallet keys. When omitted with an app wallet key, the app wallet is used as the sender automatically.
+
 #### Send Tip (Single Recipient)
+
+**User-bound key** (must include `fromDiscordId`):
 
 ```http
 POST /api/send/tip
+X-API-Key: ft_...
 Content-Type: application/json
 
 {
@@ -311,16 +426,31 @@ Content-Type: application/json
 }
 ```
 
+**App wallet key** (`fromDiscordId` omitted — app wallet used automatically):
+
+```http
+POST /api/send/tip
+X-API-Key: ft_...
+Content-Type: application/json
+
+{
+  "toDiscordId": "987654321",
+  "amount": 0.25,
+  "token": "SOL",
+  "amountType": "usd"
+}
+```
+
 Response:
 
 ```json
 {
   "success": true,
   "signature": "5abc123...",
-  "from": "123456789",
+  "from": "7nYhPEv6s6DkXwJv7QxQwJ6Qz9H2LZv6rK5hLM8Jz3Tm",
   "to": "987654321",
-  "amountToken": 5.0,
-  "amountUsd": 750.0,
+  "amountToken": 0.00167,
+  "amountUsd": 0.25,
   "token": "SOL",
   "solscanUrl": "https://solscan.io/tx/5abc123..."
 }
@@ -330,10 +460,10 @@ Response:
 
 ```http
 POST /api/send/batch-tip
+X-API-Key: ft_...
 Content-Type: application/json
 
 {
-  "fromDiscordId": "123456789",
   "recipients": [
     { "discordId": "987654321" },
     { "discordId": "111222333" },
@@ -351,7 +481,7 @@ Response:
 {
   "success": true,
   "signature": "5abc123...",
-  "from": "123456789",
+  "from": "7nYhPEv6s6DkXwJv7QxQwJ6Qz9H2LZv6rK5hLM8Jz3Tm",
   "recipients": [
     { "to": "987654321", "signature": "5abc123...:0", "amountToken": 5, "amountUsd": 750 },
     { "to": "111222333", "signature": "5abc123...:1", "amountToken": 5, "amountUsd": 750 },
@@ -366,12 +496,29 @@ Response:
 
 #### Withdraw Funds
 
+**User-bound key:**
+
 ```http
 POST /api/send/withdraw
+X-API-Key: ft_...
 Content-Type: application/json
 
 {
   "discordId": "123456789",
+  "destinationAddress": "ExternalWalletAddress...",
+  "amount": 1.0,
+  "token": "SOL"
+}
+```
+
+**App wallet key** (`discordId` omitted — withdraws from app wallet):
+
+```http
+POST /api/send/withdraw
+X-API-Key: ft_...
+Content-Type: application/json
+
+{
   "destinationAddress": "ExternalWalletAddress...",
   "amount": 1.0,
   "token": "SOL"
@@ -386,7 +533,7 @@ Response:
 {
   "success": true,
   "signature": "5abc123...",
-  "from": "abc123...",
+  "from": "7nYhPEv6s6DkXwJv7QxQwJ6Qz9H2LZv6rK5hLM8Jz3Tm",
   "to": "ExternalWalletAddress...",
   "amountToken": 1.0,
   "amountUsd": 150.0,
@@ -1096,7 +1243,7 @@ When Jakey creates an airdrop via the API with a `channelId`, the FatTips bot au
 
 ### 403 Forbidden
 
-Returned when trying to access another user's wallet:
+Returned when trying to access another user's wallet, or when a user-bound key specifies a `fromDiscordId` it doesn't own:
 
 ```json
 {
@@ -1104,6 +1251,18 @@ Returned when trying to access another user's wallet:
   "yourDiscordId": "123456789"
 }
 ```
+
+App wallet keys never get this error — they can tip any Discord user.
+
+### 400 Bad Request (App Wallet)
+
+```json
+{
+  "error": "Either fromDiscordId or an app wallet is required"
+}
+```
+
+Returned when a key has neither a Discord user nor an app wallet and no `fromDiscordId` is specified.
 
 ### 404 Not Found
 
@@ -1125,17 +1284,54 @@ Returned when trying to access another user's wallet:
 
 ## Rate Limits
 
-- 100 requests per minute per IP
-- 1000 requests per minute per authenticated user
+- **Global:** 60 requests per minute per API key
+- **Financial endpoints** (`/send`, `/airdrops`, `/swap`, `/rain`): 10 requests per minute per API key
 
 ---
 
-## Jakey Integration Examples
+## Integration Examples
 
-### Jakey Tips a User
+### App Wallet: Bot Tips Users from Its Own Funds
+
+The most common pattern for bots — the bot has its own funded wallet and tips users directly. No `fromDiscordId` needed:
 
 ```javascript
-// Jakey tipping user123
+// Bot tips a user $0.25 USD in SOL from its app wallet
+const response = await fetch('https://codestats.gg/api/send/tip', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': process.env.FATTIPS_API_KEY,
+  },
+  body: JSON.stringify({
+    toDiscordId: 'user123',
+    amount: 0.25,
+    token: 'SOL',
+    amountType: 'usd',
+  }),
+});
+
+const result = await response.json();
+if (result.success) {
+  console.log(`Tipped! TX: ${result.solscanUrl}`);
+}
+```
+
+### App Wallet: Check Bot's Balance
+
+```javascript
+const response = await fetch('https://codestats.gg/api/balance/app', {
+  headers: { 'X-API-Key': process.env.FATTIPS_API_KEY },
+});
+
+const data = await response.json();
+console.log(`Bot balance: ${data.balances.sol} SOL`);
+```
+
+### User-Bound: Tips on Behalf of a User
+
+```javascript
+// Jakey tipping user123 from Jakey's own wallet
 const response = await fetch('https://codestats.gg/api/send/tip', {
   method: 'POST',
   headers: {
@@ -1157,7 +1353,7 @@ if (result.success) {
 }
 ```
 
-### Jakey Creates an Airdrop
+### User-Bound: Creates an Airdrop
 
 ```javascript
 // Jakey creating a community airdrop
@@ -1181,7 +1377,7 @@ const result = await response.json();
 console.log('Airdrop created! ID: ' + result.airdropId);
 ```
 
-### Jakey Checks User Balance
+### User-Bound: Checks User Balance
 
 ```javascript
 // Jakey checking if user can afford something
@@ -1197,7 +1393,7 @@ if (data.balances.sol >= 1) {
 }
 ```
 
-### Jakey Executes a Swap
+### User-Bound: Executes a Swap
 
 ```javascript
 // Jakey swapping SOL for USDC for a user

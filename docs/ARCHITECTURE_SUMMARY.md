@@ -91,6 +91,13 @@ FatTips/
 - `status` - ACTIVE, SETTLING, SETTLED, FAILED, RECLAIMED
 - `expiresAt` - Settlement trigger
 
+**ApiKey**
+
+- `key` - API key (`ft_` + 64 hex chars)
+- `discordId` - Discord user (null for app wallet keys)
+- `appWalletPubkey` - Standalone wallet pubkey (app wallet keys only)
+- `appEncryptedPrivkey` + `appKeySalt` - Encrypted app wallet private key
+
 **AirdropPoolWallet**
 
 - `address` - Wallet public key
@@ -122,7 +129,9 @@ Generate Keypair → Encrypt (AES-256-GCM) → Store in DB → DM to User
 ### 4. API Authentication
 
 ```
-Request → requireAuth → Validate API Key → requireOwnership → Process
+Request → requireAuth → Validate API Key
+  ├─→ User-bound: req.discordId set → requireOwnership → Process
+  └─→ App wallet: req.appWallet set (pubkey, encryptedPrivkey, keySalt) → Process
 ```
 
 ---
@@ -267,14 +276,25 @@ pnpm docker:up        # Start all containers
 | Sentry      | Error tracking      | Medium      |
 | Redis       | Caching, queues     | High        |
 
-### API Endpoints (for Jakey)
+### API Endpoints (for Integrations)
 
-- `POST /api/wallet/create` - Create wallet
-- `GET /api/balance/:discordId` - Get balance
-- `POST /api/send/tip` - Send tip
+**User-bound keys:**
+- `POST /api/wallet/create` - Create user wallet
+- `GET /api/balance/:discordId` - Get user balance
+- `POST /api/send/tip` - Send tip (`fromDiscordId` required)
 - `POST /api/send/withdraw` - Withdraw to address
 - `POST /api/airdrops/create` - Create airdrop
 - `POST /api/swap/execute` - Swap tokens
+
+**App wallet keys:**
+- `GET /api/wallet/app` - Get app wallet pubkey
+- `GET /api/balance/app` - Get app wallet balance
+- `POST /api/send/tip` - Send tip (no `fromDiscordId` — app wallet auto-used)
+- `POST /api/send/withdraw` - Withdraw from app wallet
+
+**Admin:**
+- `POST /api/keys/create` - Create API key (`type: "app"` for app wallet, `discordId` for user)
+- `POST /api/wallet/app/create` - Attach wallet to existing API key
 
 ---
 
@@ -401,6 +421,6 @@ const TOKEN_MINTS = {
 
 ---
 
-**Last Updated:** 2026-03-09  
-**Version:** 0.2.1  
+**Last Updated:** 2026-06-18  
+**Version:** 0.3.0  
 **Status:** Production

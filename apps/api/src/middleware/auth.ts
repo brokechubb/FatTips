@@ -1,8 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from 'fattips-database';
 
+interface AppWallet {
+  pubkey: string;
+  encryptedPrivkey: string;
+  keySalt: string;
+}
+
 interface AuthenticatedRequest extends Request {
   discordId?: string;
+  appWallet?: AppWallet;
 }
 
 export async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
@@ -39,7 +46,16 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
       data: { lastUsedAt: new Date() },
     });
 
-    req.discordId = keyRecord.discordId;
+    req.discordId = keyRecord.discordId ?? undefined;
+
+    if (keyRecord.appWalletPubkey) {
+      req.appWallet = {
+        pubkey: keyRecord.appWalletPubkey,
+        encryptedPrivkey: keyRecord.appEncryptedPrivkey!,
+        keySalt: keyRecord.appKeySalt!,
+      };
+    }
+
     next();
   } catch (error) {
     console.error('Auth error:', error);
@@ -61,3 +77,5 @@ export function requireOwnership(req: AuthenticatedRequest, res: Response, next:
 
   next();
 }
+
+export { AppWallet, AuthenticatedRequest };

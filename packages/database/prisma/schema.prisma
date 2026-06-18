@@ -134,12 +134,17 @@ model GuildSettings {
 model ApiKey {
   id String @id @default(uuid())
   key String @unique
-  discordId String
+  discordId String?
   name String @default("Default")
   lastUsedAt DateTime?
   expiresAt DateTime?
   createdAt DateTime @default(now())
   revokedAt DateTime?
+
+  // Application-owned standalone wallet (not tied to any Discord user)
+  appWalletPubkey     String?  @unique
+  appEncryptedPrivkey String?
+  appKeySalt          String?
 
   @@index([discordId])
   @@index([key])

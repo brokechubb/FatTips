@@ -1,7 +1,7 @@
 # FatTips Architecture Analysis
 
-**Generated:** 2026-03-09  
-**Version:** 0.2.1  
+**Generated:** 2026-06-18  
+**Version:** 0.3.0  
 **Status:** Production-ready with active development
 
 ---
@@ -117,26 +117,46 @@ settleAirdrop() → Distribute funds to participants
 AirdropPoolService.releaseWallet() → Return to pool
 ```
 
-#### 3. API Integration Flow (Jakey Bot)
+#### 3. API Integration Flow (External Bots)
+
+**User-bound key (acts on behalf of a Discord user):**
 
 ```
 External Bot (Jakey)
   ↓
 POST /api/send/tip
-  ├─→ X-API-Key header (user-specific)
-  └─→ Body: { to: "@user", amount: "$5" }
+  ├─→ X-API-Key header (user-bound)
+  └─→ Body: { fromDiscordId: "...", to: "@user", amount: "$5" }
   ↓
 API: sendRoutes.post('/tip')
   ↓
-requireAuth middleware → Validate API key
+requireAuth middleware → Validate API key, set req.discordId
+  ↓
+resolveSender() → Look up user wallet, verify ownership
   ↓
 TransactionService.transfer()
   ↓
 BullMQ Queue → Transaction Worker
+```
+
+**App wallet key (bot tips from its own funded wallet):**
+
+```
+External Bot
   ↓
-Redis Pub/Sub: AIRDROP_CREATED event
+POST /api/send/tip
+  ├─→ X-API-Key header (app wallet key)
+  └─→ Body: { toDiscordId: "...", amount: 0.25, token: "SOL", amountType: "usd" }
   ↓
-Bot: AirdropEventHandler → Post to Discord channel
+API: sendRoutes.post('/tip')
+  ↓
+requireAuth middleware → Validate API key, set req.appWallet with { pubkey, encryptedPrivkey, keySalt }
+  ↓
+resolveSender() → No fromDiscordId? Use req.appWallet directly
+  ↓
+TransactionService.transfer() → Decrypt app wallet keypair, sign, send
+  ↓
+prisma.transaction.create({ fromId: null, fromAddress: appWallet.pubkey, ... })
 ```
 
 ---
@@ -187,11 +207,16 @@ Bot: AirdropEventHandler → Post to Discord channel
 **Endpoints:**
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/api/wallet/create` | POST | None | Create wallet (open) |
-| `/api/balance/:discordId` | GET | API Key | Get balance |
-| `/api/send/tip` | POST | API Key | Send tip |
+| `/api/wallet/create` | POST | None | Create user wallet (open) |
+| `/api/wallet/:discordId` | GET | API Key | Get user wallet info |
+| `/api/wallet/:discordId` | DELETE | API Key | Delete user wallet |
+| `/api/wallet/app` | GET | API Key | Get app wallet info |
+| `/api/wallet/app/create` | POST | Admin Key | Attach app wallet to API key |
+| `/api/balance/:discordId` | GET | API Key | Get user balance |
+| `/api/balance/app` | GET | API Key | Get app wallet balance |
+| `/api/send/tip` | POST | API Key | Send tip (user or app wallet) |
 | `/api/send/batch-tip` | POST | API Key | Batch tip |
-| `/api/send/withdraw` | POST | API Key | Withdraw to address |
+| `/api/send/withdraw` | POST | API Key | Withdraw (user or app wallet) |
 | `/api/airdrops/create` | POST | API Key | Create airdrop |
 | `/api/airdrops/:id/claim` | POST | API Key | Claim airdrop |
 | `/api/swap/quote` | GET | API Key | Get swap quote |
@@ -199,7 +224,7 @@ Bot: AirdropEventHandler → Post to Discord channel
 | `/api/rain/create` | POST | API Key | Create rain |
 | `/api/leaderboard` | GET | API Key | Get leaderboard |
 | `/api/activity/active-users` | GET | API Key | Get active users |
-| `/api/keys` | POST | Admin Key | Create API key |
+| `/api/keys/create` | POST | Admin Key | Create API key (user or app) |
 
 **Security:**
 
@@ -259,6 +284,18 @@ Airdrop {
   expiresAt        DateTime
   channelId        String
   participants     AirdropParticipant[]
+}
+
+ApiKey {
+  id                 String   @id @uuid
+  key                String   @unique
+  discordId          String?  // null for app wallet keys
+  name               String   @default("Default")
+  appWalletPubkey     String?  @unique  // App-owned standalone wallet
+  appEncryptedPrivkey String?
+  appKeySalt          String?
+  lastUsedAt         DateTime?
+  expiresAt          DateTime?
 }
 
 AirdropPoolWallet {
@@ -362,14 +399,15 @@ const balance = await connection.getBalance(publicKey, {
 **Rationale:** `finalized` lags 15-30s, causes false negatives  
 **Impact:** Fixed airdrop verification failures
 
-### 3.5 API Key Per-User Isolation
+### 3.5 API Key Isolation
 
-**Decision:** API keys tied to specific Discord user  
-**Rationale:** Prevents privilege escalation, limits blast radius  
+**Decision:** API keys tied to specific Discord user (user-bound) or own a standalone wallet (app wallet)  
+**Rationale:** Supports both user-delegated access and bot-owned funds. Prevents privilege escalation, limits blast radius.  
 **Implementation:**
 
-- `requireAuth` middleware validates key
-- `requireOwnership` middleware enforces wallet ownership
+- `requireAuth` middleware validates key; sets `req.discordId` (user-bound) and/or `req.appWallet` (app wallet)
+- `requireOwnership` middleware enforces wallet ownership for user-bound keys
+- `resolveSender()` in send routes: when `fromDiscordId` is omitted and `req.appWallet` exists, uses app wallet
 - Keys can be revoked/expire
 
 ---
@@ -385,12 +423,12 @@ const balance = await connection.getBalance(publicKey, {
 
 ### 4.2 Authentication
 
-| Layer    | Mechanism                       |
-| -------- | ------------------------------- |
-| Discord  | Bot token (env var)             |
-| API      | Per-user API keys (64-char hex) |
-| Admin    | Separate admin API key          |
-| Database | Limited-privilege DB user       |
+| Layer    | Mechanism                              |
+| -------- | -------------------------------------- |
+| Discord  | Bot token (env var)                    |
+| API      | Per-user or app-wallet API keys (64-char hex, `ft_` prefix) |
+| Admin    | Separate admin API key                 |
+| Database | Limited-privilege DB user              |
 
 ### 4.3 Transaction Safety
 
@@ -749,6 +787,6 @@ pnpm dev
 
 ---
 
-**Last Updated:** 2026-03-09  
+**Last Updated:** 2026-06-18  
 **Maintainer:** @brokechubb  
 **License:** MIT

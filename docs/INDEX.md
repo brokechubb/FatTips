@@ -1,7 +1,7 @@
 # FatTips Architecture Documentation Index
 
-**Last Updated:** 2026-03-09  
-**Version:** 0.2.1
+**Last Updated:** 2026-06-18  
+**Version:** 0.3.0
 
 ---
 
