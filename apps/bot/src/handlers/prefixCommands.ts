@@ -1615,6 +1615,14 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     return;
   }
 
+  // Airdrops are SOL-only
+  if (parsedAmount.token && parsedAmount.token !== 'SOL') {
+    await message.reply(
+      `❌ **Airdrops are SOL-only.**\n\nSwap your ${parsedAmount.token} to SOL first: \`${prefix}swap ${parsedAmount.token} SOL\``
+    );
+    return;
+  }
+
   // Parse duration
   const durationMs = parseDuration(durationArg);
   if (!durationMs || durationMs < 10000) {
@@ -1637,27 +1645,8 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
     return;
   }
 
-  // Smart token detection for max
-  let tokenSymbol = parsedAmount.token || 'SOL';
-
-  if (parsedAmount.type === 'max' && !parsedAmount.token) {
-    // Auto-detect based on available balance
-    const balances = await balanceService.getBalances(sender.walletPubkey);
-    const gasBuffer = 0.003;
-
-    // Check which token has significant balance
-    if (balances.sol > gasBuffer) {
-      tokenSymbol = 'SOL';
-    } else if (balances.usdc > 0) {
-      tokenSymbol = 'USDC';
-    } else if (balances.usdt > 0) {
-      tokenSymbol = 'USDT';
-    } else {
-      tokenSymbol = 'SOL';
-    }
-  }
-
-  const tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS] || TOKEN_MINTS.SOL;
+  const tokenSymbol = 'SOL';
+  const tokenMint = TOKEN_MINTS.SOL;
   let amountToken: number;
   let usdValue: number;
 
@@ -1703,6 +1692,18 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   // Validate amount
   if (amountToken <= 0) {
     await message.reply('❌ Amount must be greater than 0.');
+    return;
+  }
+
+  // Enforce $1 minimum
+  if (usdValue <= 0) {
+    await message.reply('❌ Unable to determine the USD value of your airdrop. Please try again.');
+    return;
+  }
+  if (usdValue < 1) {
+    await message.reply(
+      `❌ **Minimum airdrop amount is $1.00.**\n\nYour airdrop is only worth ~$${usdValue.toFixed(2)}.`
+    );
     return;
   }
 

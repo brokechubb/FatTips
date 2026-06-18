@@ -87,6 +87,14 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
     let amountToken = amount;
     let usdValue = 0;
 
+    // Airdrops are SOL-only
+    if (token !== 'SOL') {
+      res.status(400).json({
+        error: `Airdrops are SOL-only. Swap your ${token} to SOL first.`,
+      });
+      return;
+    }
+
     if (amountType === 'usd') {
       const conversion = await priceService.convertUsdToToken(amount, tokenMint, token);
       if (!conversion) {
@@ -107,6 +115,18 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
     // Validate amount
     if (amountToken <= 0) {
       res.status(400).json({ error: 'Amount must be greater than 0' });
+      return;
+    }
+
+    // Enforce $1 minimum
+    if (usdValue <= 0) {
+      res.status(400).json({ error: 'Unable to determine USD value' });
+      return;
+    }
+    if (usdValue < 1) {
+      res.status(400).json({
+        error: `Minimum airdrop amount is $1.00 (your airdrop is worth ~$${usdValue.toFixed(2)})`,
+      });
       return;
     }
 
@@ -138,15 +158,7 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
     const FEE_PER_WINNER = 0.001; // Matches FEE_BUFFERS.STANDARD used by settlement
     const GAS_BUFFER = RENT_EXEMPTION + winnerCount * FEE_PER_WINNER;
 
-    let fundingAmountSol = 0;
-    let fundingAmountToken = 0;
-
-    if (token === 'SOL') {
-      fundingAmountSol = amountToken + GAS_BUFFER;
-    } else {
-      fundingAmountSol = GAS_BUFFER;
-      fundingAmountToken = amountToken;
-    }
+    const fundingAmountSol = amountToken + GAS_BUFFER;
 
     const creatorBalances = await balanceService.getBalances(creator.walletPubkey);
     if (creatorBalances.sol < fundingAmountSol) {
@@ -157,17 +169,6 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
       res.status(400).json({ error: 'Insufficient SOL for gas' });
       return;
     }
-    if (fundingAmountToken > 0) {
-      const tokenBal = token === 'USDC' ? creatorBalances.usdc : creatorBalances.usdt;
-      if (tokenBal < fundingAmountToken) {
-        await prisma.airdrop.update({
-          where: { id: airdrop.id },
-          data: { status: 'FAILED', amountClaimed: 0 },
-        });
-        res.status(400).json({ error: `Insufficient ${token}` });
-        return;
-      }
-    }
 
     const creatorKeypair = await walletService.getKeypair(
       creator.encryptedPrivkey,
@@ -175,29 +176,15 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
     );
 
     let solSig: string | undefined;
-    let tokenSig: string | undefined;
 
     try {
-      if (fundingAmountSol > 0) {
-        const solToSend = token === 'SOL' ? amountToken + GAS_BUFFER : GAS_BUFFER;
-        solSig = await transactionService.transfer(
-          creatorKeypair,
-          ephemeralWallet.publicKey,
-          solToSend,
-          TOKEN_MINTS.SOL
-        );
-        console.log(`[AIRDROP] SOL funding transaction: ${solSig}`);
-      }
-
-      if (fundingAmountToken > 0) {
-        tokenSig = await transactionService.transfer(
-          creatorKeypair,
-          ephemeralWallet.publicKey,
-          fundingAmountToken,
-          tokenMint
-        );
-        console.log(`[AIRDROP] Token funding transaction: ${tokenSig}`);
-      }
+      solSig = await transactionService.transfer(
+        creatorKeypair,
+        ephemeralWallet.publicKey,
+        fundingAmountSol,
+        TOKEN_MINTS.SOL
+      );
+      console.log(`[AIRDROP] SOL funding transaction: ${solSig}`);
     } catch (fundError) {
       console.error('Funding failed:', fundError);
       await prisma.airdrop.update({
@@ -213,13 +200,11 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
 
     // Verify the ephemeral wallet was funded
     const walletBalances = await balanceService.getBalances(ephemeralWallet.publicKey);
-    if (token === 'SOL') {
-      if (walletBalances.sol < amountToken) {
-        // Don't fail here, just log warning. The key is safe in DB.
-        console.warn(
-          `[AIRDROP] Wallet ${ephemeralWallet.publicKey} might not be fully funded yet (SOL=${walletBalances.sol})`
-        );
-      }
+    if (walletBalances.sol < amountToken) {
+      // Don't fail here, just log warning. The key is safe in DB.
+      console.warn(
+        `[AIRDROP] Wallet ${ephemeralWallet.publicKey} might not be fully funded yet (SOL=${walletBalances.sol})`
+      );
     }
 
     // Publish airdrop created event for Discord bot to post message
