@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { prisma } from 'fattips-database';
 import {
   WalletService,
@@ -7,7 +7,7 @@ import {
   PriceService,
   TOKEN_MINTS,
 } from 'fattips-solana';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, AppWallet, AuthenticatedRequest } from '../middleware/auth';
 
 const router: Router = Router();
 
@@ -16,12 +16,8 @@ const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
 const balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 
-interface AuthenticatedRequest extends Request {
-  discordId?: string;
-}
-
 interface SendRequest {
-  fromDiscordId: string;
+  fromDiscordId?: string;
   toDiscordId: string;
   amount: number;
   token: 'SOL' | 'USDC' | 'USDT';
@@ -29,7 +25,7 @@ interface SendRequest {
 }
 
 interface BatchSendRequest {
-  fromDiscordId: string;
+  fromDiscordId?: string;
   recipients: { discordId: string; percentage?: number }[];
   totalAmount: number;
   token: 'SOL' | 'USDC' | 'USDT';
@@ -65,6 +61,47 @@ async function calculateAmounts(
   return { amountToken: amount, usdValue, tokenMint };
 }
 
+async function resolveSender(
+  fromDiscordId: string | undefined,
+  appWallet: AppWallet | undefined,
+  reqDiscordId: string | undefined
+): Promise<{
+  senderPubkey: string;
+  encryptedPrivkey: string;
+  keySalt: string;
+  senderId: string | null;
+}> {
+  if (fromDiscordId) {
+    if (fromDiscordId !== reqDiscordId) {
+      throw Object.assign(new Error('API key can only send from its own wallet'), { status: 403 });
+    }
+    const user = await prisma.user.findUnique({ where: { discordId: fromDiscordId } });
+    if (!user) {
+      throw Object.assign(new Error('Sender wallet not found'), { status: 404 });
+    }
+    return {
+      senderPubkey: user.walletPubkey,
+      encryptedPrivkey: user.encryptedPrivkey,
+      keySalt: user.keySalt,
+      senderId: user.discordId,
+    };
+  }
+
+  if (appWallet) {
+    return {
+      senderPubkey: appWallet.pubkey,
+      encryptedPrivkey: appWallet.encryptedPrivkey,
+      keySalt: appWallet.keySalt,
+      senderId: null,
+    };
+  }
+
+  throw Object.assign(
+    new Error('Either fromDiscordId or an app wallet is required'),
+    { status: 400 }
+  );
+}
+
 router.use(requireAuth);
 
 // Tip endpoint - sender must own the wallet
@@ -77,21 +114,8 @@ router.post('/tip', async (req: AuthenticatedRequest, res: Response) => {
     amountType = 'token',
   } = req.body as SendRequest;
 
-  // Verify the API key owner is the sender
-  if (fromDiscordId !== req.discordId) {
-    res.status(403).json({ error: 'API key can only send from its own wallet' });
-    return;
-  }
-
   try {
-    const sender = await prisma.user.findUnique({
-      where: { discordId: fromDiscordId },
-    });
-
-    if (!sender) {
-      res.status(404).json({ error: 'Sender wallet not found' });
-      return;
-    }
+    const sender = await resolveSender(fromDiscordId, req.appWallet, req.discordId);
 
     let recipient = await prisma.user.findUnique({
       where: { discordId: toDiscordId },
@@ -114,7 +138,7 @@ router.post('/tip', async (req: AuthenticatedRequest, res: Response) => {
 
     const { amountToken, usdValue, tokenMint } = await calculateAmounts(amount, token, amountType);
 
-    const balances = await balanceService.getBalances(sender.walletPubkey);
+    const balances = await balanceService.getBalances(sender.senderPubkey);
     const feeBuffer = 0.001;
     const rentReserve = 0.00089088;
 
@@ -136,7 +160,10 @@ router.post('/tip', async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
-    const senderKeypair = await walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
+    const senderKeypair = await walletService.getKeypair(
+      sender.encryptedPrivkey,
+      sender.keySalt
+    );
     const signature = await transactionService.transfer(
       senderKeypair,
       recipient.walletPubkey,
@@ -147,8 +174,9 @@ router.post('/tip', async (req: AuthenticatedRequest, res: Response) => {
     await prisma.transaction.create({
       data: {
         signature,
-        fromId: sender.discordId,
+        fromId: sender.senderId,
         toId: recipient.discordId,
+        fromAddress: sender.senderPubkey,
         amountUsd: usdValue,
         amountToken,
         tokenMint,
@@ -161,7 +189,7 @@ router.post('/tip', async (req: AuthenticatedRequest, res: Response) => {
     res.json({
       success: true,
       signature,
-      from: sender.discordId,
+      from: sender.senderPubkey,
       to: recipient.discordId,
       amountToken,
       amountUsd: usdValue,
@@ -169,6 +197,11 @@ router.post('/tip', async (req: AuthenticatedRequest, res: Response) => {
       solscanUrl: `https://solscan.io/tx/${signature}`,
     });
   } catch (error) {
+    const err = error as Error & { status?: number };
+    if (err.status) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
     console.error('Error sending tip:', error);
     res.status(500).json({ error: 'Failed to send tip' });
   }
@@ -183,20 +216,8 @@ router.post('/batch-tip', async (req: AuthenticatedRequest, res: Response) => {
     amountType = 'token',
   } = req.body as BatchSendRequest;
 
-  if (fromDiscordId !== req.discordId) {
-    res.status(403).json({ error: 'API key can only send from its own wallet' });
-    return;
-  }
-
   try {
-    const sender = await prisma.user.findUnique({
-      where: { discordId: fromDiscordId },
-    });
-
-    if (!sender) {
-      res.status(404).json({ error: 'Sender wallet not found' });
-      return;
-    }
+    const sender = await resolveSender(fromDiscordId, req.appWallet, req.discordId);
 
     const recipientWallets = [];
     const newWallets: { id: string; key: string }[] = [];
@@ -231,7 +252,7 @@ router.post('/batch-tip', async (req: AuthenticatedRequest, res: Response) => {
     );
     const amountPerUser = amountToken / recipientWallets.length;
 
-    const balances = await balanceService.getBalances(sender.walletPubkey);
+    const balances = await balanceService.getBalances(sender.senderPubkey);
     const feeBuffer = 0.001;
     const rentReserve = 0.00089088;
 
@@ -253,7 +274,10 @@ router.post('/batch-tip', async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
-    const senderKeypair = await walletService.getKeypair(sender.encryptedPrivkey, sender.keySalt);
+    const senderKeypair = await walletService.getKeypair(
+      sender.encryptedPrivkey,
+      sender.keySalt
+    );
     const transfers = recipientWallets.map((r) => ({
       recipient: r.user.walletPubkey,
       amount: amountPerUser,
@@ -270,8 +294,9 @@ router.post('/batch-tip', async (req: AuthenticatedRequest, res: Response) => {
       await prisma.transaction.create({
         data: {
           signature: batchSignature,
-          fromId: sender.discordId,
+          fromId: sender.senderId,
           toId: r.user.discordId,
+          fromAddress: sender.senderPubkey,
           amountUsd: usdPerUser,
           amountToken: amountPerUser,
           tokenMint,
@@ -292,7 +317,7 @@ router.post('/batch-tip', async (req: AuthenticatedRequest, res: Response) => {
     res.json({
       success: true,
       signature,
-      from: sender.discordId,
+      from: sender.senderPubkey,
       recipients: transactions,
       totalAmountToken: amountToken,
       totalAmountUsd: usdValue,
@@ -301,6 +326,11 @@ router.post('/batch-tip', async (req: AuthenticatedRequest, res: Response) => {
       newWallets: newWallets.length > 0 ? newWallets : undefined,
     });
   } catch (error) {
+    const err = error as Error & { status?: number };
+    if (err.status) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
     console.error('Error sending batch tip:', error);
     res.status(500).json({ error: 'Failed to send batch tip' });
   }
@@ -309,25 +339,13 @@ router.post('/batch-tip', async (req: AuthenticatedRequest, res: Response) => {
 router.post('/withdraw', async (req: AuthenticatedRequest, res: Response) => {
   const { discordId, destinationAddress, amount, token } = req.body;
 
-  if (discordId !== req.discordId) {
-    res.status(403).json({ error: 'API key can only withdraw from its own wallet' });
-    return;
-  }
-
   try {
-    const user = await prisma.user.findUnique({
-      where: { discordId },
-    });
-
-    if (!user) {
-      res.status(404).json({ error: 'User wallet not found' });
-      return;
-    }
+    const sender = await resolveSender(discordId, req.appWallet, req.discordId);
 
     const tokenMint = await getTokenMint(token);
     const { amountToken, usdValue } = await calculateAmounts(amount || 0, token, 'token');
 
-    const balances = await balanceService.getBalances(user.walletPubkey);
+    const balances = await balanceService.getBalances(sender.senderPubkey);
     const feeBuffer = 0.001;
 
     let amountToSend = amountToken;
@@ -338,7 +356,10 @@ router.post('/withdraw', async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
-    const userKeypair = await walletService.getKeypair(user.encryptedPrivkey, user.keySalt);
+    const userKeypair = await walletService.getKeypair(
+      sender.encryptedPrivkey,
+      sender.keySalt
+    );
     const signature = await transactionService.transfer(
       userKeypair,
       destinationAddress,
@@ -349,8 +370,8 @@ router.post('/withdraw', async (req: AuthenticatedRequest, res: Response) => {
     await prisma.transaction.create({
       data: {
         signature,
-        fromId: user.discordId,
-        fromAddress: user.walletPubkey,
+        fromId: sender.senderId,
+        fromAddress: sender.senderPubkey,
         toAddress: destinationAddress,
         amountUsd: usdValue,
         amountToken: amountToSend,
@@ -364,7 +385,7 @@ router.post('/withdraw', async (req: AuthenticatedRequest, res: Response) => {
     res.json({
       success: true,
       signature,
-      from: user.walletPubkey,
+      from: sender.senderPubkey,
       to: destinationAddress,
       amountToken: amountToSend,
       amountUsd: usdValue,
@@ -372,6 +393,11 @@ router.post('/withdraw', async (req: AuthenticatedRequest, res: Response) => {
       solscanUrl: `https://solscan.io/tx/${signature}`,
     });
   } catch (error) {
+    const err = error as Error & { status?: number };
+    if (err.status) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
     console.error('Error withdrawing:', error);
     res.status(500).json({ error: 'Failed to withdraw' });
   }

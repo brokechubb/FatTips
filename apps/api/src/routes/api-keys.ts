@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from 'fattips-database';
+import { WalletService } from 'fattips-solana';
 import crypto from 'crypto';
 
 const router: Router = Router();
@@ -10,7 +11,7 @@ function generateApiKey(): string {
   return 'ft_' + crypto.randomBytes(32).toString('hex');
 }
 
-function requireAdmin(req: Request, res: Response, next: () => void) {
+export function requireAdmin(req: Request, res: Response, next: () => void) {
   const apiKey = req.headers['x-admin-api-key'];
 
   if (!apiKey) {
@@ -27,11 +28,43 @@ function requireAdmin(req: Request, res: Response, next: () => void) {
 }
 
 router.post('/create', requireAdmin, async (req: Request, res: Response) => {
-  const { discordId, name } = req.body as { discordId: string; name?: string };
+  const { discordId, name, type } = req.body as {
+    discordId?: string;
+    name?: string;
+    type?: 'user' | 'app';
+  };
 
   try {
+    const walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
+
+    if (type === 'app') {
+      const wallet = await walletService.createEncryptedWallet();
+
+      const apiKey = await prisma.apiKey.create({
+        data: {
+          key: generateApiKey(),
+          name: name || 'App Wallet',
+          appWalletPubkey: wallet.publicKey,
+          appEncryptedPrivkey: wallet.encryptedPrivateKey,
+          appKeySalt: wallet.keySalt,
+        },
+      });
+
+      res.json({
+        success: true,
+        type: 'app',
+        apiKey: apiKey.key,
+        name: apiKey.name,
+        createdAt: apiKey.createdAt,
+        walletPubkey: wallet.publicKey,
+        privateKey: wallet.privateKeyBase58,
+        mnemonic: wallet.mnemonic,
+      });
+      return;
+    }
+
     if (!discordId) {
-      res.status(400).json({ error: 'discordId is required' });
+      res.status(400).json({ error: 'discordId is required for user-type API keys' });
       return;
     }
 

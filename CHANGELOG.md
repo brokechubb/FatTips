@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **App wallet API keys** — API keys can now own a standalone Solana wallet not tied to any Discord user. Tip/batch-tip/withdraw endpoints accept requests without `fromDiscordId` when using an app wallet key, automatically using the app wallet as the sender.
+  - `POST /api/keys/create` with `type: "app"` creates a key with an auto-generated wallet
+  - `POST /api/wallet/app/create` (admin) attaches a wallet to an existing key
+  - `GET /api/wallet/app` returns the app wallet pubkey
+  - `GET /api/balance/app` returns SOL/USDC/USDT balances for the app wallet
+  - `fromDiscordId` / `discordId` is now optional on `/send/tip`, `/send/batch-tip`, `/send/withdraw`
 - **`/leaderboard` command** (slash + prefix `f lb`) — guild-scoped leaderboards for airdrop creators and rain/tip senders
 - **`/stats` command** (slash + prefix `f stats`) — personal tipping stats (tips sent/received, airdrops created/won)
 - **Guild stats** — server-wide tip volume, unique senders/receivers, and airdrop totals via `f lb guild`

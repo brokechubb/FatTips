@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { prisma } from 'fattips-database';
 import { WalletService } from 'fattips-solana';
-import { requireAuth, requireOwnership } from '../middleware/auth';
+import { requireAuth, requireOwnership, AuthenticatedRequest } from '../middleware/auth';
+import { requireAdmin } from './api-keys';
 
 const router: Router = Router();
 
@@ -104,6 +105,71 @@ router.delete('/:discordId', requireAuth, requireOwnership, async (req, res) => 
   } catch (error) {
     console.error('Error deleting wallet:', error);
     res.status(500).json({ error: 'Failed to delete wallet' });
+  }
+});
+
+// Create app wallet for an API key (admin only)
+router.post('/app/create', requireAdmin, async (req, res) => {
+  const { apiKey } = req.body as { apiKey: string };
+
+  try {
+    if (!apiKey) {
+      res.status(400).json({ error: 'apiKey is required' });
+      return;
+    }
+
+    const keyRecord = await prisma.apiKey.findUnique({
+      where: { key: apiKey },
+    });
+
+    if (!keyRecord) {
+      res.status(404).json({ error: 'API key not found' });
+      return;
+    }
+
+    if (keyRecord.appWalletPubkey) {
+      res.status(400).json({ error: 'API key already has an app wallet' });
+      return;
+    }
+
+    const wallet = await walletService.createEncryptedWallet();
+
+    await prisma.apiKey.update({
+      where: { id: keyRecord.id },
+      data: {
+        appWalletPubkey: wallet.publicKey,
+        appEncryptedPrivkey: wallet.encryptedPrivateKey,
+        appKeySalt: wallet.keySalt,
+      },
+    });
+
+    res.json({
+      success: true,
+      apiKey: keyRecord.key,
+      walletPubkey: wallet.publicKey,
+      privateKey: wallet.privateKeyBase58,
+      mnemonic: wallet.mnemonic,
+    });
+  } catch (error) {
+    console.error('Error creating app wallet:', error);
+    res.status(500).json({ error: 'Failed to create app wallet' });
+  }
+});
+
+// Get app wallet info (requires regular API key auth)
+router.get('/app', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (!req.appWallet) {
+      res.status(404).json({ error: 'No app wallet attached to this API key' });
+      return;
+    }
+
+    res.json({
+      walletPubkey: req.appWallet.pubkey,
+    });
+  } catch (error) {
+    console.error('Error fetching app wallet:', error);
+    res.status(500).json({ error: 'Failed to fetch app wallet' });
   }
 });
 
