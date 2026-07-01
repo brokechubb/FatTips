@@ -37,23 +37,39 @@ const solanaConnection = new Connection(process.env.SOLANA_RPC_URL!);
 
 export const data = new SlashCommandBuilder()
   .setName('rain')
-  .setDescription('Randomly distribute tokens to active users in this channel')
+  .setDescription('Randomly distribute tokens to active users in this channel or members of a role')
   .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
   .setIntegrationTypes([ApplicationIntegrationType.GuildInstall]) // Only visible when bot is guild-installed
   .setContexts([InteractionContextType.Guild]) // Only usable in guild channels
   .addStringOption((option) =>
     option
       .setName('amount')
-      .setDescription('Total amount to rain (e.g., $10, 1 SOL)')
+      .setDescription('Amount to rain (e.g., $10, 1 SOL). Total in split mode, per-user in each mode')
       .setRequired(true)
   )
   .addIntegerOption((option) =>
     option
       .setName('count')
-      .setDescription('Number of lucky users to pick (default: 5)')
+      .setDescription('Number of lucky users to pick (default: 5 for channel, all for role)')
       .setMinValue(1)
       .setMaxValue(25)
       .setRequired(false)
+  )
+  .addRoleOption((option) =>
+    option
+      .setName('role')
+      .setDescription('Rain on members of a specific role instead of active chatters')
+      .setRequired(false)
+  )
+  .addStringOption((option) =>
+    option
+      .setName('mode')
+      .setDescription('How to split the amount (default: split)')
+      .setRequired(false)
+      .addChoices(
+        { name: 'Split (Total amount divided)', value: 'split' },
+        { name: 'Each (Amount per user)', value: 'each' }
+      )
   )
   .addStringOption((option) =>
     option
@@ -68,15 +84,24 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  // Check if bot is actually a member of this guild
-  // Rain requires bot membership to track channel activity
-  const botIsMember = interaction.guild?.members.me !== null;
+  // Must be in a guild
+  if (!interaction.guild) {
+    await interaction.reply({ content: '❌ Rain can only be used in a server.', ephemeral: true });
+    return;
+  }
+
+  const botIsMember = interaction.guild.members.me !== null;
+
+  const amountStr = interaction.options.getString('amount', true);
+  const role = interaction.options.getRole('role');
+  const tokenPreference = interaction.options.getString('token') || 'SOL';
+  const mode = interaction.options.getString('mode') || 'split';
 
   if (!botIsMember) {
     await interaction.reply({
       content:
         '❌ **Rain requires the bot to be added to this server.**\n\n' +
-        'The rain command tracks active users in channels, which only works when the bot is a server member.\n\n' +
+        'The rain command tracks active users and role members, which only works when the bot is a server member.\n\n' +
         '**Options:**\n' +
         '• Ask a server admin to add FatTips to the server\n' +
         '• Use `/tip @users` to tip specific people instead',
@@ -84,10 +109,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
     return;
   }
-
-  const amountStr = interaction.options.getString('amount', true);
-  const count = interaction.options.getInteger('count') || 5;
-  const tokenPreference = interaction.options.getString('token') || 'SOL';
 
   await interaction.deferReply();
 
@@ -97,25 +118,70 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.followUp({ content: networkWarning, ephemeral: true }).catch(() => {});
 
   try {
-    // 1. Get Active Users
-    const activeUserIds = await activityService.getActiveUsers(interaction.channelId, 15); // Last 15 mins
+    let winners: string[];
+    let roleName: string | null = null;
+    let totalRoleMembers: number | null = null;
 
-    // Filter out sender and bots (though listener filters bots)
-    const candidates = activeUserIds.filter((id: string) => id !== interaction.user.id);
+    const userCount = interaction.options.getInteger('count');
 
-    if (candidates.length === 0) {
-      await interaction.editReply({
-        content: '❌ No active users found to rain on! The channel is dry. 🏜️',
-      });
-      return;
+    if (role) {
+      // --- Role-based rain ---
+      if (role.id === interaction.guild.id) {
+        await interaction.editReply({ content: '❌ Cannot rain on the @everyone role.' });
+        return;
+      }
+
+      let members;
+      try {
+        members = await interaction.guild.members.fetch();
+      } catch {
+        await interaction.editReply({
+          content: '❌ Failed to fetch guild members. Please try again.',
+        });
+        return;
+      }
+
+      const roleMembers = members.filter(
+        (m) => m.roles.cache.has(role.id) && m.id !== interaction.user.id && !m.user.bot
+      );
+
+      if (roleMembers.size === 0) {
+        await interaction.editReply({
+          content: `❌ No eligible members found in <@&${role.id}> (excluding you and bots).`,
+        });
+        return;
+      }
+
+      roleName = role.name;
+      totalRoleMembers = roleMembers.size;
+
+      const count = userCount ?? Math.min(roleMembers.size, 25);
+      const memberIds = [...roleMembers.keys()];
+      const shuffled = memberIds.sort(() => 0.5 - Math.random());
+      winners = shuffled.slice(0, Math.min(count, memberIds.length));
+    } else {
+      // --- Channel-based rain (original behavior) ---
+      // 1. Get Active Users
+      const activeUserIds = await activityService.getActiveUsers(interaction.channelId, 15); // Last 15 mins
+
+      // Filter out sender and bots (though listener filters bots)
+      const candidates = activeUserIds.filter((id: string) => id !== interaction.user.id);
+
+      if (candidates.length === 0) {
+        await interaction.editReply({
+          content: '❌ No active users found to rain on! The channel is dry. 🏜️',
+        });
+        return;
+      }
+
+      // Pick Winners
+      const count = userCount || 5;
+      // Shuffle candidates
+      const shuffled = candidates.sort(() => 0.5 - Math.random());
+      // Pick top N
+      winners = [];
+      winners.push(...shuffled.slice(0, Math.min(count, candidates.length)));
     }
-
-    // Pick Winners
-    const winners: string[] = [];
-    // Shuffle candidates
-    const shuffled = candidates.sort(() => 0.5 - Math.random());
-    // Pick top N
-    winners.push(...shuffled.slice(0, Math.min(count, candidates.length)));
 
     // 2. Sender Wallet Check
     const sender = await prisma.user.findUnique({
@@ -211,6 +277,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const tokenMint = selectedToken.mint;
 
     if (parsedAmount.type === 'max') {
+      if (mode === 'each') {
+        await interaction.editReply({
+          content: '❌ Max amount cannot be used with Each mode. Specify a fixed amount instead.',
+        });
+        return;
+      }
+
       const balances = await balanceService.getBalances(sender.walletPubkey);
 
       if (tokenSymbol === 'SOL') {
@@ -249,13 +322,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         await interaction.editReply({ content: '❌ Price service unavailable.' });
         return;
       }
-      totalAmountToken = conversion.amountToken;
-      amountPerUser = totalAmountToken / recipientWallets.length;
-      usdValuePerUser = parsedAmount.value / recipientWallets.length;
+
+      if (mode === 'each') {
+        amountPerUser = conversion.amountToken;
+        totalAmountToken = amountPerUser * recipientWallets.length;
+        usdValuePerUser = parsedAmount.value;
+      } else {
+        totalAmountToken = conversion.amountToken;
+        amountPerUser = totalAmountToken / recipientWallets.length;
+        usdValuePerUser = parsedAmount.value / recipientWallets.length;
+      }
     } else {
       // Direct Token Amount
-      totalAmountToken = parsedAmount.value;
-      amountPerUser = totalAmountToken / recipientWallets.length;
+      if (mode === 'each') {
+        amountPerUser = parsedAmount.value;
+        totalAmountToken = parsedAmount.value * recipientWallets.length;
+      } else {
+        totalAmountToken = parsedAmount.value;
+        amountPerUser = totalAmountToken / recipientWallets.length;
+      }
       try {
         const price = await priceService.getTokenPrice(tokenMint);
         usdValuePerUser = price ? amountPerUser * price.price : 0;
@@ -480,10 +565,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     const winnerMentions = recipientWallets.map((r) => `<@${r.discordId}>`).join(', ');
+
+    let recipientDescription: string;
+    if (role && roleName && totalRoleMembers !== null) {
+      const cappedText =
+        totalRoleMembers > recipientWallets.length
+          ? ` (**${recipientWallets.length} of ${totalRoleMembers}** members randomly selected)`
+          : ` (**${totalRoleMembers}** members)`;
+      recipientDescription = `**<@&${role.id}>**${cappedText}`;
+    } else {
+      recipientDescription = `**${recipientWallets.length} active users**`;
+    }
+
     const embed = new EmbedBuilder()
       .setTitle('🌧️ Making it Rain!')
       .setDescription(
-        `**${interaction.user}** made it rain on **${recipientWallets.length} active users**!\n\n` +
+        `**${interaction.user}** made it rain on ${recipientDescription}!\n\n` +
           `**Total Rain:** ${formatTokenAmount(totalAmountToken)} ${tokenSymbol}\n` +
           `**Each User Gets:** ${formatTokenAmount(amountPerUser)} ${tokenSymbol} (~$${usdValuePerUser.toFixed(2)})\n\n` +
           `**Lucky Winners:**\n${winnerMentions}\n\n` +

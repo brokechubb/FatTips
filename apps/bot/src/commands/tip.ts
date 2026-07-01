@@ -84,6 +84,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const tokenPreference = interaction.options.getString('token') || 'SOL';
   const mode = interaction.options.getString('mode') || 'split';
 
+  // Redirect role mentions to /rain
+  if (/<@&\d+>/.test(recipientsStr)) {
+    await interaction.reply({
+      content: 'To tip an entire role, use `/rain` and select the role with the `role` option.',
+      ephemeral: true,
+    });
+    return;
+  }
+
   // Parse mentions from recipients string
   const mentionedIds = [...new Set([...recipientsStr.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]))];
 
