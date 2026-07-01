@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Role-based rain** — `/rain` and `f rain` now accept an optional `role` parameter to rain on members of a specific Discord role instead of active chatters. When a role has more than 25 members, 25 are randomly selected with a notification in the embed. Shares the same mode option (`split`/`each`) as `/tip`.
+- **Role mention redirect from `/tip`** — if a user types a role mention in `/tip` or `f tip`, the bot redirects them to use `/rain` instead with the `role` option.
+- **`mode` option on `/rain`** — supports `split` (total ÷ N, default) and `each` (per-user amount) mode, matching `/tip` behavior.
+
+### Changed
+
+- **Bot now requires `GUILD_MEMBERS` privileged intent** for role-based rain to fetch guild member lists.
+
 - **App wallet API keys** — API keys can now own a standalone Solana wallet not tied to any Discord user. Tip/batch-tip/withdraw endpoints accept requests without `fromDiscordId` when using an app wallet key, automatically using the app wallet as the sender.
   - `POST /api/keys/create` with `type: "app"` creates a key with an auto-generated wallet
   - `POST /api/wallet/app/create` (admin) attaches a wallet to an existing key

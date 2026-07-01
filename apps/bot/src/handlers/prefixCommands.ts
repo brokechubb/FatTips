@@ -534,6 +534,7 @@ async function handleHelp(message: Message, prefix: string) {
         value:
           `\`${p}tip @user $5\` • \`${p}tip 0.1 SOL\`\n` +
           `\`${p}rain $10 5\` (Active users)\n` +
+          `\`${p}rain @role $10\` (Role members)\n` +
           `\`${p}airdrop $20 10s\``,
       },
       {
@@ -667,6 +668,15 @@ async function handleWallet(message: Message, args: string[], prefix: string) {
 
 // ============ TIP ============
 async function handleTip(message: Message, args: string[], client: Client, prefix: string) {
+  // Redirect role mentions to rain
+  if (message.mentions.roles.size > 0 || message.content.includes('<@&')) {
+    await message.reply(
+      `To tip an entire role, use \`${prefix}rain @role $5\`.\n` +
+        `Example: \`${prefix}rain @CoolPeople $10\` — randomly rains $10 on up to 25 members of @CoolPeople.`
+    );
+    return;
+  }
+
   const mentions = message.mentions.users.filter((u) => !u.bot && u.id !== message.author.id);
   let amountArg: string | null = null;
 
@@ -1285,18 +1295,91 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     return;
   }
 
-  // Parse: %rain $10 5 or %rain 0.5 SOL 10
+  // Parse: %rain $10 5 or %rain @role $10 5 or %rain 0.5 SOL 10
   if (args.length < 1) {
     await message.reply(
-      `Usage: \`${prefix}rain $10 5\` (rain $10 on 5 users) or \`${prefix}rain 0.5 SOL 10\` (rain 0.5 SOL on 5 users)`
+      `Usage: \`${prefix}rain $10 5\` (rain $10 on 5 active users) or \`${prefix}rain @role $10\` (rain on role members)`
     );
     return;
   }
 
-  // Find amount and count
-  const amountArg = args[0];
-  const count = parseInt(args[1]) || 5;
+  // Check for role mention: <@&12345>
+  const roleMentionRegex = /<@&(\d+)>/;
+  const roleArg = args.find((a) => roleMentionRegex.test(a));
+  const roleId = roleArg ? roleArg.match(roleMentionRegex)![1] : null;
+
+  let winners: string[];
+
+  if (roleId) {
+    // --- Role-based rain ---
+    const role = message.guild.roles.cache.get(roleId);
+    if (!role) {
+      await message.reply('❌ That role could not be found.');
+      return;
+    }
+
+    if (role.id === message.guild.id) {
+      await message.reply('❌ Cannot rain on the @everyone role.');
+      return;
+    }
+
+    let members;
+    try {
+      members = await message.guild.members.fetch();
+    } catch {
+      await message.reply('❌ Failed to fetch guild members. Please try again.');
+      return;
+    }
+
+    const roleMembers = members.filter(
+      (m) => m.roles.cache.has(role.id) && m.id !== message.author.id && !m.user.bot
+    );
+
+    if (roleMembers.size === 0) {
+      await message.reply(`❌ No eligible members found in <@&${role.id}> (excluding you and bots).`);
+      return;
+    }
+
+    // Find count in args: non-role, non-token args; first is amount, optional second numeric is count
+    const nonMetaArgs = args.filter(
+      (a) => a !== roleArg && !/^(SOL|USDC|USDT)$/i.test(a)
+    );
+    const numericArgs = nonMetaArgs.filter((a) => /^\d+$/.test(a));
+    const constCount =
+      numericArgs.length >= 2
+        ? parseInt(numericArgs[1])
+        : Math.min(roleMembers.size, 25);
+
+    const memberIds = [...roleMembers.keys()];
+    const shuffled = memberIds.sort(() => 0.5 - Math.random());
+    winners = shuffled.slice(0, Math.min(constCount, memberIds.length));
+  } else {
+    // --- Channel-based rain (original behavior) ---
+    const count = parseInt(args[1]) || 5;
+
+    // Get active users
+    const activeUserIds = await activityService.getActiveUsers(message.channel.id, 15);
+    const candidates = activeUserIds.filter((id: string) => id !== message.author.id);
+
+    if (candidates.length === 0) {
+      await message.reply('❌ No active users found to rain on! The channel is dry. 🏜️');
+      return;
+    }
+
+    // Pick winners
+    const shuffled = candidates.sort(() => 0.5 - Math.random());
+    winners = shuffled.slice(0, Math.min(count, candidates.length));
+  }
+
+  // Parse amount (common to both paths)
   const tokenArg = args.find((a) => /^(SOL|USDC|USDT)$/i.test(a));
+  const nonMetaArgs = args.filter(
+    (a) =>
+      a !== roleArg &&
+      a.toLowerCase() !== tokenArg?.toLowerCase() &&
+      !(roleId && /^\d+$/.test(a) && a !== args[0]) // exclude count numbers for role rain
+  );
+  const amountArg = nonMetaArgs[0] || args[0];
 
   const parsedAmount = parseAmountInput(
     amountArg + (tokenArg && !amountArg.includes(tokenArg) ? ` ${tokenArg}` : '')
@@ -1304,23 +1387,10 @@ async function handleRain(message: Message, args: string[], client: Client, pref
 
   if (!parsedAmount.valid) {
     await message.reply(
-      `❌ ${parsedAmount.error}\nUsage: \`${prefix}rain $10 5\` or \`${prefix}rain 0.5 SOL 10\``
+      `❌ ${parsedAmount.error}\nUsage: \`${prefix}rain $10 5\` or \`${prefix}rain @role $10\``
     );
     return;
   }
-
-  // Get active users
-  const activeUserIds = await activityService.getActiveUsers(message.channel.id, 15);
-  const candidates = activeUserIds.filter((id: string) => id !== message.author.id);
-
-  if (candidates.length === 0) {
-    await message.reply('❌ No active users found to rain on! The channel is dry. 🏜️');
-    return;
-  }
-
-  // Pick winners
-  const shuffled = candidates.sort(() => 0.5 - Math.random());
-  const winners = shuffled.slice(0, Math.min(count, candidates.length));
 
   // Get sender wallet
   const sender = await prisma.user.findUnique({
