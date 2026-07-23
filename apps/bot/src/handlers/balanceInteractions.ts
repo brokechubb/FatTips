@@ -53,6 +53,13 @@ export async function handleBalanceDeposit(interaction: ButtonInteraction) {
       embeds: [embed],
       files: [attachment],
     });
+
+    // Send the address alone in plain text via DM for easy copying on mobile
+    try {
+      await interaction.user.send(user.walletPubkey);
+    } catch {
+      // DMs disabled — address already shown in ephemeral response
+    }
   } catch (error) {
     console.error('Error handling balance deposit:', error);
     await interaction.editReply({
