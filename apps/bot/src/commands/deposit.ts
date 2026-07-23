@@ -55,6 +55,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await interaction.user.send(
         `Your FatTips Solana deposit address:\n\`\`\`\n${user.walletPubkey}\n\`\`\`\nKeep this message for easy copying. Only send SOL, USDC, or USDT on the Solana network to this address.`
       );
+      // Send the address alone in plain text for easy copying on mobile
+      await interaction.user.send(user.walletPubkey);
     } catch {
       // DMs disabled — user already has the ephemeral response
     }

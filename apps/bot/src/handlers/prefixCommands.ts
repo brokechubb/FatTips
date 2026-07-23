@@ -2104,6 +2104,8 @@ async function handleDeposit(message: Message, prefix: string) {
     await message.author.send(
       `Your FatTips Solana deposit address:\n\`\`\`\n${user.walletPubkey}\n\`\`\`\nKeep this message for easy copying. Only send SOL, USDC, or USDT on the Solana network to this address.`
     );
+    // Send the address alone in plain text for easy copying on mobile
+    await message.author.send(user.walletPubkey);
   } catch {
     // DMs disabled — address already shown in channel
   }
