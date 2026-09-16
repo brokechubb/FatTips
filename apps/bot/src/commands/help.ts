@@ -67,8 +67,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         value:
           `\`${prefix}rain $10 5\` - Rain on 5 random active users.\n` +
           `\`${prefix}rain @role $10\` - Rain on members of a role.\n` +
+          `\`${prefix}rain vc $10\` - Rain on your voice channel members.\n` +
+          `\`${prefix}vctip $10\` - Tip everyone in your voice channel.\n` +
           `\`${prefix}airdrop $20 10s\` - Create a 10-second airdrop pot.\n` +
-          `*Slash:* \`/rain amount:$10 role:@Role\` • \`/airdrop amount:$20 duration:10s max-winners:5\`\n` +
+          `*Slash:* \`/rain amount:$10 role:@Role voice:true\` • \`/vctip amount:$10\` • \`/airdrop amount:$20 duration:10s max-winners:5\`\n` +
           'ℹ️ *On-chain network fees are automatically deducted from the total pot.*',
       },
       {
@@ -78,7 +80,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           `\`${prefix}stats\` - View your tipping stats.\n` +
           `\`${prefix}leaderboard\` - View server leaderboards (airdrops/rain).\n` +
           `\`${prefix}setprefix <new>\` - Change server prefix (Admin only).\n` +
-          `*Slash:* \`/history\`, \`/stats\`, \`/leaderboard\``,
+          `\`${prefix}setrole <airdrop|rain> @Role\` - Gate airdrops/rain to a role (Admin only).\n` +
+          `*Slash:* \`/history\`, \`/stats\`, \`/leaderboard\`, \`/config\``,
       },
       {
         name: '🆘 Support',

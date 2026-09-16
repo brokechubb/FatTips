@@ -31,6 +31,7 @@ We've streamlined the tipping experience to be fast, intuitive, and social.
 - **USD-Native Tipping:** Type `/tip @user $5` and we automatically calculate the equivalent SOL amount using real-time Jupiter prices. No need to do math.
 - **Automatic Conversions:** Tip in USD, receive in crypto.
 - **Multi-Token Support:** First-class support for SOL, USDC, and USDT.
+- **Voice Channel Tips:** Rain on or tip everyone in your current voice channel with `/vctip` or `/rain voice:true`.
 - **Zero Bot Fees:** We don't take a cut of your tips. You only pay standard Solana network fees.
 
 ---
@@ -53,16 +54,29 @@ _Note: If you tip a user who doesn't have a wallet, FatTips creates one for them
 
 ### 2. Rain
 
-Randomly distribute tokens to active users in a channel or to all members of a specific role.
+Randomly distribute tokens to active users in a channel, to all members of a specific role, or to everyone in a voice channel.
 
 ```
 /rain amount:$10 count:5            # Rain $10 of SOL to 5 random active users
 /rain amount:$10 role:@Role         # Rain $10 split among members of @Role
+/rain amount:$10 voice:true         # Rain $10 split among your voice channel members
 /rain amount:100 USDC count:10      # Rain 100 USDC to 10 users
 /rain amount:$5 count:10 mode:each  # Rain $5 per user to 10 random users
 ```
 
-### 3. Token Swaps
+### 3. Voice Channel Tips
+
+Tip everyone currently sitting in your voice channel — a one-shot equivalent of a voice rain.
+
+```
+/vctip amount:$10                   # Split $10 among everyone in your voice channel
+/vctip amount:$10 mode:each         # Send $10 to each person in the channel
+/vctip amount:$10 token:USDC        # Split $10 worth of USDC among the channel
+```
+
+Wallets are auto-created for members who don't have one, and recipients are capped at 25 per transaction (randomly selected if the channel is larger). Per-server role gating applies the same as rain.
+
+### 4. Token Swaps
 
 Swap between SOL, USDC, and USDT using Jupiter with gasless swaps available.
 
@@ -71,7 +85,7 @@ Swap between SOL, USDC, and USDT using Jupiter with gasless swaps available.
 /swap amount:$50 from:USDC to:USDT  # Swap $50 of USDC to USDT
 ```
 
-### 4. Airdrops
+### 5. Airdrops
 
 Create engaging community airdrops. Drop a pot of tokens in a channel, and users can click a button to claim their share. Funds are held in a pooled wallet system for efficient management and are distributed automatically when the timer ends or max participants is reached.
 
@@ -80,7 +94,7 @@ Create engaging community airdrops. Drop a pot of tokens in a channel, and users
 /airdrop amount:1 SOL duration:30m max-winners:5
 ```
 
-### 5. External Transfers & Withdrawals
+### 6. External Transfers & Withdrawals
 
 Send funds to any external Solana address directly from Discord.
 
@@ -89,7 +103,7 @@ Send funds to any external Solana address directly from Discord.
 /withdraw address:9HMqa... all      # Drains wallet completely (empties balance)
 ```
 
-### 6. Leaderboards & Stats
+### 7. Leaderboards & Stats
 
 Track community engagement and personal performance.
 
@@ -101,7 +115,7 @@ Track community engagement and personal performance.
 /stats @user                         # Another user's stats
 ```
 
-### 7. Wallet Management
+### 8. Wallet Management
 
 ```
 /balance                # Check balance & address
@@ -114,11 +128,11 @@ Track community engagement and personal performance.
 /help                   # List all commands
 ```
 
-### 8. QR Code Deposits
+### 9. QR Code Deposits
 
 Use `/deposit` or `fdeposit` to get a QR code for your wallet address. Scan with any Solana wallet app (Phantom, Solflare, etc.) to deposit easily.
 
-### 9. Network-Aware Transactions
+### 10. Network-Aware Transactions
 
 FatTips monitors Solana network health in real time and adapts accordingly:
 
@@ -126,11 +140,11 @@ FatTips monitors Solana network health in real time and adapts accordingly:
 - **Network Status Warnings:** Users receive congestion warnings before queuing transactions.
 - **Bot Presence Sync:** Discord status reflects network health (Online = healthy, Idle = degraded, DND = congested) with live TPS display.
 
-### 10. User-Installed App
+### 11. User-Installed App
 
 FatTips supports **Discord User Apps**. You can install the bot to your personal account and use it in **ANY** server or DM, even if the bot hasn't been invited there. This makes your wallet truly portable across Discord.
 
-### 11. Prefix Commands
+### 12. Prefix Commands
 
 For power users and servers that prefer classic text commands, FatTips supports prefix commands.
 **Default Prefix:** `f` (e.g., `ftip`, `fbalance`)
@@ -138,6 +152,8 @@ For power users and servers that prefer classic text commands, FatTips supports 
 - `ftip @user $5` — Tip instantly (supports `max`/`all`, reply-to-tip)
 - `frain $10 5` — Rain on 5 active users
 - `frain @role $10` — Rain on members of a role
+- `frain vc $10 [count]` — Rain on your current voice channel
+- `fvctip $10 [count]` — Tip everyone in your voice channel
 - `fswap 1 SOL USDC` — Swap tokens via Jupiter
 - `fairdrop $10 30m 5` — Create an airdrop (duration + optional max winners)
 - `fsend <address> $20` — Send to external wallet
@@ -149,9 +165,24 @@ For power users and servers that prefer classic text commands, FatTips supports 
 - `flb [airdrops|rain|guild] [limit]` — View leaderboards
 - `fwallet create|export-key` — Wallet management
 - `fsetprefix <new>` — Change server prefix (Admin only)
+- `fsetrole <airdrop|rain> @Role` — Gate airdrops/rain to a role (Admin only)
 - `fhelp` — List all commands
 
-### 12. REST API
+*Slash equivalents:* `/rain voice:true`, `/vctip`, `/config role`, `/config view`.
+
+### 13. Per-Server Role Gating
+
+Server admins can restrict airdrops and rain (including voice tips) to members holding a specific role, using `/config role` or `fsetrole`. When a gate is set, only members with that role (plus admins) can **create** or **receive** the gated feature.
+
+```
+/config role feature:Airdrop role:@Members   # Gate airdrops to @Members
+/config role feature:Rain role:@Members      # Gate rain/vctip to @Members
+/config view                                  # Show current settings
+```
+
+Clearing the role (`/config role` with no role, or `fsetrole <feature> clear`) removes the gate.
+
+### 14. REST API
 
 A comprehensive REST API for integrations and programmatic access:
 

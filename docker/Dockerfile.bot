@@ -11,7 +11,7 @@ COPY . .
 # Install dependencies and global prisma (matching project version)
 # We need pnpm globally to run pnpm commands
 # Use --force to avoid interactive prompts in Docker
-RUN npm install -g pnpm && pnpm install --force
+RUN npm install -g pnpm@8.12.0 && pnpm install --force
 
 # Build dependencies in correct order (database -> solana -> shared)
 RUN pnpm --filter fattips-database generate
@@ -27,7 +27,7 @@ FROM node:20-alpine AS runner
 RUN apk add --no-cache openssl
 
 # Install pnpm for runtime scripts (migrations etc)
-RUN npm install -g pnpm
+RUN npm install -g pnpm@8.12.0
 
 WORKDIR /app
 

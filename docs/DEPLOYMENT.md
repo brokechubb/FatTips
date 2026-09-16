@@ -32,11 +32,12 @@ If setting up your own bot instance in the Discord Developer Portal:
 
 ### 2. Privileged Gateway Intents
 
-FatTips is privacy-focused and **does NOT require** any privileged intents.
+FatTips uses two privileged intents and one standard gateway intent:
 
 - **Presence Intent:** OFF
-- **Server Members Intent:** OFF
+- **Server Members Intent:** ON (Required for role-based rain and member lookups)
 - **Message Content Intent:** ON (Required for prefix commands like `ftip`)
+- **Guild Voice States:** ON (Standard intent — required for voice channel tips and voice rain: `/vctip`, `/rain voice:true`)
 
 ### 3. Installation Contexts
 

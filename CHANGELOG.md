@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **50-second transaction stalls resolved** — ~1 in 10 transactions hit a ~50s wall: a dropped transaction waited the full blockhash expiry before retrying. Confirmation now uses a soft 15s window — if the tx hasn't confirmed, it checks on-chain status, re-propagates the signed transaction while the blockhash is still valid (idempotent, cannot double-send), and only escalates to a fresh-blockhash retry once the blockhash provably expires. Worst-case wait per attempt drops from ~50s to ~30s, and retries start ~30s sooner.
+- **Priority fees now use the 'high' level** — `getPriorityFeeEstimate {recommended}` returns ~10k µL, which validators drop during congestion. Fees are now read from the full Helius fee ladder (`includeAllPriorityFeeLevels`) and use `high` (typically ~50k µL — fractions of a cent more per transfer), with fallback down the ladder (`medium` → `low` → `recommended`) if a level is missing. Retry escalation (3x, capped) is unchanged.
+- **Transaction worker now processes 4 jobs concurrently** (was serial) — one slow confirmation no longer stalls the entire payout queue behind it. Airdrop settlements that previously took 6+ minutes of sequential waiting now proceed while a stuck transaction retries independently. Safe because jobs are idempotency-keyed per sender and balances are re-verified at execution time.
+- **NetworkMonitor backoff** — when Helius intermittently returns 500s on fee polling, the monitor backs off exponentially (30s → 5 min max) and logs the first failure plus every 5th, instead of erroring every 30s.
+- **Airdrop settlement crash recovery** — a burst of RPC 429s during large settlements crashed the bot mid-payout (unhandled websocket error), leaving airdrops stuck in `SETTLING` with unpaid participants forever. Airdrops stuck in `SETTLING` are now automatically reverted to `ACTIVE` on startup and re-settled, skipping participants already paid (no double payments).
+- **Fair shares on resumed settlements** — when settlement resumes after a crash, unpaid winners now receive the same per-winner share the earlier winners got, instead of a share recomputed from the drained wallet balance.
+- **Accurate `amountClaimed`** — settlement now records total paid across resume attempts (previously underreported on retries).
+- **Settlement serialization** — expired-airdrop sweeps no longer run concurrently, preventing RPC 429 storms during large settlements; transfers are paced 300ms apart.
+- **Process survives transient Solana RPC websocket 429s** — logged to Sentry instead of crashing the bot; genuinely fatal uncaught exceptions still restart the process.
+
 ### Added
+
+- **Voice channel tips** — tip everyone in your current voice channel with the new `/vctip` command (slash) and `f vctip` (prefix). Supports `split`/`each` modes, USD/token amounts, and auto-creates wallets for members who don't have one. Recipients are the human members of your voice channel (excluding you and bots); per-guild rain role gating applies.
+- **Voice rain** — `/rain` gains a `voice` option and `f rain vc <amount> [count]` rains on members of your current voice channel, randomly selecting up to `count` (default: all, capped at 25). Cannot be combined with the `role` option.
+- **`GUILD_VOICE_STATES` intent** — required to read voice channel membership.
 
 - **Role-based rain** — `/rain` and `f rain` now accept an optional `role` parameter to rain on members of a specific Discord role instead of active chatters. When a role has more than 25 members, 25 are randomly selected with a notification in the embed. Shares the same mode option (`split`/`each`) as `/tip`.
 - **Role mention redirect from `/tip`** — if a user types a role mention in `/tip` or `f tip`, the bot redirects them to use `/rain` instead with the `role` option.

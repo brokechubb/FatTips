@@ -1,7 +1,7 @@
 # FatTips Architecture Documentation Index
 
-**Last Updated:** 2026-06-18  
-**Version:** 0.3.0
+**Last Updated:** 2026-09-15  
+**Version:** 0.4.0
 
 ---
 
@@ -116,7 +116,28 @@ This directory contains comprehensive architecture documentation for the FatTips
 
 ---
 
-### 5. [README.md](../README.md) 📘
+### 5. [API.md](./API.md) 🔌
+
+**Purpose:** REST API reference  
+**Audience:** Integrators, API consumers  
+**Length:** ~1400 lines
+
+**Contents:**
+
+- Authentication (user-bound vs app wallet API keys)
+- Admin key-management endpoints
+- Users, wallet, balance, send/tip, withdraw endpoints
+- Airdrops, rain, swaps
+- Activity (channel), leaderboard & reports
+- Discord integration flow
+- Error responses & rate limits
+- Integration examples
+
+**When to use:** Building an integration against the REST API
+
+---
+
+### 6. [README.md](../README.md) 📘
 
 **Purpose:** User-facing documentation  
 **Audience:** End users, contributors  
@@ -134,7 +155,7 @@ This directory contains comprehensive architecture documentation for the FatTips
 
 ---
 
-### 6. [ROADMAP.md](../ROADMAP.md) 🗺️
+### 7. [ROADMAP.md](../ROADMAP.md) 🗺️
 
 **Purpose:** Development planning  
 **Audience:** Maintainers, contributors  
@@ -156,7 +177,7 @@ This directory contains comprehensive architecture documentation for the FatTips
 
 ---
 
-### 7. [AGENTS.md](../AGENTS.md) 🤖
+### 8. [AGENTS.md](../AGENTS.md) 🤖
 
 **Purpose:** AI assistant guidelines  
 **Audience:** AI coding assistants (Claude, Gemini, etc.)  
@@ -240,11 +261,12 @@ This directory contains comprehensive architecture documentation for the FatTips
 | ------------------------- | ----------- | ------------ | ------------ |
 | ARCHITECTURE_ANALYSIS.md  | ✅ Complete | 2026-03-09   | 100%         |
 | ARCHITECTURE_DIAGRAMS.md  | ✅ Complete | 2026-03-09   | 100%         |
-| ARCHITECTURE_SUMMARY.md   | ✅ Complete | 2026-03-09   | 100%         |
+| ARCHITECTURE_SUMMARY.md   | ✅ Complete | 2026-09-15   | 100%         |
 | COMPONENT_DEPENDENCIES.md | ✅ Complete | 2026-03-09   | 100%         |
-| README.md                 | ✅ Complete | Ongoing      | 95%          |
-| ROADMAP.md                | ✅ Complete | Ongoing      | 90%          |
-| AGENTS.md                 | ✅ Complete | Ongoing      | 100%         |
+| API.md                    | ✅ Complete | 2026-03-15   | 100%         |
+| README.md                 | ✅ Complete | 2026-09-15   | 95%          |
+| ROADMAP.md                | ✅ Complete | 2026-09-15   | 92%          |
+| AGENTS.md                 | ✅ Complete | 2026-09-15   | 100%         |
 
 ---
 

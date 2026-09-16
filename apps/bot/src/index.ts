@@ -40,6 +40,39 @@ if (process.env.SENTRY_DSN) {
 
 const airdropService = new AirdropService();
 
+// @solana/web3.js emits 'error' on its RPC websocket when the provider responds
+// 429 (rate limited). Node treats an unhandled 'error' event as fatal and the
+// process crashes — historically mid-airdrop-settlement. web3.js reconnects its
+// websocket automatically, so for these transient RPC errors we log and keep
+// running. Any other uncaught exception still takes the process down (Docker
+// restarts it, and recoverInterruptedSettlements resumes payout where it left off).
+process.on('uncaughtException', (err: Error) => {
+  const isTransientRpcError =
+    /429|Too Many Requests|Unexpected server response/i.test(err.message) ||
+    err.stack?.includes('@solana/web3.js');
+
+  if (isTransientRpcError) {
+    logger.warn(`Transient Solana RPC error (process kept alive): ${err.message}`);
+    Sentry.captureException(err, { tags: { handler: 'uncaughtException', transient: 'true' } });
+    return;
+  }
+
+  logger.error('Fatal uncaught exception, exiting:', err);
+  Sentry.captureException(err, { tags: { handler: 'uncaughtException' } });
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason: unknown) => {
+  logger.error('Unhandled promise rejection:', reason);
+  Sentry.captureException(reason as Error, { tags: { handler: 'unhandledRejection' } });
+});
+
+// Recover airdrops stuck in SETTLING by a previous crash before anything else
+// can start a new settlement (this process is the only settler).
+airdropService.recoverInterruptedSettlements().catch((err) => {
+  logger.error('Failed to recover interrupted airdrop settlements:', err);
+});
+
 // Extend Client to include commands collection
 declare module 'discord.js' {
   interface Client {
@@ -51,6 +84,7 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers, // Required for role-based rain
+    GatewayIntentBits.GuildVoiceStates, // Required for voice channel tips
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent, // Required for prefix commands

@@ -9,7 +9,7 @@ WORKDIR /app
 COPY . .
 
 # Install pnpm
-RUN npm install -g pnpm
+RUN npm install -g pnpm@8.12.0
 
 # Install dependencies (use --force to avoid interactive prompts in Docker)
 RUN pnpm install --no-frozen-lockfile --force

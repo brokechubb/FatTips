@@ -81,9 +81,19 @@ echo "📤 Uploading compressed images to production..."
 docker save fattips-bot:latest fattips-api:latest | gzip | ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST "gunzip | docker load"
 
 # 3. Run Database Migrations BEFORE restarting services
-# This ensures schema is updated before new code tries to use it
-echo "🐘 Running database migrations..."
-ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST "docker exec fattips-bot pnpm --filter fattips-database migrate:prod"
+# This ensures schema is updated before new code tries to use it.
+#
+# IMPORTANT: We use `docker compose run` (not `docker exec`) so the migration
+# runs against the NEW image just loaded above. The new image's filesystem
+# contains the new migration SQL files; the currently-running container still
+# has the OLD image's filesystem and would silently skip new migrations.
+# `docker compose run` starts a one-off container on the same Docker network
+# so the `postgres` hostname in DATABASE_URL resolves correctly.
+echo "🐘 Running database migrations (against new image)..."
+# Migration 20260729000000_add_role_gating adds nullable airdropRoleId/rainRoleId
+# columns to GuildSettings for per-server role gating (airdrops & rain).
+# Safe, non-breaking: existing rows default to NULL (unrestricted).
+ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST "cd $REMOTE_DIR && docker compose run --rm bot pnpm --filter fattips-database migrate:prod"
 
 # 4. Sync Configuration Files
 echo "📦 Syncing configuration files..."
@@ -133,6 +143,13 @@ ssh -p $SERVER_PORT -o ConnectTimeout=30 $SERVER_USER@$SERVER_HOST << EOF
   echo "🧹 Post-deployment cleanup..."
   docker system prune -f
   
+  echo ""
+  echo "📋 Post-deploy notes:"
+  echo "   • Per-guild role gating is now available (airdrops & rain)."
+  echo "     Admins can configure it via /config role or 'f setrole'."
+  echo "     No action required — defaults to unrestricted (null)."
+  echo "     Existing in-flight airdrops remain claimable by anyone."
+  echo ""
   echo "✅ Deployment complete!"
   docker compose ps
 EOF

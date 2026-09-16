@@ -6,9 +6,12 @@ The Discord bot is the primary user interface for FatTips.
 
 - Wallet generation and management
 - Tipping with USD conversion
+- Role-, channel-, and voice-channel rain
+- Voice channel tips (`/vctip`)
 - Airdrop creation and claiming
 - Balance checking
 - Transaction history
+- Per-server role gating for airdrops and rain
 
 ## Commands
 
@@ -25,6 +28,10 @@ The Discord bot is the primary user interface for FatTips.
 - `/tip @user 5` - Tip 5 SOL
 - `/tip @user $5 USDC` - Tip $5 USD worth of USDC
 - `/tip @user 10 USDT` - Tip 10 USDT
+- `/rain $10 count:5` - Rain on random active users
+- `/rain $10 role:@Role` - Rain on members of a role
+- `/rain $10 voice:true` - Rain on your current voice channel
+- `/vctip amount:$10` - Tip everyone in your current voice channel
 
 ### Airdrop Commands
 
@@ -34,9 +41,16 @@ The Discord bot is the primary user interface for FatTips.
 ### Utility Commands
 
 - `/balance` - Show all token balances
+- `/deposit` - Show deposit address with QR code
 - `/history` - View transaction history
 - `/leaderboard` - View top tippers
+- `/stats [@user]` - View tipping stats
 - `/withdraw <amount> <address>` - Withdraw to external wallet
+
+### Admin Commands
+
+- `/config role feature:<airdrop|rain> role:@Role` - Gate a feature to a role
+- `/config view` - Show current per-server settings
 
 ### Prefix Commands
 
@@ -44,11 +58,21 @@ The default prefix is `f`.
 
 - `ftip @user $5` - Tip user
 - `frain $10 5` - Rain on 5 active users
+- `frain @role $10` - Rain on members of a role
+- `frain vc $10 [count]` - Rain on your voice channel
+- `fvctip $10 [count]` - Tip everyone in your voice channel
 - `fairdrop $10 1h` - Create airdrop
 - `fbalance` - Check balance
 - `fdeposit` - Show deposit address
 - `fhistory` - View history
+- `fstats [@user]` - View tipping stats
+- `flb [airdrops|rain|guild]` - View leaderboards
 - `fsetprefix` - Change prefix (Admin)
+- `fsetrole <airdrop|rain> @Role` - Gate a feature to a role (Admin)
+
+## Intents
+
+The bot requires the **Server Members** privileged intent (for role-based rain and member lookups) and the **Message Content** intent (for prefix commands). It also uses `GuildVoiceStates` to read voice channel membership for `/vctip`, voice rain, and `/rain voice:true`.
 
 ## Development
 

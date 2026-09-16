@@ -20,6 +20,7 @@ import {
 } from 'fattips-solana';
 import { Connection } from '@solana/web3.js';
 import { AirdropPoolService } from 'fattips-shared';
+import { canCreateFeature } from '../services/guild-gate';
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
@@ -71,6 +72,13 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
         '• Use `/tip` or `/send` instead (these work anywhere!)',
       ephemeral: true,
     });
+    return;
+  }
+
+  // Per-guild role gating — only configured role may create airdrops
+  const gate = await canCreateFeature(interaction.member, 'airdrop');
+  if (!gate.allowed) {
+    await interaction.reply({ content: gate.reason ?? '❌ You cannot create airdrops here.', ephemeral: true });
     return;
   }
 

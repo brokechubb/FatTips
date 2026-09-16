@@ -396,7 +396,15 @@ export function initTransactionWorker(client: Client) {
         throw error;
       }
     },
-    { connection }
+    {
+      connection,
+      // Process up to 4 transactions in parallel so one slow confirmation
+      // (network congestion, retry cycle) doesn't stall the whole payout line.
+      // Order for a single sender's concurrent jobs isn't guaranteed, but jobs
+      // are idempotency-keyed per sender (generateJobId) and balance is
+      // re-verified at execution time, so parallelism is safe.
+      concurrency: 4,
+    }
   );
 
   worker.on('completed', (job) => {

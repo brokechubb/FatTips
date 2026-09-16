@@ -27,6 +27,13 @@ import { transactionQueue, generateJobId } from '../queues/transaction.queue';
 import { networkMonitor } from '../index';
 import { sendPrivateKeyDM, scheduleKeyRedaction } from '../utils/keyCleanup';
 import { generateDepositQR } from '../utils/qr';
+import {
+  canCreateFeature,
+  getGateSettings,
+  getRequiredRole,
+  setGateRole,
+  Feature,
+} from '../services/guild-gate';
 
 const poolService = new AirdropPoolService();
 
@@ -170,6 +177,9 @@ export async function handlePrefixCommand(message: Message, client: Client) {
       case 'rain':
         await handleRain(message, args, client, prefix);
         break;
+      case 'vctip':
+        await handleVcTip(message, args, client, prefix);
+        break;
       case 'swap':
         await handleSwap(message, args, prefix);
         break;
@@ -182,6 +192,9 @@ export async function handlePrefixCommand(message: Message, client: Client) {
         break;
       case 'setprefix':
         await handleSetPrefix(message, args);
+        break;
+      case 'setrole':
+        await handleSetRole(message, args, prefix);
         break;
       default:
         // Unknown command - ignore silently
@@ -535,6 +548,8 @@ async function handleHelp(message: Message, prefix: string) {
           `\`${p}tip @user $5\` • \`${p}tip 0.1 SOL\`\n` +
           `\`${p}rain $10 5\` (Active users)\n` +
           `\`${p}rain @role $10\` (Role members)\n` +
+          `\`${p}rain vc $10\` (Voice channel)\n` +
+          `\`${p}vctip $10\` (Tip whole voice channel)\n` +
           `\`${p}airdrop $20 10s\``,
       },
       {
@@ -1288,6 +1303,78 @@ async function handleSetPrefix(message: Message, args: string[]) {
   await message.reply(`✅ Prefix changed to \`${newPrefix}\`\nExample: \`${newPrefix}help\``);
 }
 
+// ============ SET ROLE (per-guild gating) ============
+async function handleSetRole(message: Message, args: string[], prefix: string) {
+  if (!message.guild) {
+    await message.reply('❌ This command can only be used in a server.');
+    return;
+  }
+
+  const member = message.member;
+  if (!member?.permissions.has(PermissionFlagsBits.Administrator)) {
+    await message.reply('❌ Only administrators can configure role gating.');
+    return;
+  }
+
+  // No args -> show current settings
+  if (args.length === 0) {
+    const settings = await getGateSettings(message.guild.id);
+    const fmt = (id: string | null) => (id ? `<@&${id}>` : '*Anyone (unrestricted)*');
+    await message.reply(
+      `⚙️ **FatTips Settings for ${message.guild.name}**\n` +
+        `🎁 Airdrop role: ${fmt(settings.airdropRoleId)}\n` +
+        `🌧️ Rain role: ${fmt(settings.rainRoleId)}\n\n` +
+        `Usage: \`${prefix}setrole <airdrop|rain> @Role\` to gate\n` +
+        `       \`${prefix}setrole <airdrop|rain> clear\` to remove the gate`
+    );
+    return;
+  }
+
+  const featureArg = args[0]?.toLowerCase();
+  if (featureArg !== 'airdrop' && featureArg !== 'rain') {
+    await message.reply(
+      `❌ Unknown feature. Use \`airdrop\` or \`rain\`.\nExample: \`${prefix}setrole airdrop @Members\``
+    );
+    return;
+  }
+  const feature = featureArg as Feature;
+
+  // Second arg: role mention, "clear", or empty
+  const roleArg = args[1];
+
+  if (!roleArg || roleArg.toLowerCase() === 'clear' || roleArg.toLowerCase() === 'off') {
+    await setGateRole(message.guild.id, feature, null);
+    await message.reply(
+      `✅ **${feature} gating cleared.** Anyone in this server can now create or receive ${feature}s.`
+    );
+    return;
+  }
+
+  const roleMentionMatch = roleArg.match(/<@&(\d+)>/);
+  if (!roleMentionMatch) {
+    await message.reply(
+      `❌ Please mention a role.\nExample: \`${prefix}setrole ${feature} @Members\``
+    );
+    return;
+  }
+
+  const roleId = roleMentionMatch[1];
+  const role = message.guild.roles.cache.get(roleId);
+  if (!role) {
+    await message.reply('❌ That role could not be found.');
+    return;
+  }
+  if (role.id === message.guild.id) {
+    await message.reply('❌ Cannot use @everyone as a gating role.');
+    return;
+  }
+
+  await setGateRole(message.guild.id, feature, roleId);
+  await message.reply(
+    `✅ **${feature} gating enabled.** Only members with ${role} (and server admins) can create or receive ${feature}s in this server.`
+  );
+}
+
 // ============ RAIN ============
 async function handleRain(message: Message, args: string[], client: Client, prefix: string) {
   if (!message.guild) {
@@ -1295,10 +1382,17 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     return;
   }
 
-  // Parse: %rain $10 5 or %rain @role $10 5 or %rain 0.5 SOL 10
+  // Per-guild role gating — only configured role may create rain
+  const gate = await canCreateFeature(message.member, 'rain');
+  if (!gate.allowed) {
+    await message.reply(gate.reason ?? '❌ You cannot create rain in this server.');
+    return;
+  }
+
+  // Parse: %rain $10 5 or %rain @role $10 5 or %rain 0.5 SOL 10 or %rain vc $10 5
   if (args.length < 1) {
     await message.reply(
-      `Usage: \`${prefix}rain $10 5\` (rain $10 on 5 active users) or \`${prefix}rain @role $10\` (rain on role members)`
+      `Usage: \`${prefix}rain $10 5\` (rain $10 on 5 active users), \`${prefix}rain @role $10\` (rain on role members), or \`${prefix}rain vc $10\` (rain on your voice channel)`
     );
     return;
   }
@@ -1307,6 +1401,9 @@ async function handleRain(message: Message, args: string[], client: Client, pref
   const roleMentionRegex = /<@&(\d+)>/;
   const roleArg = args.find((a) => roleMentionRegex.test(a));
   const roleId = roleArg ? roleArg.match(roleMentionRegex)![1] : null;
+
+  // Check for voice channel target: "vc"
+  const isVoiceRain = !roleId && args.some((a) => /^(vc|voice)$/i.test(a));
 
   let winners: string[];
 
@@ -1331,12 +1428,22 @@ async function handleRain(message: Message, args: string[], client: Client, pref
       return;
     }
 
-    const roleMembers = members.filter(
+    let roleMembers = members.filter(
       (m) => m.roles.cache.has(role.id) && m.id !== message.author.id && !m.user.bot
     );
 
+    // Per-guild role gating: only members with the rain gate role may receive rain
+    const rainRoleId = await getRequiredRole(message.guild.id, 'rain');
+    if (rainRoleId) {
+      roleMembers = roleMembers.filter((m) => m.roles.cache.has(rainRoleId));
+    }
+
     if (roleMembers.size === 0) {
-      await message.reply(`❌ No eligible members found in <@&${role.id}> (excluding you and bots).`);
+      await message.reply(
+        rainRoleId
+          ? `❌ No eligible members in <@&${role.id}> also have <@&${rainRoleId}> (excluding you and bots).`
+          : `❌ No eligible members found in <@&${role.id}> (excluding you and bots).`
+      );
       return;
     }
 
@@ -1353,16 +1460,87 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     const memberIds = [...roleMembers.keys()];
     const shuffled = memberIds.sort(() => 0.5 - Math.random());
     winners = shuffled.slice(0, Math.min(constCount, memberIds.length));
+  } else if (isVoiceRain) {
+    // --- Voice channel-based rain ---
+    const voiceChannelId = message.member?.voice?.channelId;
+    if (!voiceChannelId) {
+      await message.reply('❌ You must be connected to a voice channel to use voice rain!');
+      return;
+    }
+
+    const voiceChannel = message.guild.channels.cache.get(voiceChannelId);
+    if (!voiceChannel || !voiceChannel.isVoiceBased()) {
+      await message.reply('❌ Could not find your voice channel. Please try again.');
+      return;
+    }
+
+    // Collect all human members in the voice channel (excluding sender)
+    const voiceStates = message.guild.voiceStates.cache;
+    let candidates: string[] = [];
+    for (const [stateUserId, state] of voiceStates) {
+      if (state.channelId !== voiceChannelId) continue;
+      if (stateUserId === message.author.id) continue;
+      const member =
+        message.guild.members.cache.get(stateUserId) ??
+        (await message.guild.members.fetch(stateUserId).catch(() => null));
+      if (!member || member.user.bot) continue;
+      candidates.push(stateUserId);
+    }
+
+    // Per-guild role gating: only members with the rain gate role may receive rain
+    const rainRoleId = await getRequiredRole(message.guild.id, 'rain');
+    if (rainRoleId) {
+      const memberFetch = await message.guild.members
+        .fetch({ user: candidates, limit: 100 })
+        .catch(() => null);
+      candidates = candidates.filter((id) => {
+        const m = memberFetch?.get(id);
+        if (!m) return false;
+        return m.roles.cache.has(rainRoleId);
+      });
+    }
+
+    if (candidates.length === 0) {
+      await message.reply(
+        rainRoleId
+          ? `❌ No one in **${voiceChannel.name}** has <@&${rainRoleId}> (excluding you and bots).`
+          : `❌ No one else is in **${voiceChannel.name}** to rain on! (excluding you and bots)`
+      );
+      return;
+    }
+
+    // Pick winners (default: up to 25 random members)
+    const numericArgs = args.filter((a) => /^\d+$/.test(a) && a !== args[0]);
+    const count = numericArgs.length >= 1 ? parseInt(numericArgs[0]) : Math.min(candidates.length, 25);
+    const shuffled = candidates.sort(() => 0.5 - Math.random());
+    winners = shuffled.slice(0, Math.min(count, candidates.length));
   } else {
     // --- Channel-based rain (original behavior) ---
     const count = parseInt(args[1]) || 5;
 
     // Get active users
     const activeUserIds = await activityService.getActiveUsers(message.channel.id, 15);
-    const candidates = activeUserIds.filter((id: string) => id !== message.author.id);
+    let candidates = activeUserIds.filter((id: string) => id !== message.author.id);
+
+    // Per-guild role gating: only members with the rain gate role may receive rain
+    const rainRoleId = await getRequiredRole(message.guild.id, 'rain');
+    if (rainRoleId) {
+      const memberFetch = await message.guild.members
+        .fetch({ user: candidates, limit: 100 })
+        .catch(() => null);
+      candidates = candidates.filter((id) => {
+        const m = memberFetch?.get(id);
+        if (!m) return false;
+        return m.roles.cache.has(rainRoleId);
+      });
+    }
 
     if (candidates.length === 0) {
-      await message.reply('❌ No active users found to rain on! The channel is dry. 🏜️');
+      await message.reply(
+        rainRoleId
+          ? `❌ No active users with <@&${rainRoleId}> found to rain on! 🏜️`
+          : '❌ No active users found to rain on! The channel is dry. 🏜️'
+      );
       return;
     }
 
@@ -1371,12 +1549,13 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     winners = shuffled.slice(0, Math.min(count, candidates.length));
   }
 
-  // Parse amount (common to both paths)
+  // Parse amount (common to all paths)
   const tokenArg = args.find((a) => /^(SOL|USDC|USDT)$/i.test(a));
   const nonMetaArgs = args.filter(
     (a) =>
       a !== roleArg &&
       a.toLowerCase() !== tokenArg?.toLowerCase() &&
+      !/^(vc|voice)$/i.test(a) && // exclude voice keyword
       !(roleId && /^\d+$/.test(a) && a !== args[0]) // exclude count numbers for role rain
   );
   const amountArg = nonMetaArgs[0] || args[0];
@@ -1655,10 +1834,308 @@ async function handleRain(message: Message, args: string[], client: Client, pref
   }
 }
 
+// ============ VOICE CHANNEL TIP ============
+async function handleVcTip(message: Message, args: string[], client: Client, prefix: string) {
+  if (!message.guild || !message.member) {
+    await message.reply('❌ Voice channel tips can only be used in a server.');
+    return;
+  }
+
+  // Per-guild role gating — voice tips follow the rain gate
+  const gate = await canCreateFeature(message.member, 'rain');
+  if (!gate.allowed) {
+    await message.reply(gate.reason ?? '❌ You cannot send voice tips in this server.');
+    return;
+  }
+
+  // Usage: %vctip <amount> [count]
+  if (args.length < 1) {
+    await message.reply(
+      `Usage: \`${prefix}vctip $10\` (tip everyone in your voice channel)\n\`${prefix}vctip $10 5\` (tip 5 random members)`
+    );
+    return;
+  }
+
+  // Resolve the sender's current voice channel
+  const voiceChannelId = message.member.voice?.channelId;
+  if (!voiceChannelId) {
+    await message.reply('❌ You must be connected to a voice channel to use this command!');
+    return;
+  }
+
+  const voiceChannel = message.guild.channels.cache.get(voiceChannelId);
+  if (!voiceChannel || !voiceChannel.isVoiceBased()) {
+    await message.reply('❌ Could not find your voice channel. Please try again.');
+    return;
+  }
+
+  // Collect all human members in the voice channel (excluding sender)
+  const voiceStates = message.guild.voiceStates.cache;
+  let candidates: string[] = [];
+  for (const [stateUserId, state] of voiceStates) {
+    if (state.channelId !== voiceChannelId) continue;
+    if (stateUserId === message.author.id) continue;
+    const member =
+      message.guild.members.cache.get(stateUserId) ??
+      (await message.guild.members.fetch(stateUserId).catch(() => null));
+    if (!member || member.user.bot) continue;
+    candidates.push(stateUserId);
+  }
+
+  // Per-guild role gating: only members with the rain gate role may receive
+  const rainRoleId = await getRequiredRole(message.guild.id, 'rain');
+  if (rainRoleId) {
+    const memberFetch = await message.guild.members
+      .fetch({ user: candidates, limit: 100 })
+      .catch(() => null);
+    candidates = candidates.filter((id) => {
+      const m = memberFetch?.get(id);
+      if (!m) return false;
+      return m.roles.cache.has(rainRoleId);
+    });
+  }
+
+  if (candidates.length === 0) {
+    await message.reply(
+      rainRoleId
+        ? `❌ No one in **${voiceChannel.name}** has <@&${rainRoleId}> (excluding you and bots).`
+        : `❌ No one else is in **${voiceChannel.name}** to tip! (excluding you and bots)`
+    );
+    return;
+  }
+
+  // Parse amount + optional count: %vctip $10 | %vctip $10 5
+  const amountArg = args[0];
+  const countArg = args[1] ? parseInt(args[1]) : NaN;
+
+  const parsedAmount = parseAmountInput(amountArg);
+  if (!parsedAmount.valid) {
+    await message.reply(
+      `❌ ${parsedAmount.error}\nUsage: \`${prefix}vctip $10\` or \`${prefix}vctip 0.5 SOL\``
+    );
+    return;
+  }
+
+  // Select winners (all members by default, or random N if count given; capped at 25 like /rain)
+  const VCTIP_MAX_RECIPIENTS = 25;
+  let winners = candidates;
+  if (!isNaN(countArg) && countArg > 0) {
+    const shuffled = [...candidates].sort(() => 0.5 - Math.random());
+    winners = shuffled.slice(0, Math.min(countArg, candidates.length));
+  } else if (candidates.length > VCTIP_MAX_RECIPIENTS) {
+    const shuffled = [...candidates].sort(() => 0.5 - Math.random());
+    winners = shuffled.slice(0, VCTIP_MAX_RECIPIENTS);
+  }
+
+  // Get sender wallet
+  const sender = await prisma.user.findUnique({
+    where: { discordId: message.author.id },
+  });
+
+  if (!sender) {
+    await message.reply("❌ You don't have a wallet yet! Use `%wallet create` first.");
+    return;
+  }
+
+  // Prepare recipient wallets
+  const recipientWallets = [];
+  const newWallets: { id: string; key: string }[] = [];
+
+  for (const recipientId of winners) {
+    let recipient = await prisma.user.findUnique({
+      where: { discordId: recipientId },
+    });
+
+    if (!recipient) {
+      const wallet = await walletService.createEncryptedWallet();
+      recipient = await prisma.user.create({
+        data: {
+          discordId: recipientId,
+          walletPubkey: wallet.publicKey,
+          encryptedPrivkey: wallet.encryptedPrivateKey,
+          keySalt: wallet.keySalt,
+          encryptedMnemonic: wallet.encryptedMnemonic,
+          mnemonicSalt: wallet.mnemonicSalt,
+          seedDelivered: false,
+        },
+      });
+      newWallets.push({ id: recipientId, key: wallet.privateKeyBase58 });
+    }
+    recipientWallets.push(recipient);
+  }
+
+  if (recipientWallets.length === 0) {
+    await message.reply('❌ Failed to prepare recipient wallets.');
+    return;
+  }
+
+  // Smart token detection for max
+  let tokenSymbol = parsedAmount.token || 'SOL';
+
+  if (parsedAmount.type === 'max' && !parsedAmount.token) {
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    if (balances.sol > PREFIX_FEE_BUFFER) {
+      tokenSymbol = 'SOL';
+    } else if (balances.usdc > 0) {
+      tokenSymbol = 'USDC';
+    } else if (balances.usdt > 0) {
+      tokenSymbol = 'USDT';
+    } else {
+      tokenSymbol = 'SOL';
+    }
+  }
+
+  const tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS] || TOKEN_MINTS.SOL;
+  let totalAmountToken: number;
+  let usdValue: number;
+
+  if (parsedAmount.type === 'usd') {
+    const conversion = await priceService.convertUsdToToken(
+      parsedAmount.value,
+      tokenMint,
+      tokenSymbol
+    );
+    if (!conversion) {
+      await message.reply('❌ Failed to fetch prices.');
+      return;
+    }
+    totalAmountToken = conversion.amountToken;
+    usdValue = parsedAmount.value;
+  } else if (parsedAmount.type === 'max') {
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    totalAmountToken =
+      tokenSymbol === 'SOL'
+        ? Math.max(0, balances.sol - PREFIX_FEE_BUFFER - MIN_RENT_EXEMPTION)
+        : tokenSymbol === 'USDC'
+          ? balances.usdc
+          : balances.usdt;
+    const price = await priceService.getTokenPrice(tokenMint);
+    usdValue = price ? totalAmountToken * price.price : 0;
+  } else {
+    totalAmountToken = parsedAmount.value;
+    const price = await priceService.getTokenPrice(tokenMint);
+    usdValue = price ? totalAmountToken * price.price : 0;
+  }
+
+  const amountPerUser = totalAmountToken / recipientWallets.length;
+  const usdPerUser = usdValue / recipientWallets.length;
+
+  if (amountPerUser <= 0) {
+    await message.reply('❌ Amount too small to split!');
+    return;
+  }
+
+  const MIN_PER_RECIPIENT_VCTIP = tokenSymbol === 'SOL' ? 0.0001 : 0.01;
+  if (amountPerUser < MIN_PER_RECIPIENT_VCTIP) {
+    await message.reply(
+      `❌ Per-recipient amount too small! Each user would get ${formatTokenAmount(amountPerUser)} ${tokenSymbol}. Minimum is ${MIN_PER_RECIPIENT_VCTIP} ${tokenSymbol} per person. Try a larger amount.`
+    );
+    return;
+  }
+
+  // Check balance (skip for 'max' since we calculated based on actual balance)
+  if (parsedAmount.type !== 'max') {
+    const balances = await balanceService.getBalances(sender.walletPubkey);
+    const required =
+      tokenSymbol === 'SOL'
+        ? totalAmountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION
+        : totalAmountToken;
+    const available =
+      tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
+
+    if (available < required) {
+      if (tokenSymbol === 'SOL') {
+        await message.reply(
+          `❌ Insufficient balance! Need ${required.toFixed(4)} SOL (incl. rent exemption), have ${available.toFixed(4)}`
+        );
+        return;
+      } else {
+        await message.reply(
+          `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol}, have ${available.toFixed(4)}`
+        );
+        return;
+      }
+    }
+  }
+
+  // Warn if network is degraded/congested
+  const networkWarning = networkMonitor.getWarningText();
+  if (networkWarning) await message.author.send(networkWarning).catch(() => {});
+
+  // Send processing message
+  const processingMsg = await message.reply('⏳ Sending voice channel tip...');
+
+  // Add to Queue
+  try {
+    const jobId = generateJobId('TIP', sender.discordId, amountPerUser, tokenSymbol);
+    await transactionQueue.add(
+      'tip',
+      {
+        type: 'TIP',
+        senderDiscordId: sender.discordId,
+        senderUsername: message.author.username,
+        recipientDiscordIds: recipientWallets.map((r) => r.discordId),
+        amountPerUser,
+        tokenMint,
+        tokenSymbol,
+        usdValuePerUser: usdPerUser,
+        channelId: message.channel.id,
+        messageId: processingMsg.id,
+        guildId: message.guild?.id,
+      },
+      { jobId }
+    );
+  } catch (queueError) {
+    console.error('Failed to queue vctip job:', queueError);
+    await processingMsg.edit('❌ Failed to queue transaction. Please try again.').catch(() => {});
+    return;
+  }
+
+  // Handle New Wallets (Send Keys immediately)
+  for (const newWallet of newWallets) {
+    try {
+      const msg =
+        `🎙️ **You got a voice channel tip!**\n` +
+        `You have a pending tip of **${formatTokenAmount(amountPerUser)} ${tokenSymbol}** coming!\n\n` +
+        `**🔐 Your Private Key:**\n\`\`\`\n${newWallet.key}\n\`\`\`\n*Self-destructs in 15m.*`;
+
+      const dmResult = await sendPrivateKeyDM(
+        client,
+        newWallet.id,
+        msg,
+        '🔒 **Key removed for security.**'
+      );
+
+      if (dmResult.sent) {
+        const user = await client.users.fetch(newWallet.id);
+        const guideEmbed = new EmbedBuilder()
+          .setTitle('🚀 Getting Started')
+          .setDescription('You just received Solana! Use `/balance` to check it.')
+          .setColor(0x00aaff);
+        await user.send({ embeds: [guideEmbed] });
+
+        await prisma.user.update({
+          where: { discordId: newWallet.id },
+          data: { seedDelivered: true },
+        });
+      }
+    } catch {
+      // Failed to DM key
+    }
+  }
+}
+
 // ============ AIRDROP ============
 async function handleAirdrop(message: Message, args: string[], client: Client, prefix: string) {
   if (!message.guild) {
     await message.reply('❌ Airdrop can only be used in a server.');
+    return;
+  }
+
+  // Per-guild role gating — only configured role may create airdrops
+  const gate = await canCreateFeature(message.member, 'airdrop');
+  if (!gate.allowed) {
+    await message.reply(gate.reason ?? '❌ You cannot create airdrops in this server.');
     return;
   }
 

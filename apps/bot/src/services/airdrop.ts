@@ -3,9 +3,10 @@ import * as Sentry from '@sentry/node';
 import { prisma } from 'fattips-database';
 import { withDatabaseRetry } from 'fattips-database/dist/utils';
 import { logger, logTransaction } from '../utils/logger';
-import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
+import { TransactionService, WalletService, BalanceService, PriceService, TOKEN_MINTS } from 'fattips-solana';
 import { AirdropPoolService } from 'fattips-shared';
 import { Connection, PublicKey } from '@solana/web3.js';
+import { canReceiveFeature, getGateSettings } from './guild-gate';
 
 // Solana constants
 const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
@@ -30,12 +31,22 @@ export class AirdropService {
   private walletService: WalletService;
   private balanceService: BalanceService;
   private poolService: AirdropPoolService;
+  private priceService: PriceService;
 
   constructor() {
     this.transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
     this.walletService = new WalletService(process.env.MASTER_ENCRYPTION_KEY!);
     this.balanceService = new BalanceService(process.env.SOLANA_RPC_URL!);
     this.poolService = new AirdropPoolService();
+    this.priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
+  }
+
+  /**
+   * Format a per-winner share amount: 2 decimals for amounts >= 1, 4 for smaller.
+   */
+  private formatShareAmount(amount: number): string {
+    const fixed = amount >= 1 ? amount.toFixed(2) : amount.toFixed(4);
+    return parseFloat(fixed).toString();
   }
 
   /**
@@ -125,6 +136,22 @@ export class AirdropService {
       if (airdrop.maxParticipants && airdrop.participantCount >= airdrop.maxParticipants) {
         await interaction.editReply({ content: '❌ This airdrop is already full!' });
         return;
+      }
+
+      // Per-guild role gating — only configured role may claim airdrops.
+      // Airdrops created before a role was set (or in a guild without gating) are unrestricted.
+      if (airdrop.guildId) {
+        const allowed = await canReceiveFeature(interaction.member, 'airdrop');
+        if (!allowed) {
+          const settings = await getGateSettings(airdrop.guildId);
+          const roleId = settings.airdropRoleId;
+          await interaction.editReply({
+            content: roleId
+              ? `❌ Only members with <@&${roleId}> can claim airdrops in this server.`
+              : '❌ You cannot claim this airdrop.',
+          });
+          return;
+        }
       }
 
       // 2. Check/Create user FIRST (before participant record)
@@ -271,7 +298,15 @@ export class AirdropService {
   /**
    * Settle all expired airdrops
    */
+  private settlementInProgress = false;
+
   async settleExpiredAirdrops(client: any) {
+    // Serialize sweeps: the interval fires every 10s but a large settlement can
+    // take longer. Concurrent settlements multiply RPC load (429 storms) and
+    // risk crashing the process via unhandled websocket errors.
+    if (this.settlementInProgress) return;
+
+    this.settlementInProgress = true;
     try {
       const expiredAirdrops = await withDatabaseRetry(() =>
         prisma.airdrop.findMany({
@@ -305,6 +340,40 @@ export class AirdropService {
           action: 'settleExpiredAirdrops',
         },
       });
+    } finally {
+      this.settlementInProgress = false;
+    }
+  }
+
+  /**
+   * Revert airdrops stuck in SETTLING back to ACTIVE after a crash/restart.
+   * Safe at startup: this process is the only settler, so nothing can be
+   * in-flight yet. The settlement loop retries them and skips participants
+   * already marked TRANSFERRED (no double payments).
+   */
+  async recoverInterruptedSettlements(): Promise<void> {
+    try {
+      const stuck = await withDatabaseRetry(() =>
+        prisma.airdrop.findMany({
+          where: { status: 'SETTLING' },
+          select: { id: true },
+        })
+      );
+      if (stuck.length === 0) return;
+
+      const { count } = await withDatabaseRetry(() =>
+        prisma.airdrop.updateMany({
+          where: { status: 'SETTLING' },
+          data: { status: 'ACTIVE' },
+        })
+      );
+      logger.warn(
+        `[AIRDROP] Recovered ${count} airdrop(s) stuck in SETTLING after restart: ` +
+          stuck.map((a: { id: string }) => a.id).join(', ')
+      );
+    } catch (error) {
+      logger.error('[AIRDROP] Failed to recover interrupted settlements:', error);
+      Sentry.captureException(error, { tags: { action: 'recoverInterruptedSettlements' } });
     }
   }
 
@@ -500,9 +569,48 @@ export class AirdropService {
           .slice(0, airdrop.maxParticipants);
       }
 
+      // Split winners for crash-recovery resume: participants already marked
+      // TRANSFERRED were paid in a previous settlement attempt.
+      const transferredWinners = winners.filter((w: any) => w.status === 'TRANSFERRED');
+      const unpaidWinners = winners.filter((w: any) => w.status !== 'TRANSFERRED');
+      const alreadyPaidSum = transferredWinners.reduce(
+        (sum: number, w: any) => sum + Number(w.shareAmount ?? 0),
+        0
+      );
+
+      // Crash recovery: every winner was already paid but the airdrop was never
+      // finalized (process died before the SETTLED update). Finalize now
+      // without touching funds again.
+      if (unpaidWinners.length === 0) {
+        const paidShare =
+          transferredWinners.length > 0 ? alreadyPaidSum / transferredWinners.length : 0;
+        await withDatabaseRetry(() =>
+          prisma.airdrop.update({
+            where: { id: airdrop.id },
+            data: {
+              status: 'SETTLED',
+              amountClaimed: alreadyPaidSum > 0 ? alreadyPaidSum.toFixed(9) : 0,
+              settledAt: new Date(),
+            },
+          })
+        );
+        await this.endAirdropMessage(
+          client,
+          airdrop,
+          winners.length,
+          paidShare,
+          tokenSymbol,
+          winners
+        );
+        if (airdrop.poolWalletAddress) {
+          await this.poolService.releaseWallet(airdrop.poolWalletAddress, airdrop.id);
+        }
+        return;
+      }
+
       // --- DYNAMIC FEE ADJUSTMENT ---
       let distributableAmount = totalAmount;
-      const totalEstimatedFees = winners.length * feePerTx;
+      const totalEstimatedFees = unpaidWinners.length * feePerTx;
 
       // Check actual wallet balance to be safe (with retry for reliability)
       let balances: { sol: number; usdc: number; usdt: number } = { sol: 0, usdc: 0, usdt: 0 };
@@ -551,12 +659,20 @@ export class AirdropService {
           // For SOL: We must subtract fees + rent buffer from the total pot
           const maxAvailable = Math.max(0, balances.sol - totalEstimatedFees - rentBuffer);
 
-          // Use the smaller of: What was promised (totalAmount) OR what's actually safe to send
-          distributableAmount = Math.min(totalAmount, maxAvailable);
+          if (transferredWinners.length > 0) {
+            // Resuming an interrupted settlement: keep the per-winner share that
+            // earlier winners already received so payouts remain equal.
+            const originalShare = alreadyPaidSum / transferredWinners.length;
+            const affordableShare = maxAvailable / unpaidWinners.length;
+            distributableAmount = Math.min(originalShare, affordableShare) * unpaidWinners.length;
+          } else {
+            // Use the smaller of: What was promised (totalAmount) OR what's actually safe to send
+            distributableAmount = Math.min(totalAmount, maxAvailable);
+          }
 
-          if (distributableAmount < totalAmount) {
+          if (distributableAmount + alreadyPaidSum < totalAmount) {
             console.warn(
-              `[AIRDROP] Adjusting payout due to fees. Promised: ${totalAmount}, Available: ${maxAvailable}, Raw Balance: ${balances.sol}`
+              `[AIRDROP] Adjusting payout due to fees. Promised: ${totalAmount}, Already paid: ${alreadyPaidSum}, Available: ${maxAvailable}, Raw Balance: ${balances.sol}`
             );
           }
         } else {
@@ -592,10 +708,23 @@ export class AirdropService {
           }
           // For tokens, we usually distribute exactly what was promised or what's in the wallet
           const tokenBal = tokenMint === TOKEN_MINTS.USDC ? balances.usdc : balances.usdt;
-          distributableAmount = Math.min(totalAmount, tokenBal);
+          if (transferredWinners.length > 0) {
+            // Resuming an interrupted settlement: keep the per-winner share that
+            // earlier winners already received so payouts remain equal.
+            const originalShare = alreadyPaidSum / transferredWinners.length;
+            const affordableShare = tokenBal / unpaidWinners.length;
+            distributableAmount = Math.min(originalShare, affordableShare) * unpaidWinners.length;
+          } else {
+            distributableAmount = Math.min(totalAmount, tokenBal);
+          }
         }
       } else {
         console.error('[AIRDROP] Balance check failed after retries, using DB value');
+        if (transferredWinners.length > 0) {
+          // On resume, fall back to the share already paid rather than the full
+          // total (part of the pot is already gone from the wallet).
+          distributableAmount = (alreadyPaidSum / transferredWinners.length) * unpaidWinners.length;
+        }
       }
 
       // Safety check: If distributable amount is 0, abort
@@ -627,12 +756,14 @@ export class AirdropService {
         return;
       }
 
-      const share = distributableAmount / winners.length;
+      // Only unpaid winners split the distributable amount; already-paid winners
+      // received their share in a previous attempt (crash-recovery resume).
+      const share = distributableAmount / unpaidWinners.length;
 
       // Guard against NaN propagating to DB (e.g. from balance check returning undefined)
       if (!Number.isFinite(share) || share <= 0) {
         logger.error(
-          `[AIRDROP] Invalid share computed: ${share} (distributableAmount=${distributableAmount}, winners=${winners.length}). Marking as FAILED.`
+          `[AIRDROP] Invalid share computed: ${share} (distributableAmount=${distributableAmount}, unpaid=${unpaidWinners.length}). Marking as FAILED.`
         );
         await withDatabaseRetry(() =>
           prisma.airdrop.update({
@@ -661,7 +792,7 @@ export class AirdropService {
 
       // 2. Distribute Funds (walletKeypair already initialized above)
       // Count already-transferred winners so successCount stays accurate on retries
-      let successCount = winners.filter((w: any) => w.status === 'TRANSFERRED').length;
+      let successCount = transferredWinners.length;
 
       // Connection for on-chain account existence checks
       const connection = new Connection(process.env.SOLANA_RPC_URL!, 'confirmed');
@@ -670,6 +801,9 @@ export class AirdropService {
       for (const winner of winners) {
         // Skip winners already paid (handles crash-recovery retries without double-paying)
         if (winner.status === 'TRANSFERRED') continue;
+
+        // Pace transfers to avoid RPC rate limits (429) during large settlements
+        await new Promise((resolve) => setTimeout(resolve, 300));
 
         try {
           // Get or Create Winner Wallet
@@ -811,13 +945,14 @@ export class AirdropService {
       }
 
       // 3. Update Status
+      const totalPaidAmount = alreadyPaidSum + share * (successCount - transferredWinners.length);
       await withDatabaseRetry(() =>
         prisma.airdrop.update({
           where: { id: airdrop.id },
           data: {
             status: 'SETTLED',
-            amountClaimed: Number.isFinite(share * successCount)
-              ? (share * successCount).toFixed(9)
+            amountClaimed: Number.isFinite(totalPaidAmount)
+              ? totalPaidAmount.toFixed(9)
               : '0', // Defensive guard for Decimal safety
             settledAt: new Date(),
           },
@@ -930,6 +1065,18 @@ export class AirdropService {
     winners: any[] = [],
     errorMessage?: string
   ) {
+    const isRefund = winnerCount === 0 && !errorMessage && winners.length === 0;
+    const isFailure = !!errorMessage;
+
+    // Build "each claimed X TOKEN (≈$Y)" line with live USD equivalent
+    let eachLine = `each claimed **${this.formatShareAmount(shareAmount)} ${tokenSymbol}**`;
+    if (!isRefund && !isFailure && shareAmount > 0) {
+      const price = await this.priceService.getTokenPrice(airdrop.tokenMint);
+      if (price && price.price > 0) {
+        eachLine += ` (≈$${(shareAmount * price.price).toFixed(2)})`;
+      }
+    }
+
     if (!airdrop.messageId || !airdrop.channelId) {
       // No message to update - notify creator via DM instead
       await this.notifyCreatorOfSettlement(
@@ -939,7 +1086,8 @@ export class AirdropService {
         shareAmount,
         tokenSymbol,
         winners,
-        errorMessage
+        errorMessage,
+        eachLine
       );
       return;
     }
@@ -960,14 +1108,11 @@ export class AirdropService {
         throw new Error('No embed found');
       }
 
-      const isRefund = winnerCount === 0 && !errorMessage && winners.length === 0;
-      const isFailure = !!errorMessage;
-
       let title = '✅ Airdrop Settled';
       if (isRefund) title = '🛑 Airdrop Expired';
       if (isFailure) title = '⚠️ Settlement Failed';
 
-      let description = `**${winnerCount} winners** claimed this airdrop!\nEach received **${shareAmount.toFixed(4)} ${tokenSymbol}**.`;
+      let description = `**${winnerCount} winners** claimed this airdrop!\n${eachLine}.`;
       if (isRefund) {
         description = `This airdrop ended with no participants.\nFunds have been refunded to the creator.`;
       } else if (isFailure) {
@@ -1020,7 +1165,8 @@ export class AirdropService {
           shareAmount,
           tokenSymbol,
           winners,
-          errorMessage
+          errorMessage,
+          eachLine
         );
       } else {
         logger.warn(`Failed to update airdrop message ${airdrop.messageId}:`, {
@@ -1041,7 +1187,8 @@ export class AirdropService {
     shareAmount: number,
     tokenSymbol: string,
     winners: any[] = [],
-    errorMessage?: string
+    errorMessage?: string,
+    eachLine?: string
   ) {
     const isRefund = winnerCount === 0 && !errorMessage && winners.length === 0;
     const isFailure = !!errorMessage;
@@ -1067,7 +1214,8 @@ export class AirdropService {
 
       message =
         `✅ **Airdrop Settled!**\n\n` +
-        `**${winnerCount} winners** received **${shareAmount.toFixed(4)} ${tokenSymbol}** each.\n\n` +
+        `**${winnerCount} winners** claimed this airdrop!\n` +
+        `${eachLine ?? `each claimed **${this.formatShareAmount(shareAmount)} ${tokenSymbol}**`}.\n\n` +
         `**Winners:** ${winnerMentions}${moreText}\n\n` +
         `_Note: I couldn't update the original message in the server (bot may have been removed or channel deleted)._`;
     }

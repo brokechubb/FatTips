@@ -24,6 +24,7 @@ import { activityService } from '../services/activity';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
 import { networkMonitor } from '../index';
+import { canCreateFeature, getRequiredRole } from '../services/guild-gate';
 
 const MIN_RENT_EXEMPTION = 0.00089088;
 const MIN_SOL_FOR_GAS = 0.001;
@@ -59,6 +60,12 @@ export const data = new SlashCommandBuilder()
     option
       .setName('role')
       .setDescription('Rain on members of a specific role instead of active chatters')
+      .setRequired(false)
+  )
+  .addBooleanOption((option) =>
+    option
+      .setName('voice')
+      .setDescription('Rain on members of your current voice channel instead of active chatters')
       .setRequired(false)
   )
   .addStringOption((option) =>
@@ -110,6 +117,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // Per-guild role gating — only configured role may create rain
+  const gate = await canCreateFeature(interaction.member, 'rain');
+  if (!gate.allowed) {
+    await interaction.reply({ content: gate.reason ?? '❌ You cannot create rain here.', ephemeral: true });
+    return;
+  }
+
   await interaction.deferReply();
 
   // Warn if network is degraded/congested
@@ -121,8 +135,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     let winners: string[];
     let roleName: string | null = null;
     let totalRoleMembers: number | null = null;
+    let voiceChannelName: string | null = null;
+    let totalVoiceMembers: number | null = null;
 
     const userCount = interaction.options.getInteger('count');
+    const voiceOption = interaction.options.getBoolean('voice') ?? false;
+
+    if (role && voiceOption) {
+      await interaction.editReply({
+        content: '❌ Cannot combine `role` and `voice`. Pick one target.',
+      });
+      return;
+    }
 
     if (role) {
       // --- Role-based rain ---
@@ -145,31 +169,111 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         (m) => m.roles.cache.has(role.id) && m.id !== interaction.user.id && !m.user.bot
       );
 
-      if (roleMembers.size === 0) {
+      // Per-guild role gating: only members with the rain gate role may receive rain
+      const rainRoleId = await getRequiredRole(interaction.guildId!, 'rain');
+      const eligibleRoleMembers = rainRoleId
+        ? roleMembers.filter((m) => m.roles.cache.has(rainRoleId))
+        : roleMembers;
+
+      if (eligibleRoleMembers.size === 0) {
         await interaction.editReply({
-          content: `❌ No eligible members found in <@&${role.id}> (excluding you and bots).`,
+          content: rainRoleId
+            ? `❌ No eligible members in <@&${role.id}> also have <@&${rainRoleId}> (excluding you and bots).`
+            : `❌ No eligible members found in <@&${role.id}> (excluding you and bots).`,
         });
         return;
       }
 
       roleName = role.name;
-      totalRoleMembers = roleMembers.size;
+      totalRoleMembers = eligibleRoleMembers.size;
 
-      const count = userCount ?? Math.min(roleMembers.size, 25);
-      const memberIds = [...roleMembers.keys()];
+      const count = userCount ?? Math.min(eligibleRoleMembers.size, 25);
+      const memberIds = [...eligibleRoleMembers.keys()];
       const shuffled = memberIds.sort(() => 0.5 - Math.random());
       winners = shuffled.slice(0, Math.min(count, memberIds.length));
+    } else if (voiceOption) {
+      // --- Voice channel-based rain ---
+      const senderMember = await interaction.guild.members.fetch(interaction.user.id);
+      const voiceChannelId = senderMember.voice.channelId;
+
+      if (!voiceChannelId) {
+        await interaction.editReply({
+          content: '❌ You must be connected to a voice channel to use voice rain!',
+        });
+        return;
+      }
+
+      const voiceChannel = interaction.guild.channels.cache.get(voiceChannelId);
+      if (!voiceChannel || !voiceChannel.isVoiceBased()) {
+        await interaction.editReply({
+          content: '❌ Could not find your voice channel. Please try again.',
+        });
+        return;
+      }
+      voiceChannelName = voiceChannel.name;
+
+      // Collect all human members in the voice channel (excluding sender)
+      const voiceStates = interaction.guild.voiceStates.cache;
+      let candidates: string[] = [];
+      for (const [stateUserId, state] of voiceStates) {
+        if (state.channelId !== voiceChannelId) continue;
+        if (stateUserId === interaction.user.id) continue;
+        const member =
+          interaction.guild.members.cache.get(stateUserId) ??
+          (await interaction.guild.members.fetch(stateUserId).catch(() => null));
+        if (!member || member.user.bot) continue;
+        candidates.push(stateUserId);
+      }
+
+      // Per-guild role gating: only members with the rain role may receive rain
+      const rainRoleId = await getRequiredRole(interaction.guildId!, 'rain');
+      if (rainRoleId) {
+        candidates = candidates.filter((id) => {
+          const m = interaction.guild!.members.cache.get(id);
+          if (!m) return false;
+          return m.roles.cache.has(rainRoleId);
+        });
+      }
+
+      if (candidates.length === 0) {
+        await interaction.editReply({
+          content: rainRoleId
+            ? `❌ No eligible members with <@&${rainRoleId}> in **${voiceChannelName}** (excluding you and bots).`
+            : `❌ No one else is in **${voiceChannelName}** to rain on! (excluding you and bots)`,
+        });
+        return;
+      }
+      totalVoiceMembers = candidates.length;
+
+      // Pick Winners (random selection, capped at 25)
+      const count = userCount ?? Math.min(candidates.length, 25);
+      const shuffled = candidates.sort(() => 0.5 - Math.random());
+      winners = shuffled.slice(0, Math.min(count, candidates.length));
     } else {
       // --- Channel-based rain (original behavior) ---
       // 1. Get Active Users
       const activeUserIds = await activityService.getActiveUsers(interaction.channelId, 15); // Last 15 mins
 
       // Filter out sender and bots (though listener filters bots)
-      const candidates = activeUserIds.filter((id: string) => id !== interaction.user.id);
+      let candidates = activeUserIds.filter((id: string) => id !== interaction.user.id);
+
+      // Per-guild role gating: only members with the rain role may receive rain
+      const rainRoleId = await getRequiredRole(interaction.guildId!, 'rain');
+      if (rainRoleId) {
+        // Fetch member objects to check role membership
+        const memberFetch = await interaction.guild.members.fetch({ user: candidates, limit: 100 }).catch(() => null);
+        candidates = candidates.filter((id) => {
+          const m = memberFetch?.get(id);
+          if (!m) return false;
+          return m.roles.cache.has(rainRoleId);
+        });
+      }
 
       if (candidates.length === 0) {
         await interaction.editReply({
-          content: '❌ No active users found to rain on! The channel is dry. 🏜️',
+          content: rainRoleId
+            ? `❌ No active users with <@&${rainRoleId}> found to rain on! 🏜️`
+            : '❌ No active users found to rain on! The channel is dry. 🏜️',
         });
         return;
       }
@@ -567,7 +671,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const winnerMentions = recipientWallets.map((r) => `<@${r.discordId}>`).join(', ');
 
     let recipientDescription: string;
-    if (role && roleName && totalRoleMembers !== null) {
+    if (voiceChannelName && totalVoiceMembers !== null) {
+      const cappedText =
+        totalVoiceMembers > recipientWallets.length
+          ? ` (**${recipientWallets.length} of ${totalVoiceMembers}** members randomly selected)`
+          : ` (**${totalVoiceMembers}** members)`;
+      recipientDescription = `**🔊 ${voiceChannelName}**${cappedText}`;
+    } else if (role && roleName && totalRoleMembers !== null) {
       const cappedText =
         totalRoleMembers > recipientWallets.length
           ? ` (**${recipientWallets.length} of ${totalRoleMembers}** members randomly selected)`

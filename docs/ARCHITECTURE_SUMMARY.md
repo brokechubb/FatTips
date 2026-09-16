@@ -126,7 +126,18 @@ Create → Fund Pool → Claim → Settle → Release Wallet
 Generate Keypair → Encrypt (AES-256-GCM) → Store in DB → DM to User
 ```
 
-### 4. API Authentication
+### 4. Per-Guild Role Gating
+
+```
+Command → canCreateFeature(member, feature) ─┐
+                                              ├─→ GuildSettings.{airdropRoleId,rainRoleId}
+Claim/Rain target → canReceiveFeature(...) ──┘   (null = unrestricted; admins bypass)
+```
+
+Gating is cached per guild for 60s (`apps/bot/src/services/guild-gate.ts`) and follows the
+rain gate for voice tips (`/vctip`, `/rain voice:true`).
+
+### 5. API Authentication
 
 ```
 Request → requireAuth → Validate API Key
@@ -192,7 +203,7 @@ Request → requireAuth → Validate API Key
 
 1. **Database:** Single PostgreSQL instance
 2. **RPC:** Helius free tier rate limits
-3. **Queue:** Sequential processing (concurrency: 1)
+3. **Queue:** Transaction worker runs at concurrency 4 (one slow confirmation no longer blocks the payout line)
 4. **Bot:** Single instance (no sharding)
 
 ### Optimizations
@@ -421,6 +432,6 @@ const TOKEN_MINTS = {
 
 ---
 
-**Last Updated:** 2026-06-18  
-**Version:** 0.3.0  
+**Last Updated:** 2026-09-15  
+**Version:** 0.4.0  
 **Status:** Production

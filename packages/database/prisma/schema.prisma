@@ -123,10 +123,14 @@ enum ParticipantStatus {
 }
 
 model GuildSettings {
-  guildId       String   @id
-  prefix        String   @default("%")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  guildId        String   @id
+  prefix         String   @default("%")
+  // Optional per-guild role gating. When set, only members with this role
+  // can create AND receive/claim the corresponding feature. null = unrestricted.
+  airdropRoleId  String?
+  rainRoleId     String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@index([prefix])
 }

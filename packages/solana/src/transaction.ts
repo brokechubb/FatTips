@@ -33,6 +33,26 @@ const CU_PER_SPL_TRANSFER = 15_000; // actual ~4k, padded for safety
 const CU_PER_ATA_CREATION = 50_000; // actual ~25-30k, padded for safety
 const CU_OVERHEAD = 2_000; // ComputeBudget instructions + signature verification
 
+// Cap each confirmation wait at this duration instead of the full blockhash expiry
+// (~45s). When it elapses, check on-chain status, re-propagate if the blockhash is
+// still valid, and only escalate to a fresh-blockhash retry once provably expired.
+const CONFIRM_SOFT_TIMEOUT_MS = 15_000;
+// Total wall-clock budget for one attempt's confirmation (re-propagate + re-wait
+// cycles included). Keeps worst-case per-attempt latency bounded at ~30s instead
+// of the ~50s full blockhash-expiry wait users were seeing.
+const CONFIRM_SOFT_TOTAL_MS = 30_000;
+
+/**
+ * Thrown when the soft confirmation window elapses without the transaction
+ * reaching 'confirmed'. Never indicates the transaction executed.
+ */
+class SoftConfirmationTimeoutError extends Error {
+  constructor() {
+    super('Confirmation soft timeout elapsed');
+    this.name = 'SoftConfirmationTimeoutError';
+  }
+}
+
 export class TransactionService {
   private connection: Connection;
   private rpcUrl: string;
@@ -53,7 +73,10 @@ export class TransactionService {
 
   /**
    * Fetch a dynamic priority fee from the Helius getPriorityFeeEstimate API.
-   * Uses the `recommended` level which balances inclusion speed vs cost.
+   * Uses the 'high' fee level — 'recommended' underestimates during congestion,
+   * which causes transactions to be dropped by validators and only recover after
+   * a full blockhash-expiry wait (~50s). 'high' costs fractions of a cent more
+   * for typical transfers and avoids most drops.
    * Falls back to PRIORITY_FEE_FALLBACK_MICRO_LAMPORTS if the RPC doesn't support it.
    *
    * On retry attempts the fee is escalated by PRIORITY_FEE_ESCALATION_MULTIPLIER to
@@ -68,15 +91,20 @@ export class TransactionService {
           jsonrpc: '2.0',
           id: '1',
           method: 'getPriorityFeeEstimate',
-          params: [{ options: { recommended: true } }],
+          params: [{ options: { includeAllPriorityFeeLevels: true } }],
         }),
       });
       const data = (await response.json()) as {
-        result?: { priorityFeeEstimate?: number };
+        result?: {
+          priorityFeeEstimate?: number;
+          priorityFeeLevels?: { low?: number; medium?: number; high?: number };
+        };
         error?: unknown;
       };
-      if (data?.result?.priorityFeeEstimate != null) {
-        const base = data.result.priorityFeeEstimate;
+      const levels = data?.result?.priorityFeeLevels;
+      // Prefer 'high', falling down the ladder if a level is missing
+      const base = levels?.high ?? levels?.medium ?? levels?.low ?? data?.result?.priorityFeeEstimate;
+      if (base != null) {
         // Escalate on retries: attempt 0 = base fee, attempt 1 = base*3, attempt 2 = base*9, etc.
         const escalated = Math.round(base * Math.pow(PRIORITY_FEE_ESCALATION_MULTIPLIER, attempt));
         const capped = Math.min(escalated, PRIORITY_FEE_CAP_MICRO_LAMPORTS);
@@ -242,6 +270,103 @@ export class TransactionService {
   }
 
   /**
+   * Wait for confirmation with a soft timeout. Instead of waiting the full
+   * blockhash expiry (~45s) before giving up, we:
+   *   1. Wait up to CONFIRM_SOFT_TIMEOUT_MS for confirmation
+   *   2. Check if the tx landed anyway (RPC lag) — if so, done
+   *   3. If the blockhash is still valid, re-propagate the signed transaction
+   *      (idempotent — same signature cannot execute twice) and keep waiting
+   *   4. Once the total soft budget is exhausted — or the blockhash has
+   *      provably expired — throw TransactionExpiredBlockheightExceededError.
+   *      Either way the caller's fresh-blockhash retry is safe and cannot
+   *      double-send: the original signature never executed.
+   */
+  private async confirmWithSoftTimeout(
+    signature: string,
+    rawTransaction: Uint8Array,
+    blockhash: string,
+    lastValidBlockHeight: number
+  ): Promise<void> {
+    const softBudgetEnd = Date.now() + CONFIRM_SOFT_TOTAL_MS;
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const confirmPromise = this.connection
+        .confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
+        .then((confirmation) => {
+          // confirmTransaction RESOLVES (doesn't throw) when the tx executes
+          // and fails on-chain — surface that as a real error
+          if (confirmation.value.err) {
+            throw new Error(
+              `Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`
+            );
+          }
+        });
+      // If the timer wins the race, the confirm promise may still reject later
+      // (e.g. blockhash expiry) — swallow it so it can't crash the process as
+      // an unhandled rejection
+      confirmPromise.catch(() => {});
+      try {
+        await Promise.race([
+          confirmPromise,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new SoftConfirmationTimeoutError()),
+              CONFIRM_SOFT_TIMEOUT_MS
+            );
+          }),
+        ]);
+        return; // confirmed successfully
+      } catch (error: unknown) {
+        if (error instanceof SoftConfirmationTimeoutError) {
+          // Window elapsed — check if it landed anyway before re-propagating
+          const landed = await this.checkTransactionLanded(signature);
+          if (landed) {
+            console.warn(`[TransactionService] Confirmation slow but tx landed: ${signature}`);
+            return;
+          }
+
+          // Blockhash provably expired → fresh-blockhash retry is safe
+          const currentHeight = await this.connection.getBlockHeight('confirmed');
+          if (currentHeight > lastValidBlockHeight) {
+            throw new TransactionExpiredBlockheightExceededError(signature);
+          }
+
+          // Soft budget exhausted → give up on this signature; it never executed,
+          // so the caller's fresh-blockhash retry cannot double-send
+          if (Date.now() >= softBudgetEnd) {
+            console.warn(
+              `[TransactionService] Confirmation not received within soft budget for ${signature} (still within blockhash validity)`
+            );
+            throw new TransactionExpiredBlockheightExceededError(signature);
+          }
+
+          // Still valid with budget left — re-send the exact same signed
+          // transaction (idempotent) and keep waiting. Re-propagation errors
+          // (e.g. "already processed") are non-fatal: the original tx is
+          // still in flight, so keep waiting rather than failing the job.
+          console.warn(
+            `[TransactionService] Confirmation slow (${signature.slice(0, 16)}…), re-propagating transaction...`
+          );
+          try {
+            await this.connection.sendRawTransaction(rawTransaction, {
+              skipPreflight: true,
+              maxRetries: 5,
+            });
+          } catch (reErr: unknown) {
+            console.warn(`[TransactionService] Re-propagation failed (non-fatal):`, reErr);
+          }
+          continue;
+        }
+        throw error;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+  }
+
+  /**
    * Send a transaction and confirm using the blockhash-based strategy.
    * Fetches a dynamic priority fee each attempt and escalates on retries.
    * Retries with fresh blockhash on expiry errors. Checks on-chain status
@@ -287,17 +412,16 @@ export class TransactionService {
       // First attempt: use preflight to catch simulation errors (insufficient balance, etc.)
       // Retries: skip preflight since we already know the tx structure is valid
       const opts = attempt === 0 ? { ...this.sendOptions, skipPreflight: false } : this.sendOptions;
-      const signature = await this.connection.sendTransaction(transaction, signers, opts);
+
+      // Sign explicitly so we can serialize the signed tx for idempotent
+      // re-propagation inside confirmWithSoftTimeout
+      transaction.sign(...signers);
+      const rawTransaction = transaction.serialize();
+      const signature = await this.connection.sendRawTransaction(rawTransaction, opts);
       try {
-        const confirmation = await this.connection.confirmTransaction(
-          { signature, blockhash, lastValidBlockHeight },
-          'confirmed'
-        );
-        if (confirmation.value.err) {
-          throw new Error(
-            `Transaction confirmed but failed on-chain: ${JSON.stringify(confirmation.value.err)}`
-          );
-        }
+        // Soft-timeout confirmation: re-propagates while the blockhash is valid,
+        // escalates to a fresh-blockhash retry as soon as it provably expires.
+        await this.confirmWithSoftTimeout(signature, rawTransaction, blockhash, lastValidBlockHeight);
         return signature;
       } catch (error: unknown) {
         lastError = error;

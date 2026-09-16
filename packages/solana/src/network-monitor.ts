@@ -21,12 +21,16 @@ const FEE_CONGESTED_THRESHOLD = 1_000_000; // above this → congested
 
 const POLL_INTERVAL_MS = 30_000; // poll every 30s
 const PERFORMANCE_SAMPLES = 4; // average over ~4 samples (~2 min window)
+// Backoff multiplier when the RPC fails repeatedly (e.g. 500 errors) — avoids
+// hammering a struggling endpoint and flooding logs
+const POLL_BACKOFF_MAX_MS = 300_000; // 5 min ceiling
 
 export class NetworkMonitor {
   private connection: Connection;
   private rpcUrl: string;
   private health: NetworkHealth;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private consecutiveFailures = 0;
 
   constructor(rpcUrl: string) {
     this.rpcUrl = rpcUrl;
@@ -41,13 +45,25 @@ export class NetworkMonitor {
   }
 
   /**
-   * Start polling. Runs an immediate poll then repeats every 30s.
+   * Start polling. Runs an immediate poll then repeats every 30s, backing off
+   * up to 5 minutes while the RPC keeps failing.
    */
   start(): void {
     this.poll().catch(() => {});
+    this.scheduleNext();
+  }
+
+  private scheduleNext(): void {
+    if (this.timer) clearInterval(this.timer);
+    const interval = Math.min(
+      POLL_INTERVAL_MS * Math.pow(2, this.consecutiveFailures),
+      POLL_BACKOFF_MAX_MS
+    );
     this.timer = setInterval(() => {
-      this.poll().catch(() => {});
-    }, POLL_INTERVAL_MS);
+      this.poll()
+        .catch(() => {})
+        .finally(() => this.scheduleNext());
+    }, interval);
   }
 
   stop(): void {
@@ -100,9 +116,16 @@ export class NetworkMonitor {
       const status = this.classify(tps, priorityFee);
 
       this.health = { status, tps, priorityFee, lastUpdated: new Date() };
+      this.consecutiveFailures = 0;
     } catch (err) {
-      // Don't crash — keep last known health
-      console.warn('[NetworkMonitor] Poll failed:', err);
+      this.consecutiveFailures++;
+      // Log first failure and then every 5th — keep last known health otherwise
+      if (this.consecutiveFailures === 1 || this.consecutiveFailures % 5 === 0) {
+        console.warn(
+          `[NetworkMonitor] Poll failed (${this.consecutiveFailures} consecutive):`,
+          err
+        );
+      }
     }
   }
 
