@@ -4,9 +4,11 @@
 # Safe to run as a weekly cron job.
 #
 # Cron example (runs Sundays at 4 AM):
-#   0 4 * * 0 /opt/REDACTED_DIR/scripts/run-recovery-docker.sh >> /opt/REDACTED_DIR/logs/recovery.log 2>&1
+#   0 4 * * 0 /path/to/FatTips/scripts/run-recovery-docker.sh >> /path/to/FatTips/logs/recovery.log 2>&1
 
-LOG_DIR="/opt/REDACTED_DIR/logs"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+LOG_DIR="$ROOT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
 echo ""
@@ -15,8 +17,8 @@ echo "  Airdrop Fund Recovery — $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 echo "========================================"
 echo ""
 
-# Navigate to project directory
-cd /opt/REDACTED_DIR
+# Navigate to project directory (script-relative)
+cd "$ROOT_DIR"
 
 # Source environment variables
 if [ -f .env ]; then
@@ -41,7 +43,7 @@ echo ""
 
 # Copy the recovery script to the container
 echo "📁 Copying recovery script to container..."
-docker cp /opt/REDACTED_DIR/scripts/recover-airdrop-funds.js fattips-bot:/app/scripts/recover-airdrop-funds.js
+docker cp "$SCRIPT_DIR/recover-airdrop-funds.js" fattips-bot:/app/scripts/recover-airdrop-funds.js
 echo "✓ Script copied"
 echo ""
 

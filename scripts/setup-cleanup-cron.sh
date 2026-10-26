@@ -2,11 +2,13 @@
 # Setup weekly airdrop cleanup cron job
 # This script adds a weekly cron job to drain residual funds from airdrop wallets
 
-SCRIPT_PATH="/opt/REDACTED_DIR/scripts/run-cleanup-docker.sh"
-LOG_PATH="/opt/REDACTED_DIR/logs/airdrop-cleanup.log"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+SCRIPT_PATH="$SCRIPT_DIR/run-cleanup-docker.sh"
+LOG_PATH="$ROOT_DIR/logs/airdrop-cleanup.log"
 
 # Create log directory if it doesn't exist
-mkdir -p /opt/REDACTED_DIR/logs
+mkdir -p "$ROOT_DIR/logs"
 
 # Create the cron job entry (runs every Sunday at 3 AM)
 # Uses the Docker wrapper script which handles all required environment variables

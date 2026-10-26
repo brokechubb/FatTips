@@ -4,8 +4,9 @@
 
 set -e
 
-# Navigate to project directory
-cd /opt/REDACTED_DIR
+# Navigate to project directory (script-relative, no hardcoded paths)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$(dirname "$SCRIPT_DIR")"
 
 # Source environment variables
 if [ -f .env ]; then
@@ -13,12 +14,12 @@ if [ -f .env ]; then
 fi
 
 # Build arguments for the cleanup script:
-# 1. CLEANUP_DESTINATION (or use default: REDACTED_TREASURY_WALLET)
+# 1. CLEANUP_DESTINATION (required - set in .env, never hardcode a real wallet here)
 # 2. DATABASE_URL - use internal Docker network address
 # 3. MASTER_ENCRYPTION_KEY
 # 4. SOLANA_RPC_URL
 
-DESTINATION="${CLEANUP_DESTINATION:-REDACTED_TREASURY_WALLET}"
+DESTINATION="${CLEANUP_DESTINATION:?CLEANUP_DESTINATION is required (set it in .env or your environment)}"
 INTERNAL_DB_URL="postgresql://fattips_user:${POSTGRES_PASSWORD}@postgres:5432/fattips"
 
 echo "Running airdrop cleanup..."

@@ -126,14 +126,14 @@ Sets up automated database backups using cron.
 
 ### Production Deployment
 
-For production on `codestats.gg`:
+For production (adjust host/user/path to your own server):
 
 ```bash
 # SSH into server
-ssh -p REDACTED_PORT REDACTED_USER@REDACTED_HOST
+ssh -p $PORT user@your-server
 
 # Navigate to project
-cd /opt/REDACTED_DIR
+cd /path/to/FatTips
 
 # Set up automated backups
 ./scripts/setup-backup-cron.sh
@@ -145,6 +145,11 @@ crontab -l
 # Check backup logs
 tail -f /tmp/fattips-backup.log
 ```
+
+Deployments are driven by `deploy-prod.sh`, which reads its target from
+`DEPLOY_SERVER_USER`, `DEPLOY_SERVER_HOST`, `DEPLOY_SERVER_PORT` and
+`DEPLOY_REMOTE_DIR` (see `.env.example`). Server connection details are
+deliberately not stored in this repository.
 
 ---
 

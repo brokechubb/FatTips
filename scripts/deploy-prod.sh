@@ -4,10 +4,22 @@ set -e
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-SERVER_USER="REDACTED"
-SERVER_HOST="codestats.gg"
-SERVER_PORT="REDACTED_PORT"
-REMOTE_DIR="/opt/REDACTED_DIR"
+
+# Deploy target is intentionally NOT hardcoded. Set these in your environment or
+# in a git-ignored .env at the project root (see .env.example):
+#   DEPLOY_SERVER_USER, DEPLOY_SERVER_HOST, DEPLOY_SERVER_PORT, DEPLOY_REMOTE_DIR
+if [ -f "$PROJECT_ROOT/.env" ]; then
+  while IFS='=' read -r key value; do
+    case "$key" in
+      DEPLOY_*) eval "$key=\$value" ;;
+    esac
+  done < <(grep -E '^DEPLOY_[A-Z_]+=' "$PROJECT_ROOT/.env")
+fi
+
+SERVER_USER="${DEPLOY_SERVER_USER:?DEPLOY_SERVER_USER is required (set it in .env or your environment)}"
+SERVER_HOST="${DEPLOY_SERVER_HOST:?DEPLOY_SERVER_HOST is required (set it in .env or your environment)}"
+SERVER_PORT="${DEPLOY_SERVER_PORT:-22}"
+REMOTE_DIR="${DEPLOY_REMOTE_DIR:?DEPLOY_REMOTE_DIR is required (set it in .env or your environment)}"
 
 echo "🚀 Deploying FatTips to production (Local Build Strategy)..."
 

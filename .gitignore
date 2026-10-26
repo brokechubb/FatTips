@@ -96,5 +96,13 @@ GEMINI.md
 CLAUDE.md
 AGENTS.md
 
-# Scripts with hardcoded production addresses
+# Scripts with hardcoded production addresses (keep local only - NEVER commit)
 scripts/check-users-balances.js
+scripts/check-airdrop-records.js
+scripts/check-recipients.js
+scripts/emergency-recover-misdirected-funds.js
+scripts/trace-funds.js
+scripts/verify-recovery.js
+scripts/recovery-instructions.sh
+scripts/run-cleanup-ssh.sh
+scripts/clean-git-history.sh

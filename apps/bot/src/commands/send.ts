@@ -136,7 +136,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await interaction.editReply({
         content:
           `${interaction.user} ❌ Invalid Solana address!\n\n` +
-          `Please provide a valid Solana wallet address (e.g., \`REDACTED_TREASURY_WALLET\`).`,
+          `Please provide a valid Solana wallet address (e.g., \`YourWalletAddressHereXXXXXXXXXXXXXXXXXXXXX\`).`,
       });
       return;
     }
@@ -568,7 +568,7 @@ async function showSendForm(interaction: ChatInputCommandInteraction) {
   const addressInput = new TextInputBuilder()
     .setCustomId('address')
     .setLabel('Recipient Address')
-    .setPlaceholder('Solana wallet address (e.g., REDACTED_TREASURY_WALLET)')
+    .setPlaceholder('Solana wallet address (e.g., YourWalletAddressHereXXXXXXXXXXXXXXXXXXXXX)')
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
     .setMaxLength(50);
