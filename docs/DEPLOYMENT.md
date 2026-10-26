@@ -102,6 +102,27 @@ FatTips uses **Sentry** for real-time error tracking and performance monitoring.
 2. Encrypted wallet database backups
 3. Store backups in secure off-site location
 
+## Production Deployment (FatTips)
+
+Production is deployed from a workstation with `scripts/deploy-prod.sh` — the server never builds. It reads its target from `DEPLOY_SERVER_USER`, `DEPLOY_SERVER_HOST`, `DEPLOY_SERVER_PORT` and `DEPLOY_REMOTE_DIR` (set in `.env` or the environment).
+
+The script, in order:
+
+1. Creates a **GPG-encrypted** database backup on the server (key: `fattips-backup`) and pulls a copy into `backups/offsite/`. Encryption is non-interactive because the key lives on the server.
+2. Builds `fattips-bot` / `fattips-api` locally on Node 22 with `pnpm install --frozen-lockfile`. `.dockerignore` keeps `.env`, `.git`, `backups/` (production dumps), `node_modules` and local-only ops scripts out of the images — without it they end up in the 1.4GB image that gets shipped to the server.
+3. Tags the running images `fattips-bot:rollback` / `fattips-api:rollback`, uploads the new images, and applies migrations **against the new image** before any service restarts.
+4. Restarts services and **verifies** them: API `GET /health`, bot logging `Bot logged in as`, and zero container restarts. If any check fails the script exits non-zero and prints the rollback command.
+
+Rollback without re-uploading (~2.8GB):
+
+```bash
+ssh -p "$DEPLOY_SERVER_PORT" "$DEPLOY_SERVER_USER@$DEPLOY_SERVER_HOST" \
+  'cd /opt/FatTips && docker tag fattips-bot:rollback fattips-bot:latest \
+   && docker tag fattips-api:rollback fattips-api:latest && docker compose up -d'
+```
+
+**Backup key escrow (required):** backups are encrypted to the server's `fattips-backup` public key. Export the private key once (`gpg --export-secret-keys fattips-backup`) and store it offline, somewhere other than the server — otherwise neither the server-side backups nor the offsite copies can be restored if the server is lost.
+
 ## Updates
 
 ```bash

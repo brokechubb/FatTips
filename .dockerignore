@@ -1,0 +1,59 @@
+# Docker build context hygiene.
+#
+# Without this file the whole repo (including .git, local database dumps and a
+# local .env) is copied into the image by `COPY . .`. Images are exported with
+# `docker save` and shipped to production, so anything listed here would leave
+# the server.
+
+# Version control / CI
+.git
+.github
+.gitignore
+
+# Environment files — deploy-prod.sh reads DEPLOY_* from a local .env, so a
+# present .env would otherwise be baked into an image layer.
+.env
+.env.*
+!.env.example
+
+# Database dumps, logs and local backup copies
+backups
+logs
+*.log
+*.sql
+*.sql.gz
+*.sql.gz.gpg
+*.dump
+
+# Installed dependencies and build output (reinstalled/rebuilt inside the image)
+node_modules
+**/node_modules
+**/dist
+.turbo
+# Must be recursive: nested tsconfig.tsbuildinfo makes `tsc` (composite: true)
+# skip emit entirely, so shared/apps would compile against missing .d.ts files.
+**/*.tsbuildinfo
+
+# Local-only ops scripts (some reference real wallets) and docs — the running
+# container receives the scripts it needs via `docker cp` during deploy.
+scripts
+docs
+nogit
+.megamemory
+.claude
+
+# Local scratch / machine-specific files
+test-*.js
+remote_docker_compose.yml
+fattips-api.conf
+Dockerfile.api.corrected
+pnpm-workspace.yaml.remote
+README.md
+ROADMAP.md
+GEMINI.md
+CLAUDE.md
+AGENTS.md
+LICENSE
+CHANGELOG.md
+.vscode
+.idea
