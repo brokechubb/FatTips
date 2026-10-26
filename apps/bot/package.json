@@ -12,17 +12,17 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@sentry/node": "^10.63.0",
-    "@sentry/profiling-node": "^10.63.0",
+    "@sentry/node": "^10.76.2",
+    "@sentry/profiling-node": "^10.76.2",
     "@solana/spl-token": "^0.3.11",
-    "@solana/web3.js": "^1.98.4",
-    "bullmq": "^5.67.3",
-    "discord.js": "^14.26.4",
+    "@solana/web3.js": "^1.99.0",
+    "bullmq": "^5.81.5",
+    "discord.js": "^14.27.0",
     "dotenv": "^16.6.1",
     "fattips-database": "workspace:*",
     "fattips-shared": "workspace:*",
     "fattips-solana": "workspace:*",
-    "ioredis": "^5.9.2",
+    "ioredis": "^5.11.1",
     "qrcode": "^1.5.4",
     "winston": "^3.19.0"
   },
@@ -30,7 +30,7 @@
     "@types/node": "^20.19.43",
     "@types/qrcode": "^1.5.6",
     "eslint": "^8.57.1",
-    "tsx": "^4.22.5",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }
 }

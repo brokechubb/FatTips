@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Dependency security overhaul: 127 → 15 advisories, 0 critical** — adopted the audited in-range dependency patches from the [`automatelife-hub/FatTips`](https://github.com/automatelife-hub/FatTips) fork (its "non-breaking security patches" PR; the fork's other two branches were evaluated and rejected — one superseded, one runtime-breaking), then applied targeted follow-up bumps and a lockfile refresh:
+  - `express ^4.22.3` — pulls patched `proxy-addr 2.0.8` (fixes critical IP-spoofing advisory GHSA-jqcg-44mw-7w3h), `body-parser 1.20.9`, `qs 6.16.0`, `path-to-regexp 0.1.13`
+  - `discord.js ^14.27.0` — via `@discordjs/rest 2.6.3` → patched `undici 6.28.x` (fixes 3 undici advisories)
+  - `zod ^4.6.7`, `morgan ^1.12.1`, `vitest ^4.1.11`, `express-rate-limit ^8.6.0`, TypeScript 5.9.3, Prisma 5.22, `@solana/web3.js 1.99.0`, root-pinned `eslint ^8.57.1` (prevents broken ESLint 10 auto-install)
+  - Closes July 2026's critical vitest CVE (arbitrary file read/execute via Vitest UI server) and all reachable high advisories
+- **Remaining 15 advisories documented and accepted**: `bigint-buffer` (high — no upstream patch exists; via `@solana/spl-token`), `turbo 1.x` (dev-only; needs major v2 + `turbo.json` migration), `mocha`/`serialize-javascript`/`anchor`/`toml` (dev-only `programs/airdrop` scaffold), and `jayson`'s `uuid 8`/`stream-json 1.9` (moderate — verified unreachable: the uuid advisory affects v3/v5/v6 APIs only while jayson uses v4; stream-json is not imported by the jayson client that `@solana/web3.js` loads).
+- **Runtime verified after the refresh**: express routing, Discord REST round-trip, and a live Solana devnet RPC call all pass; full `pnpm build`, `typecheck`, and the solana test suite pass.
+
 ### Fixed
 
 - **50-second transaction stalls resolved** — ~1 in 10 transactions hit a ~50s wall: a dropped transaction waited the full blockhash expiry before retrying. Confirmation now uses a soft 15s window — if the tx hasn't confirmed, it checks on-chain status, re-propagates the signed transaction while the blockhash is still valid (idempotent, cannot double-send), and only escalates to a fresh-blockhash retry once the blockhash provably expires. Worst-case wait per attempt drops from ~50s to ~30s, and retries start ~30s sooner.

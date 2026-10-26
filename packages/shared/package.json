@@ -13,7 +13,7 @@
   "dependencies": {
     "fattips-database": "workspace:*",
     "fattips-solana": "workspace:*",
-    "ioredis": "^5.9.2"
+    "ioredis": "^5.11.1"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

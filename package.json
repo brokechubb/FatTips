@@ -17,13 +17,13 @@
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
-    "@solana/web3.js": "^1.98.4",
+    "@solana/web3.js": "^1.99.0",
     "@types/node": "^20.19.43",
-    "@typescript-eslint/eslint-plugin": "^8.57.2",
-    "@typescript-eslint/parser": "^8.57.2",
+    "@typescript-eslint/eslint-plugin": "^8.72.0",
+    "@typescript-eslint/parser": "^8.72.0",
     "eslint": "^8.57.1",
-    "pg": "^8.22.0",
-    "prettier": "^3.9.4",
+    "pg": "^8.23.1",
+    "prettier": "^3.9.10",
     "turbo": "^1.13.4",
     "typescript": "^5.9.3"
   },
