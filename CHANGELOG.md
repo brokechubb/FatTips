@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Sensitive data purged from the repository and its entire git history** — a security review found that tracked files (and every commit in history) contained production SSH/deploy connection details, internal and treasury wallet addresses, incident transaction signatures/amounts, and a user's Discord ID. All 24 commits were rewritten with `git-filter-repo` (sensitive values replaced with `REDACTED_*` placeholders) and force-pushed. Anyone with an existing clone or fork is on the old history — re-clone.
+  - `deploy-prod.sh` now reads its deploy target from `DEPLOY_SERVER_USER` / `DEPLOY_SERVER_HOST` / `DEPLOY_SERVER_PORT` / `DEPLOY_REMOTE_DIR` (see `.env.example`) instead of hardcoded values, and fails fast if they are unset
+  - Cleanup/recovery scripts use script-relative paths and require `CLEANUP_DESTINATION` (no hardcoded destination wallets)
+  - Incident-specific ops scripts were untracked from the repo and added to `.gitignore` (they remain available locally); deploy/server details were scrubbed from `scripts/README.md`
+  - The real wallet address used as a placeholder example in the `/send` command UI was replaced with a clearly-fake placeholder
+
 - **Dependency security overhaul: 127 → 15 advisories, 0 critical** — adopted the audited in-range dependency patches from the [`automatelife-hub/FatTips`](https://github.com/automatelife-hub/FatTips) fork (its "non-breaking security patches" PR; the fork's other two branches were evaluated and rejected — one superseded, one runtime-breaking), then applied targeted follow-up bumps and a lockfile refresh:
   - `express ^4.22.3` — pulls patched `proxy-addr 2.0.8` (fixes critical IP-spoofing advisory GHSA-jqcg-44mw-7w3h), `body-parser 1.20.9`, `qs 6.16.0`, `path-to-regexp 0.1.13`
   - `discord.js ^14.27.0` — via `@discordjs/rest 2.6.3` → patched `undici 6.28.x` (fixes 3 undici advisories)
