@@ -19,12 +19,16 @@ import {
 } from '@solana/spl-token';
 import { TOKEN_MINTS } from './price';
 
-// Priority fee constants
-// Static fallback used when dynamic fee estimation fails.
-const PRIORITY_FEE_FALLBACK_MICRO_LAMPORTS = 100_000; // 0.1 lamports/CU — conservative baseline
+// Priority fee constants — expressed as ABSOLUTE lamports per transaction.
+// Helius' per-CU price estimates are calibrated for large transactions
+// (100k+ CU); on our tiny tip transfers (~3.5k CU) even the 'high' level
+// diluted to ~600 lamports ≈ $0.0001, which got transactions deprioritized
+// and dropped. Enforcing an absolute floor keeps small transfers competitive.
+const PRIORITY_FEE_MIN_LAMPORTS = 10_000; // floor per tx (~$0.002) — keeps tips competitive
+const PRIORITY_FEE_MAX_LAMPORTS = 500_000; // ceiling per tx (~$0.10) — bounds worst-case cost
+const PRIORITY_FEE_FALLBACK_LAMPORTS = 25_000; // used when the dynamic estimate fails
 // Fee is escalated on each retry attempt to improve inclusion odds under congestion.
 const PRIORITY_FEE_ESCALATION_MULTIPLIER = 3; // each retry multiplies fee by this factor
-const PRIORITY_FEE_CAP_MICRO_LAMPORTS = 5_000_000; // ~$0.05 max per tip — reasonable ceiling
 
 // Compute unit estimates with generous 3x safety margin.
 // If the limit is too tight, validators silently drop the transaction.
@@ -36,7 +40,9 @@ const CU_OVERHEAD = 2_000; // ComputeBudget instructions + signature verificatio
 // Cap each confirmation wait at this duration instead of the full blockhash expiry
 // (~45s). When it elapses, check on-chain status, re-propagate if the blockhash is
 // still valid, and only escalate to a fresh-blockhash retry once provably expired.
-const CONFIRM_SOFT_TIMEOUT_MS = 15_000;
+// Kept short (5s): a dropped first broadcast is the #1 source of perceived tip
+// delay, so recovery must be near-immediate rather than waiting the old 15s.
+const CONFIRM_SOFT_TIMEOUT_MS = 5_000;
 // Total wall-clock budget for one attempt's confirmation (re-propagate + re-wait
 // cycles included). Keeps worst-case per-attempt latency bounded at ~30s instead
 // of the ~50s full blockhash-expiry wait users were seeing.
@@ -67,22 +73,36 @@ export class TransactionService {
     this.sendOptions = {
       skipPreflight: true,
       preflightCommitment: 'confirmed',
-      maxRetries: 0, // Disable RPC internal retries — we manage retries ourselves
+      // Let the RPC rebroadcast (~every 2s until confirmed). A single forwarded
+      // send gets dropped often enough to stall tips for the full soft-timeout
+      // otherwise. Idempotent — same signed tx — so our own re-propagation in
+      // confirmWithSoftTimeout stays safe alongside it.
+      maxRetries: 5,
     };
   }
 
   /**
-   * Fetch a dynamic priority fee from the Helius getPriorityFeeEstimate API.
-   * Uses the 'high' fee level — 'recommended' underestimates during congestion,
-   * which causes transactions to be dropped by validators and only recover after
-   * a full blockhash-expiry wait (~50s). 'high' costs fractions of a cent more
-   * for typical transfers and avoids most drops.
-   * Falls back to PRIORITY_FEE_FALLBACK_MICRO_LAMPORTS if the RPC doesn't support it.
+   * Compute the priority fee for a transaction as an ABSOLUTE lamports amount,
+   * converted to microLamports/CU for setComputeUnitPrice.
    *
-   * On retry attempts the fee is escalated by PRIORITY_FEE_ESCALATION_MULTIPLIER to
-   * improve inclusion odds under congestion, capped at PRIORITY_FEE_CAP_MICRO_LAMPORTS.
+   * Helius' getPriorityFeeEstimate returns microLamports/CU prices calibrated
+   * for large transactions. Our tip transfers use only ~3.5k CU, so even the
+   * 'high' level diluted to ~600 lamports ≈ $0.0001 — not enough to be
+   * prioritized, and transactions got dropped. Converting via this tx's CU
+   * limit and clamping to [PRIORITY_FEE_MIN_LAMPORTS, PRIORITY_FEE_MAX_LAMPORTS]
+   * guarantees a meaningful fee regardless of transaction size, at a bounded
+   * cost (worst case ~$0.10).
+   *
+   * Falls back to PRIORITY_FEE_FALLBACK_LAMPORTS if the RPC doesn't support the
+   * estimate. On retry attempts the fee is escalated by
+   * PRIORITY_FEE_ESCALATION_MULTIPLIER to improve inclusion odds under congestion.
+   *
+   * @returns microLamports per CU to pass to ComputeBudgetProgram.setComputeUnitPrice
    */
-  private async getDynamicPriorityFee(attempt: number = 0): Promise<number> {
+  private async getDynamicPriorityFee(attempt: number = 0, cuLimit?: number): Promise<number> {
+    // Absolute lamports for this attempt, escalated from the base estimate
+    let baseLamports: number;
+
     try {
       const response = await fetch(this.rpcUrl, {
         method: 'POST',
@@ -102,30 +122,44 @@ export class TransactionService {
         error?: unknown;
       };
       const levels = data?.result?.priorityFeeLevels;
-      // Prefer 'high', falling down the ladder if a level is missing
-      const base = levels?.high ?? levels?.medium ?? levels?.low ?? data?.result?.priorityFeeEstimate;
-      if (base != null) {
-        // Escalate on retries: attempt 0 = base fee, attempt 1 = base*3, attempt 2 = base*9, etc.
-        const escalated = Math.round(base * Math.pow(PRIORITY_FEE_ESCALATION_MULTIPLIER, attempt));
-        const capped = Math.min(escalated, PRIORITY_FEE_CAP_MICRO_LAMPORTS);
-        if (attempt > 0) {
-          console.log(
-            `[TransactionService] Dynamic priority fee: ${base} → ${capped} microLamports (attempt ${attempt + 1}, escalation ${PRIORITY_FEE_ESCALATION_MULTIPLIER}x)`
-          );
-        }
-        return capped;
+      // Prefer 'high', falling down the ladder if a level is missing.
+      // Levels are microLamports/CU prices — convert to absolute lamports
+      // using THIS transaction's CU limit so tiny txs don't dilute to ~0.
+      const basePrice =
+        levels?.high ?? levels?.medium ?? levels?.low ?? data?.result?.priorityFeeEstimate;
+      if (basePrice != null && cuLimit != null) {
+        baseLamports = Math.ceil((basePrice * cuLimit) / 1_000_000);
+      } else {
+        baseLamports = PRIORITY_FEE_FALLBACK_LAMPORTS;
       }
     } catch (err) {
       console.warn(
         '[TransactionService] Failed to fetch dynamic priority fee, using fallback:',
         err
       );
+      baseLamports = PRIORITY_FEE_FALLBACK_LAMPORTS;
     }
-    // Fallback: also escalate the static fallback on retries
+
+    // Escalate on retries: attempt 0 = base fee, attempt 1 = base*3, attempt 2 = base*9, etc.
     const escalated = Math.round(
-      PRIORITY_FEE_FALLBACK_MICRO_LAMPORTS * Math.pow(PRIORITY_FEE_ESCALATION_MULTIPLIER, attempt)
+      baseLamports * Math.pow(PRIORITY_FEE_ESCALATION_MULTIPLIER, attempt)
     );
-    return Math.min(escalated, PRIORITY_FEE_CAP_MICRO_LAMPORTS);
+    // Clamp to absolute bounds — the floor keeps small-CU transfers competitive,
+    // the ceiling bounds worst-case cost under heavy congestion.
+    const clamped = Math.min(
+      Math.max(escalated, PRIORITY_FEE_MIN_LAMPORTS),
+      PRIORITY_FEE_MAX_LAMPORTS
+    );
+    if (attempt > 0) {
+      console.log(
+        `[TransactionService] Priority fee: ${baseLamports} → ${clamped} lamports (attempt ${attempt + 1}, escalation ${PRIORITY_FEE_ESCALATION_MULTIPLIER}x)`
+      );
+    }
+    // Convert back to microLamports/CU for setComputeUnitPrice
+    if (cuLimit == null || cuLimit <= 0) {
+      return clamped; // Defensive: callers always pass a CU limit
+    }
+    return Math.ceil((clamped * 1_000_000) / cuLimit);
   }
 
   /**
@@ -392,7 +426,7 @@ export class TransactionService {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       // Fetch dynamic priority fee for this attempt (escalates on retries)
       if (cuLimit !== undefined) {
-        const priorityFee = await this.getDynamicPriorityFee(attempt);
+        const priorityFee = await this.getDynamicPriorityFee(attempt, cuLimit);
         // Remove any existing ComputeBudget instructions from a prior attempt
         transaction.instructions = transaction.instructions.filter(
           (ix) => !ix.programId.equals(ComputeBudgetProgram.programId)

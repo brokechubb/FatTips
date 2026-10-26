@@ -146,7 +146,9 @@ export function initTransactionWorker(client: Client) {
             recipientWallets[0].walletPubkey,
             amountPerUser,
             tokenMint,
-            { onRetry }
+            // NOTE: priorityFee must be set explicitly — passing only { onRetry }
+            // overrides the default and sends the tip with NO priority fee.
+            { priorityFee: true, onRetry }
           );
         } else {
           // Batch transfer (Rain or Multi-tip)
@@ -155,6 +157,7 @@ export function initTransactionWorker(client: Client) {
             amount: amountPerUser,
           }));
           signature = await transactionService.batchTransfer(senderKeypair, transfers, tokenMint, {
+            priorityFee: true,
             onRetry,
           });
         }
