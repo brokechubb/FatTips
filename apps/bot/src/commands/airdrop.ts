@@ -99,9 +99,9 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // Use interaction timestamp to ensure sync with Discord's clock (avoids server drift)
-  const startTime = interaction.createdTimestamp;
-  const expiresAt = new Date(startTime + durationMs);
+  // expiresAt is calculated later, just before the DB record is created,
+  // so the timer starts when the airdrop actually goes live (after funding +
+  // confirmation + verification) rather than when the command was invoked.
 
   // 2. Parse Amount
   const parsedAmount = parseAmountInput(amountStr);
@@ -384,6 +384,11 @@ if (tokenSymbol === 'SOL' && parsedAmount.type !== 'max') {
 
   // Verify the pool wallet was funded before creating airdrop
 
+  // Calculate expiresAt NOW — after funding + confirmation — so the timer
+  // reflects the actual airdrop lifetime, not the time since the command
+  // was invoked (which includes funding + verification delays).
+  const expiresAt = new Date(Date.now() + durationMs);
+
   let verified = false;
   let retryCount = 0;
   const maxRetries = 5;
@@ -536,8 +541,11 @@ if (tokenSymbol === 'SOL' && parsedAmount.type !== 'max') {
 
   // Schedule short airdrops for precise settlement
   if (durationMs < 60000 * 5) {
-    // If less than 5 minutes
-    interaction.client.emit('scheduleAirdrop', airdrop.id, durationMs);
+    // If less than 5 minutes — use remaining time from expiresAt
+    const remainingMs = expiresAt.getTime() - Date.now();
+    if (remainingMs > 0) {
+      interaction.client.emit('scheduleAirdrop', airdrop.id, remainingMs);
+    }
   }
 }
 

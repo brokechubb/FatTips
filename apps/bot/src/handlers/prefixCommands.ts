@@ -2180,7 +2180,9 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   }
 
   const maxWinners = maxWinnersArg ? parseInt(maxWinnersArg) : null;
-  const expiresAt = new Date(Date.now() + durationMs);
+  // expiresAt is calculated later, just before the DB record is created,
+  // so the timer starts when the airdrop actually goes live (after funding +
+  // confirmation + verification) rather than when the command was invoked.
 
   // Get sender wallet
   const sender = await prisma.user.findUnique({
@@ -2381,6 +2383,11 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
 
   // Verify the pool wallet was funded before creating airdrop
 
+  // Calculate expiresAt NOW — after funding + confirmation — so the timer
+  // reflects the actual airdrop lifetime, not the time since the command
+  // was invoked (which includes funding + verification delays).
+  const expiresAt = new Date(Date.now() + durationMs);
+
   let verified = false;
   let retryCount = 0;
   const maxRetries = 5;
@@ -2527,7 +2534,10 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
 
   // Schedule settlement for short airdrops
   if (durationMs < 60000 * 5) {
-    client.emit('scheduleAirdrop', airdrop.id, durationMs);
+    const remainingMs = expiresAt.getTime() - Date.now();
+    if (remainingMs > 0) {
+      client.emit('scheduleAirdrop', airdrop.id, remainingMs);
+    }
   }
 }
 
