@@ -10,6 +10,7 @@ import {
   SendOptions,
   TransactionExpiredTimeoutError,
   TransactionExpiredBlockheightExceededError,
+  AccountInfo,
 } from '@solana/web3.js';
 import {
   createTransferInstruction,
@@ -48,6 +49,10 @@ const CONFIRM_SOFT_TIMEOUT_MS = 5_000;
 // of the ~50s full blockhash-expiry wait users were seeing.
 const CONFIRM_SOFT_TOTAL_MS = 30_000;
 
+// Fallback rent-exempt minimum (lamports) for a zero-data account, used only if
+// the RPC cannot answer getMinimumBalanceForRentExemption.
+const DEFAULT_RENT_EXEMPT_LAMPORTS = 890_880;
+
 /**
  * Thrown when the soft confirmation window elapses without the transaction
  * reaching 'confirmed'. Never indicates the transaction executed.
@@ -63,6 +68,7 @@ export class TransactionService {
   private connection: Connection;
   private rpcUrl: string;
   private sendOptions: SendOptions;
+  private rentExemptMinLamports: number | null = null;
 
   constructor(rpcUrl: string) {
     this.rpcUrl = rpcUrl;
@@ -79,6 +85,109 @@ export class TransactionService {
       // confirmWithSoftTimeout stays safe alongside it.
       maxRetries: 5,
     };
+  }
+
+  /**
+   * Rent-exempt minimum for an account with no data, in lamports.
+   *
+   * Solana rejects any transaction that leaves a *newly created* account below
+   * this balance ("insufficient funds for rent"), so every SOL transfer aimed at
+   * a brand-new wallet has to be at least this large. Cached per instance — the
+   * value is a cluster constant (~0.00089088 SOL).
+   */
+  private async getRentExemptMinLamports(): Promise<number> {
+    if (this.rentExemptMinLamports === null) {
+      try {
+        this.rentExemptMinLamports = await this.connection.getMinimumBalanceForRentExemption(0);
+      } catch (error) {
+        // Don't cache the fallback — the next transfer will try the RPC again
+        console.warn(
+          '[TransactionService] Could not fetch rent-exempt minimum, using fallback:',
+          error instanceof Error ? error.message : error
+        );
+        return DEFAULT_RENT_EXEMPT_LAMPORTS;
+      }
+    }
+    return this.rentExemptMinLamports;
+  }
+
+  /**
+   * Count how many of the given wallets have never been funded (no on-chain account).
+   *
+   * Commands use this to reserve one rent exemption per brand-new recipient in
+   * their balance checks, because dust tips/rains to a fresh wallet are topped up
+   * to the rent-exempt minimum (see applyRentExemptionToNewAccounts).
+   */
+  async countUnfundedAccounts(pubkeys: string[]): Promise<number> {
+    if (pubkeys.length === 0) return 0;
+
+    const keys = pubkeys.map((pubkey) => new PublicKey(pubkey));
+    let unfunded = 0;
+
+    // getMultipleAccountsInfo caps out around 100 keys per call
+    for (let i = 0; i < keys.length; i += 100) {
+      const chunk = keys.slice(i, i + 100);
+      const infos = await this.connection.getMultipleAccountsInfo(chunk, 'confirmed');
+      for (const info of infos) {
+        if (!info || info.lamports === 0) unfunded++;
+      }
+    }
+
+    return unfunded;
+  }
+
+  /**
+   * Raise any SOL transfer that targets a never-funded wallet to the rent-exempt minimum.
+   *
+   * Tips and rains split a pot across many users, so a per-recipient share can land
+   * below the rent-exempt minimum. Sending it would fail simulation with
+   * "Transaction results in an account (1) with insufficient funds for rent".
+   * Recipients that already have an account accept any amount, so only
+   * non-existent accounts are adjusted. Airdrop settlement already does the same
+   * for its payouts.
+   */
+  private async applyRentExemptionToNewAccounts<
+    T extends { pubkey: PublicKey; lamports: number }
+  >(transfers: T[]): Promise<T[]> {
+    const rentMin = await this.getRentExemptMinLamports();
+    const candidates = transfers.filter((t) => t.lamports > 0 && t.lamports < rentMin);
+    if (candidates.length === 0) return transfers;
+
+    const needsTopUp = new Set<string>();
+
+    for (let i = 0; i < candidates.length; i += 100) {
+      const chunk = candidates.slice(i, i + 100);
+      let infos: (AccountInfo<Buffer> | null)[];
+      try {
+        infos = await this.connection.getMultipleAccountsInfo(
+          chunk.map((t) => t.pubkey),
+          'confirmed'
+        );
+      } catch (error) {
+        // Can't verify: leave the transfers untouched and let simulation report it
+        console.warn(
+          '[TransactionService] Could not check recipient rent exemption:',
+          error instanceof Error ? error.message : error
+        );
+        return transfers;
+      }
+
+      chunk.forEach((transfer, index) => {
+        const info = infos[index];
+        if (!info || info.lamports === 0) needsTopUp.add(transfer.pubkey.toBase58());
+      });
+    }
+
+    if (needsTopUp.size === 0) return transfers;
+
+    return transfers.map((transfer) => {
+      if (!needsTopUp.has(transfer.pubkey.toBase58())) return transfer;
+      console.warn(
+        `[TransactionService] New wallet ${transfer.pubkey.toBase58()} topped up from ` +
+          `${transfer.lamports} to ${rentMin} lamports (rent exemption)`
+      );
+      return { ...transfer, lamports: rentMin };
+    });
   }
 
   /**
@@ -197,12 +306,18 @@ export class TransactionService {
     // Case 1: SOL Batch Transfer
     if (mintAddress === TOKEN_MINTS.SOL) {
       const cuLimit = Math.min(transfers.length * CU_PER_SOL_TRANSFER + CU_OVERHEAD, 1_400_000);
-      for (const t of transfers) {
+      const solTransfers = await this.applyRentExemptionToNewAccounts(
+        transfers.map((t) => ({
+          pubkey: new PublicKey(t.recipient),
+          lamports: Math.round(t.amount * LAMPORTS_PER_SOL),
+        }))
+      );
+      for (const t of solTransfers) {
         transaction.add(
           SystemProgram.transfer({
             fromPubkey: senderKeypair.publicKey,
-            toPubkey: new PublicKey(t.recipient),
-            lamports: Math.round(t.amount * LAMPORTS_PER_SOL),
+            toPubkey: t.pubkey,
+            lamports: t.lamports,
           })
         );
       }
@@ -451,8 +566,12 @@ export class TransactionService {
       // re-propagation inside confirmWithSoftTimeout
       transaction.sign(...signers);
       const rawTransaction = transaction.serialize();
-      const signature = await this.connection.sendRawTransaction(rawTransaction, opts);
+      // Kept inside the try so preflight/simulation failures go through the same
+      // error mapping as confirmation failures (and never escape as raw
+      // SendTransactionError dumps).
+      let signature = '';
       try {
+        signature = await this.connection.sendRawTransaction(rawTransaction, opts);
         // Soft-timeout confirmation: re-propagates while the blockhash is valid,
         // escalates to a fresh-blockhash retry as soon as it provably expires.
         await this.confirmWithSoftTimeout(signature, rawTransaction, blockhash, lastValidBlockHeight);
@@ -498,16 +617,25 @@ export class TransactionService {
 
         // SendTransactionError — extract logs and throw immediately (no retry)
         if (error instanceof SendTransactionError) {
-          try {
-            const logs = await error.getLogs(this.connection);
-            console.error('[TransactionService] Transaction failed. Logs:', logs);
-            throw new Error(`Transaction failed: ${logs?.join(' | ') || (error as Error).message}`);
-          } catch (inner: unknown) {
-            if (inner instanceof Error && inner.message.startsWith('Transaction failed:')) {
-              throw inner;
-            }
-            throw error;
+          const logs = await error.getLogs(this.connection).catch(() => undefined);
+          console.error('[TransactionService] Transaction failed. Logs:', logs);
+
+          const combined = `${error.message} ${logs?.join(' ') ?? ''}`;
+
+          // Brand-new wallet paid less than the rent-exempt minimum. The transfer
+          // paths top these up automatically, so reaching this means the sender
+          // could not cover the top-up.
+          if (combined.includes('insufficient funds for rent')) {
+            const rentSol = (await this.getRentExemptMinLamports()) / LAMPORTS_PER_SOL;
+            throw new Error(
+              `Transaction failed: a recipient's wallet is brand new and the amount is below ` +
+                `the rent-exempt minimum. A new wallet must receive at least ` +
+                `${rentSol.toFixed(8)} SOL. Try a larger amount, or make sure your wallet can ` +
+                `cover that top-up for each new recipient.`
+            );
           }
+
+          throw new Error(`Transaction failed: ${logs?.join(' | ') || error.message}`);
         }
 
         // Transient RPC error (e.g. Helius "Internal error", -32603) — retry with fresh blockhash
@@ -547,11 +675,16 @@ export class TransactionService {
     const transaction = new Transaction();
     const cuLimit = CU_PER_SOL_TRANSFER + CU_OVERHEAD;
 
+    // Top up dust transfers to never-funded wallets so they clear rent exemption
+    const [transfer] = await this.applyRentExemptionToNewAccounts([
+      { pubkey: recipientPubkey, lamports: Math.round(amountSol * LAMPORTS_PER_SOL) },
+    ]);
+
     transaction.add(
       SystemProgram.transfer({
         fromPubkey: senderKeypair.publicKey,
-        toPubkey: recipientPubkey,
-        lamports: Math.round(amountSol * LAMPORTS_PER_SOL),
+        toPubkey: transfer.pubkey,
+        lamports: transfer.lamports,
       })
     );
 

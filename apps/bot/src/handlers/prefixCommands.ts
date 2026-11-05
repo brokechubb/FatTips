@@ -773,6 +773,21 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
   // Calculate amounts
   const tokenSymbol = parsedAmount.token || 'SOL';
   const tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS] || TOKEN_MINTS.SOL;
+
+  // Recipients with no on-chain account yet must receive at least the rent-exempt
+  // minimum; TransactionService tops such transfers up, so reserve that SOL here.
+  let unfundedRecipients = 0;
+  if (tokenSymbol === 'SOL') {
+    try {
+      unfundedRecipients = await transactionService.countUnfundedAccounts(
+        recipientWallets.map((r) => r.walletPubkey)
+      );
+    } catch (error) {
+      console.error('Failed to count unfunded tip recipients:', error);
+    }
+  }
+  const recipientRentReserve = unfundedRecipients * MIN_RENT_EXEMPTION;
+
   let amountToken: number;
   let usdValue: number;
 
@@ -793,7 +808,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
     const feeBuffer = PREFIX_FEE_BUFFER;
     amountToken =
       tokenSymbol === 'SOL'
-        ? Math.max(0, balances.sol - feeBuffer - MIN_RENT_EXEMPTION)
+        ? Math.max(0, balances.sol - feeBuffer - MIN_RENT_EXEMPTION - recipientRentReserve)
         : tokenSymbol === 'USDC'
           ? balances.usdc
           : balances.usdt;
@@ -806,7 +821,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
     usdValue = price ? amountToken * price.price : 0;
   }
 
-  const amountPerUser = amountToken / recipientWallets.length;
+  let amountPerUser = amountToken / recipientWallets.length;
   const usdPerUser = usdValue / recipientWallets.length;
 
   if (amountPerUser <= 0) {
@@ -846,7 +861,6 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
     newRecipientCount > 0
       ? Math.ceil(newRecipientCount * (recipientWallets.length / checkCount))
       : 0;
-  const recipientRentReserve = estimatedNewRecipients * MIN_RENT_EXEMPTION;
 
   if (parsedAmount.type !== 'max') {
     const recipientRent =
@@ -918,6 +932,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
           if (!confirmed) return;
 
           amountToken = maxPossible;
+          amountPerUser = maxPossible / recipientWallets.length;
           usdValue = (await priceService.getTokenPrice(tokenMint))?.price
             ? adjustedPerUser *
               (await priceService.getTokenPrice(tokenMint))!.price *
@@ -925,8 +940,8 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
             : 0;
         } else {
           const rentInfo =
-            estimatedNewRecipients > 0
-              ? `\n• +${estimatedNewRecipients} new recipient${estimatedNewRecipients > 1 ? 's need' : ' needs'} rent exemption`
+            unfundedRecipients > 0
+              ? `\n• +${unfundedRecipients} new recipient${unfundedRecipients > 1 ? 's need' : ' needs'} rent exemption`
               : '';
           await message.reply(
             `❌ Insufficient balance! Need ${required.toFixed(4)} ${tokenSymbol} (incl. fees/rent)${rentInfo}, have ${available.toFixed(4)}`
@@ -1632,6 +1647,21 @@ async function handleRain(message: Message, args: string[], client: Client, pref
   }
 
   const tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS] || TOKEN_MINTS.SOL;
+
+  // Recipients with no on-chain account yet must receive at least the rent-exempt
+  // minimum; TransactionService tops such transfers up, so reserve that SOL here.
+  let unfundedRecipients = 0;
+  if (tokenSymbol === 'SOL') {
+    try {
+      unfundedRecipients = await transactionService.countUnfundedAccounts(
+        recipientWallets.map((r) => r.walletPubkey)
+      );
+    } catch (error) {
+      console.error('Failed to count unfunded recipients:', error);
+    }
+  }
+  const recipientRentReserve = unfundedRecipients * MIN_RENT_EXEMPTION;
+
   let totalAmountToken: number;
   let usdValue: number;
 
@@ -1651,7 +1681,7 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     const balances = await balanceService.getBalances(sender.walletPubkey);
     totalAmountToken =
       tokenSymbol === 'SOL'
-        ? Math.max(0, balances.sol - PREFIX_FEE_BUFFER - MIN_RENT_EXEMPTION)
+        ? Math.max(0, balances.sol - PREFIX_FEE_BUFFER - MIN_RENT_EXEMPTION - recipientRentReserve)
         : tokenSymbol === 'USDC'
           ? balances.usdc
           : balances.usdt;
@@ -1684,14 +1714,14 @@ async function handleRain(message: Message, args: string[], client: Client, pref
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const required =
       tokenSymbol === 'SOL'
-        ? totalAmountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION
+        ? totalAmountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION + recipientRentReserve
         : totalAmountToken;
     const available =
       tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;
 
     if (available < required) {
       if (tokenSymbol === 'SOL') {
-        const maxPossible = Math.max(0, balances.sol - PREFIX_FEE_BUFFER - MIN_RENT_EXEMPTION);
+        const maxPossible = Math.max(0, balances.sol - PREFIX_FEE_BUFFER - MIN_RENT_EXEMPTION - recipientRentReserve);
         if (maxPossible > 0 && maxPossible < totalAmountToken) {
           const adjustedPerUser = maxPossible / recipientWallets.length;
           const confirmBtn = new ButtonBuilder()
@@ -1986,6 +2016,21 @@ async function handleVcTip(message: Message, args: string[], client: Client, pre
   }
 
   const tokenMint = TOKEN_MINTS[tokenSymbol as keyof typeof TOKEN_MINTS] || TOKEN_MINTS.SOL;
+
+  // Recipients with no on-chain account yet must receive at least the rent-exempt
+  // minimum; TransactionService tops such transfers up, so reserve that SOL here.
+  let unfundedRecipients = 0;
+  if (tokenSymbol === 'SOL') {
+    try {
+      unfundedRecipients = await transactionService.countUnfundedAccounts(
+        recipientWallets.map((r) => r.walletPubkey)
+      );
+    } catch (error) {
+      console.error('Failed to count unfunded recipients:', error);
+    }
+  }
+  const recipientRentReserve = unfundedRecipients * MIN_RENT_EXEMPTION;
+
   let totalAmountToken: number;
   let usdValue: number;
 
@@ -2005,7 +2050,7 @@ async function handleVcTip(message: Message, args: string[], client: Client, pre
     const balances = await balanceService.getBalances(sender.walletPubkey);
     totalAmountToken =
       tokenSymbol === 'SOL'
-        ? Math.max(0, balances.sol - PREFIX_FEE_BUFFER - MIN_RENT_EXEMPTION)
+        ? Math.max(0, balances.sol - PREFIX_FEE_BUFFER - MIN_RENT_EXEMPTION - recipientRentReserve)
         : tokenSymbol === 'USDC'
           ? balances.usdc
           : balances.usdt;
@@ -2038,7 +2083,7 @@ async function handleVcTip(message: Message, args: string[], client: Client, pre
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const required =
       tokenSymbol === 'SOL'
-        ? totalAmountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION
+        ? totalAmountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION + recipientRentReserve
         : totalAmountToken;
     const available =
       tokenSymbol === 'SOL' ? balances.sol : tokenSymbol === 'USDC' ? balances.usdc : balances.usdt;

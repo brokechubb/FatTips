@@ -331,27 +331,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     let isAdjusted = false;
 
     if (tokenSymbol === 'SOL') {
-      // Check if any recipients are new wallets (need rent exemption)
-      let newWalletCount = 0;
-      const checkCount = Math.min(recipientWallets.length, 10);
-      for (let i = 0; i < checkCount; i++) {
-        try {
-          const recipientBalances = await balanceService.getBalances(
-            recipientWallets[i].walletPubkey
-          );
-          if (
-            recipientBalances.sol === 0 &&
-            recipientBalances.usdc === 0 &&
-            recipientBalances.usdt === 0
-          ) {
-            newWalletCount++;
-          }
-        } catch {
-          newWalletCount++;
-        }
+      // Count recipients that have never been funded. TransactionService tops their
+      // transfer up to the rent-exempt minimum, so reserve that SOL up front.
+      let estimatedNewWallets = 0;
+      try {
+        estimatedNewWallets = await transactionService.countUnfundedAccounts(
+          recipientWallets.map((r) => r.walletPubkey)
+        );
+      } catch (error) {
+        console.error('Failed to count unfunded tip recipients:', error);
       }
-      const estimatedNewWallets =
-        newWalletCount > 0 ? Math.ceil(newWalletCount * (recipientWallets.length / checkCount)) : 0;
       const recipientRentReserve = estimatedNewWallets * MIN_RENT_EXEMPTION;
 
       const requiredSol = totalAmountToken + feeBuffer + rentReserve + recipientRentReserve;

@@ -338,12 +338,27 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const rentReserve = MIN_RENT_EXEMPTION;
 
     if (tokenSymbol === 'SOL') {
-      const requiredSol = totalAmountToken + feeBuffer + rentReserve;
+      // TransactionService tops up dust shares sent to never-funded wallets to the
+      // rent-exempt minimum, so reserve one exemption per new recipient.
+      let newRecipients = 0;
+      try {
+        newRecipients = await transactionService.countUnfundedAccounts(
+          recipientWallets.map((r) => r.walletPubkey)
+        );
+      } catch (error) {
+        console.error('Failed to count unfunded voice-tip recipients:', error);
+      }
+      const recipientRentReserve = newRecipients * MIN_RENT_EXEMPTION;
+
+      const requiredSol = totalAmountToken + feeBuffer + rentReserve + recipientRentReserve;
       if (balances.sol < requiredSol) {
         await interaction.editReply({
           content:
             `${interaction.user} ❌ Insufficient funds!\n` +
             `**Required:** ${requiredSol.toFixed(5)} SOL (incl. rent exemption)\n` +
+            (newRecipients > 0
+              ? `• ${recipientRentReserve.toFixed(5)} SOL for ${newRecipients} new wallet${newRecipients > 1 ? 's' : ''} (rent exemption)\n`
+              : '') +
             `**Available:** ${balances.sol.toFixed(5)} SOL`,
         });
         return;
