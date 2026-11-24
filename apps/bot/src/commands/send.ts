@@ -10,6 +10,10 @@ import {
   ActionRowBuilder,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
+import {
+  MIN_RENT_EXEMPTION,
+  TOKEN_ACCOUNT_RENT_EXEMPTION as ATA_RENT_EXEMPTION,
+} from 'fattips-shared';
 import { logTransaction } from '../utils/logger';
 import {
   PriceService,
@@ -23,11 +27,9 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
 import { networkMonitor } from '../index';
 
-// Solana constants
-const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
+// Solana constants (rent values come from fattips-shared, which tracks SIMD-0437)
 const FEE_BUFFER = 0.001; // SOL - standard fee buffer (~$0.15)
 const MIN_SOL_FOR_GAS = 0.001; // Minimum SOL required for gas fees
-const ATA_RENT_EXEMPTION = 0.002; // SOL - rent for creating associated token account
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);
@@ -188,7 +190,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       // Get balance to calculate max
       const balances = await balanceService.getBalances(sender.walletPubkey);
       const feeBuffer = FEE_BUFFER; // Covers priority fees
-      const rentReserve = MIN_RENT_EXEMPTION; // Keep account rent-exempt (~0.00089 SOL)
+      const rentReserve = MIN_RENT_EXEMPTION; // Keep account rent-exempt (~0.00065 SOL)
 
       // Determine which token to send max of
       let preferredToken = parsedAmount.token ? parsedAmount.token.toUpperCase() : null;

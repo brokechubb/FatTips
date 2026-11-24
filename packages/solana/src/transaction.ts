@@ -51,7 +51,36 @@ const CONFIRM_SOFT_TOTAL_MS = 30_000;
 
 // Fallback rent-exempt minimum (lamports) for a zero-data account, used only if
 // the RPC cannot answer getMinimumBalanceForRentExemption.
-const DEFAULT_RENT_EXEMPT_LAMPORTS = 890_880;
+// (128 + 0) * 5_080, per SIMD-0437's lowered lamports-per-byte. Rent has only
+// moved down, so a stale value here over-funds a new wallet rather than failing.
+const DEFAULT_RENT_EXEMPT_LAMPORTS = 650_240;
+
+// Pause before retrying when the RPC rejects our blockhash during simulation.
+// Gives a load-balanced RPC pool a moment to converge before we ask for a new
+// blockhash and re-simulate.
+const BLOCKHASH_RETRY_DELAY_MS = 750;
+
+// User-facing message for attempts exhausted without the transaction landing.
+const CONGESTION_ERROR_MESSAGE =
+  'The Solana network is currently congested and could not process this transaction in time. Please try again in a moment.';
+
+/**
+ * True when a preflight/simulation failure only means the RPC did not recognize
+ * the transaction's blockhash ("Blockhash not found" / `BlockhashNotFound`).
+ *
+ * A transaction rejected at simulation is never broadcast, so retrying with a
+ * fresh blockhash cannot double-send. This usually happens on load-balanced RPC
+ * pools when `getLatestBlockhash` and the preflight land on different backends,
+ * or when the blockhash came from a fork that was abandoned.
+ */
+function isBlockhashRejected(combinedError: string): boolean {
+  const normalized = combinedError.toLowerCase();
+  return normalized.includes('blockhash not found') || normalized.includes('blockhashnotfound');
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * Thrown when the soft confirmation window elapses without the transaction
@@ -93,7 +122,7 @@ export class TransactionService {
    * Solana rejects any transaction that leaves a *newly created* account below
    * this balance ("insufficient funds for rent"), so every SOL transfer aimed at
    * a brand-new wallet has to be at least this large. Cached per instance — the
-   * value is a cluster constant (~0.00089088 SOL).
+   * value is a cluster constant (~0.00065024 SOL since SIMD-0437).
    */
   private async getRentExemptMinLamports(): Promise<number> {
     if (this.rentExemptMinLamports === null) {
@@ -146,9 +175,9 @@ export class TransactionService {
    * non-existent accounts are adjusted. Airdrop settlement already does the same
    * for its payouts.
    */
-  private async applyRentExemptionToNewAccounts<
-    T extends { pubkey: PublicKey; lamports: number }
-  >(transfers: T[]): Promise<T[]> {
+  private async applyRentExemptionToNewAccounts<T extends { pubkey: PublicKey; lamports: number }>(
+    transfers: T[]
+  ): Promise<T[]> {
     const rentMin = await this.getRentExemptMinLamports();
     const candidates = transfers.filter((t) => t.lamports > 0 && t.lamports < rentMin);
     if (candidates.length === 0) return transfers;
@@ -532,7 +561,7 @@ export class TransactionService {
   private async sendAndConfirm(
     transaction: Transaction,
     signers: Keypair[],
-    maxRetries = 2,
+    maxRetries = 3,
     cuLimit?: number,
     onRetry?: (attempt: number) => void
   ): Promise<string> {
@@ -553,8 +582,13 @@ export class TransactionService {
         );
       }
 
+      // Use the *finalized* blockhash. A finalized (rooted) blockhash is known to
+      // every synced node, so a load-balanced RPC pool can't reject it with
+      // "Blockhash not found" during preflight. It is ~13s older than the
+      // confirmed head, but still leaves ~47s of validity — comfortably above
+      // the soft confirmation budget — and we refresh it on every retry.
       const { blockhash, lastValidBlockHeight } =
-        await this.connection.getLatestBlockhash('confirmed');
+        await this.connection.getLatestBlockhash('finalized');
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = signers[0].publicKey;
 
@@ -574,7 +608,12 @@ export class TransactionService {
         signature = await this.connection.sendRawTransaction(rawTransaction, opts);
         // Soft-timeout confirmation: re-propagates while the blockhash is valid,
         // escalates to a fresh-blockhash retry as soon as it provably expires.
-        await this.confirmWithSoftTimeout(signature, rawTransaction, blockhash, lastValidBlockHeight);
+        await this.confirmWithSoftTimeout(
+          signature,
+          rawTransaction,
+          blockhash,
+          lastValidBlockHeight
+        );
         return signature;
       } catch (error: unknown) {
         lastError = error;
@@ -610,17 +649,32 @@ export class TransactionService {
           }
 
           // Final attempt exhausted — throw user-friendly congestion error
-          throw new Error(
-            'The Solana network is currently congested and could not process this transaction in time. Please try again in a moment.'
-          );
+          throw new Error(CONGESTION_ERROR_MESSAGE);
         }
 
-        // SendTransactionError — extract logs and throw immediately (no retry)
+        // SendTransactionError — extract logs. Most simulation failures are
+        // terminal, but a rejected blockhash is not: the transaction never
+        // reached the network, so retry it with a fresh blockhash.
         if (error instanceof SendTransactionError) {
           const logs = await error.getLogs(this.connection).catch(() => undefined);
           console.error('[TransactionService] Transaction failed. Logs:', logs);
 
           const combined = `${error.message} ${logs?.join(' ') ?? ''}`;
+
+          if (isBlockhashRejected(combined)) {
+            if (attempt < maxRetries - 1) {
+              console.warn(
+                `[TransactionService] RPC rejected the blockhash on attempt ${attempt + 1}/${maxRetries}, retrying with a fresh one...`
+              );
+              await sleep(BLOCKHASH_RETRY_DELAY_MS);
+              onRetry?.(attempt + 1);
+              continue;
+            }
+            console.warn(
+              `[TransactionService] RPC kept rejecting the blockhash after ${maxRetries} attempts`
+            );
+            throw new Error(CONGESTION_ERROR_MESSAGE);
+          }
 
           // Brand-new wallet paid less than the rent-exempt minimum. The transfer
           // paths top these up automatically, so reaching this means the sender
@@ -628,14 +682,36 @@ export class TransactionService {
           if (combined.includes('insufficient funds for rent')) {
             const rentSol = (await this.getRentExemptMinLamports()) / LAMPORTS_PER_SOL;
             throw new Error(
-              `Transaction failed: a recipient's wallet is brand new and the amount is below ` +
+              `a recipient's wallet is brand new and the amount is below ` +
                 `the rent-exempt minimum. A new wallet must receive at least ` +
                 `${rentSol.toFixed(8)} SOL. Try a larger amount, or make sure your wallet can ` +
                 `cover that top-up for each new recipient.`
             );
           }
 
-          throw new Error(`Transaction failed: ${logs?.join(' | ') || error.message}`);
+          throw new Error(logs?.join(' | ') || error.message);
+        }
+
+        // A bare JSON-RPC error can also report a rejected blockhash (some
+        // providers omit `data.logs`, so web3.js doesn't wrap it in a
+        // SendTransactionError). Same rule: never broadcast, so retry safely.
+        if (
+          !(error instanceof SendTransactionError) &&
+          error instanceof Error &&
+          isBlockhashRejected(error.message)
+        ) {
+          if (attempt < maxRetries - 1) {
+            console.warn(
+              `[TransactionService] RPC rejected the blockhash on attempt ${attempt + 1}/${maxRetries}, retrying with a fresh one...`
+            );
+            await sleep(BLOCKHASH_RETRY_DELAY_MS);
+            onRetry?.(attempt + 1);
+            continue;
+          }
+          console.warn(
+            `[TransactionService] RPC kept rejecting the blockhash after ${maxRetries} attempts`
+          );
+          throw new Error(CONGESTION_ERROR_MESSAGE);
         }
 
         // Transient RPC error (e.g. Helius "Internal error", -32603) — retry with fresh blockhash

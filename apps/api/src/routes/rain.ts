@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from 'fattips-database';
+import { MIN_RENT_EXEMPTION } from 'fattips-shared';
 import {
   WalletService,
   TransactionService,
@@ -120,7 +121,7 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
 
     const balances = await balanceService.getBalances(creator.walletPubkey);
     const feeBuffer = 0.001;
-    const rentReserve = 0.00089088;
+    const rentReserve = MIN_RENT_EXEMPTION;
 
     if (token === 'SOL') {
       const required = amountToken + feeBuffer + rentReserve;

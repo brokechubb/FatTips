@@ -4,7 +4,7 @@
 
 This system automatically drains residual funds from expired/settled airdrop wallets on a weekly basis. Residual funds occur because:
 
-1. **Rent Exemption**: Every Solana account must maintain at least 0.00089 SOL to exist
+1. **Rent Exemption**: Every Solana account must maintain at least 0.00065 SOL to exist
 2. **Rounding**: When dividing the pot among winners, fractional lamports remain
 3. **Failed Payments**: Some winner wallets may be invalid, leaving funds stuck
 

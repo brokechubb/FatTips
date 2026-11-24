@@ -60,7 +60,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           `\`${prefix}withdraw <address> all\` - Withdraw your entire balance (minus reserve).\n` +
           `\`${prefix}swap 1 SOL USDC\` - Swap tokens instantly (supports gasless!).\n` +
           `*Slash:* \`/send\`, \`/withdraw\`, \`/swap\`\n` +
-          'ℹ️ *Note: A minimum reserve of ~0.0009 SOL is kept to keep your wallet active.*',
+          'ℹ️ *Note: A minimum reserve of ~0.00065 SOL is kept to keep your wallet active.*',
       },
       {
         name: '🎁 Community',
@@ -114,7 +114,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           '`/send address:<address> amount:$10` - Send funds to an external Solana wallet.\n' +
           '`/withdraw address:<address> amount:all` - Withdraw your entire balance.\n' +
           '`/swap amount:1 from:SOL to:USDC` - Swap tokens instantly.\n' +
-          'ℹ️ *Note: A minimum reserve of ~0.0009 SOL is kept to keep your wallet active.*',
+          'ℹ️ *Note: A minimum reserve of ~0.00065 SOL is kept to keep your wallet active.*',
       },
       {
         name: '📜 History & Stats',

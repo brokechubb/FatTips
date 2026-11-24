@@ -11,6 +11,10 @@ import {
   ComponentType,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
+import {
+  MIN_RENT_EXEMPTION,
+  TOKEN_ACCOUNT_RENT_EXEMPTION as ATA_RENT_EXEMPTION,
+} from 'fattips-shared';
 import { logTransaction } from '../utils/logger';
 import {
   PriceService,
@@ -26,9 +30,8 @@ import { getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
 import { networkMonitor } from '../index';
 import { canCreateFeature, getRequiredRole } from '../services/guild-gate';
 
-const MIN_RENT_EXEMPTION = 0.00089088;
+// Rent reserves come from fattips-shared, which tracks SIMD-0437.
 const MIN_SOL_FOR_GAS = 0.001;
-const ATA_RENT_EXEMPTION = 0.002; // SOL - rent for creating associated token account
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
 const transactionService = new TransactionService(process.env.SOLANA_RPC_URL!);

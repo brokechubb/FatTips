@@ -50,7 +50,7 @@ FatTips/
 ### ✅ Good Decisions
 
 1. **Non-custodial design** - Users own keys, aligns with crypto ethos
-2. **Airdrop pool wallets** - Reuse wallets, save rent (0.00089 SOL each)
+2. **Airdrop pool wallets** - Reuse wallets, save rent (0.00065 SOL each)
 3. **BullMQ queue** - Async processing prevents bot timeouts
 4. **Confirmed commitment** - Faster balance checks (vs finalized)
 5. **Per-user API keys** - Isolation, revocable access
@@ -421,7 +421,7 @@ const TOKEN_MINTS = {
 ### Thresholds
 
 - **MIN_SOL_FOR_GAS:** 0.001 SOL (~$0.15)
-- **Rent exemption:** 0.00089 SOL
+- **Rent exemption:** 0.00065 SOL
 - **Priority fee buffer:** 0.000005 SOL per TX
 
 ### Ports

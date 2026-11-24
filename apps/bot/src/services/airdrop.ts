@@ -4,12 +4,11 @@ import { prisma } from 'fattips-database';
 import { withDatabaseRetry } from 'fattips-database/dist/utils';
 import { logger, logTransaction } from '../utils/logger';
 import { TransactionService, WalletService, BalanceService, PriceService, TOKEN_MINTS } from 'fattips-solana';
-import { AirdropPoolService } from 'fattips-shared';
+import { AirdropPoolService, MIN_RENT_EXEMPTION } from 'fattips-shared';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { canReceiveFeature, getGateSettings } from './guild-gate';
 
 // Solana constants
-const MIN_RENT_EXEMPTION = 0.00089088; // SOL - minimum to keep account active
 const FEE_BUFFERS = {
   TINY: 0.00001,
   STANDARD: 0.001,
@@ -440,6 +439,17 @@ export class AirdropService {
       const totalAmount = Number(airdrop.amountTotal);
       const winnerCount = participants.length;
 
+      let tokenSymbol = 'SOL';
+      if (airdrop.tokenMint === TOKEN_MINTS.USDC) tokenSymbol = 'USDC';
+      if (airdrop.tokenMint === TOKEN_MINTS.USDT) tokenSymbol = 'USDT';
+
+      // Close the airdrop UI BEFORE any on-chain payouts: remove the Claim
+      // button and show that winners are being paid.
+      const effectiveWinnerCount = airdrop.maxParticipants
+        ? Math.min(winnerCount, airdrop.maxParticipants)
+        : winnerCount;
+      await this.beginSettlementMessage(client, airdrop, effectiveWinnerCount, tokenSymbol);
+
       // Validate totalAmount from DB
       if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
         logger.error(
@@ -450,6 +460,15 @@ export class AirdropService {
             where: { id: airdrop.id },
             data: { status: 'FAILED', amountClaimed: 0, settledAt: new Date() },
           })
+        );
+        await this.endAirdropMessage(
+          client,
+          airdrop,
+          0,
+          0,
+          tokenSymbol,
+          [],
+          'Settlement failed: Invalid airdrop amount.'
         );
         if (airdrop.poolWalletAddress) {
           await this.poolService.releaseWallet(airdrop.poolWalletAddress, airdrop.id);
@@ -465,10 +484,6 @@ export class AirdropService {
       const tokenMint = airdrop.tokenMint;
       const feePerTx = FEE_BUFFERS.STANDARD; // Fee per transaction: base fee (0.000005) + priority fee headroom
       const rentBuffer = MIN_RENT_EXEMPTION; // Safety margin for rent exemption
-
-      let tokenSymbol = 'SOL';
-      if (tokenMint === TOKEN_MINTS.USDC) tokenSymbol = 'USDC';
-      if (tokenMint === TOKEN_MINTS.USDT) tokenSymbol = 'USDT';
 
       if (winnerCount === 0) {
         // No winners: Refund creator completely
@@ -859,8 +874,8 @@ export class AirdropService {
           }
 
           // For SOL transfers: if the recipient account doesn't exist on-chain, the runtime
-          // requires the transfer to be at least rent-exempt (0.00089088 SOL) or it will fail.
-          // Send the larger of the promised share or the rent-exempt minimum.
+          // requires the transfer to be at least rent-exempt (0.00065024 SOL since SIMD-0437)
+          // or it will fail. Send the larger of the promised share or the rent-exempt minimum.
           let amountToSend = share;
           if (tokenMint === TOKEN_MINTS.SOL) {
             const recipientInfo = await connection.getAccountInfo(
@@ -1022,6 +1037,28 @@ export class AirdropService {
             failError
           );
         }
+
+        // Replace the "paying winners" message with the final failure state
+        const failedTokenSymbol =
+          airdrop.tokenMint === TOKEN_MINTS.USDC
+            ? 'USDC'
+            : airdrop.tokenMint === TOKEN_MINTS.USDT
+              ? 'USDT'
+              : 'SOL';
+        await this.endAirdropMessage(
+          client,
+          airdrop,
+          0,
+          0,
+          failedTokenSymbol,
+          [],
+          `Settlement failed after ${retries} attempts.`
+        ).catch((messageError: unknown) =>
+          logger.error(
+            `[AIRDROP] Failed to update failure message for airdrop ${airdrop.id}:`,
+            messageError
+          )
+        );
       } else {
         // Revert to ACTIVE so the settlement loop will retry (up to MAX_SETTLE_RETRIES).
         // The retry will skip already-TRANSFERRED participants.
@@ -1053,6 +1090,58 @@ export class AirdropService {
       }
     } catch {
       // Channel might be deleted or inaccessible
+    }
+  }
+
+  /**
+   * Update the airdrop message the moment settlement starts: remove the Claim
+   * button (so nobody can claim into a closed airdrop) and show that winners
+   * are being paid. Called BEFORE any on-chain transfers.
+   */
+  private async beginSettlementMessage(
+    client: Client,
+    airdrop: any,
+    winnerCount: number,
+    tokenSymbol: string
+  ) {
+    if (!airdrop.messageId || !airdrop.channelId) return;
+
+    try {
+      const channel = await client.channels.fetch(airdrop.channelId);
+      if (!channel?.isTextBased()) return;
+
+      const message = await (channel as TextChannel).messages.fetch(airdrop.messageId);
+      const oldEmbed = message.embeds[0];
+      if (!oldEmbed) return;
+
+      const hasWinners = winnerCount > 0;
+      const title = hasWinners ? '⏳ Airdrop Ended — Paying Winners' : '⏳ Airdrop Ended';
+      const description = hasWinners
+        ? `This airdrop has ended.\n\n**${winnerCount} winner${winnerCount === 1 ? '' : 's'}** ` +
+          `${winnerCount === 1 ? 'is' : 'are'} being paid out on-chain right now.\n` +
+          `Please wait — final results will replace this message once payouts complete.`
+        : `This airdrop has ended with no participants.\n\n` +
+          `Refunding the pot to the creator...`;
+
+      const embed = new EmbedBuilder(oldEmbed.data)
+        .setTitle(title)
+        .setDescription(description)
+        .setColor(0xffaa00) // Orange = payout in progress
+        .setFooter({ text: 'Payout in progress — this event has ended.' })
+        .setTimestamp(new Date());
+
+      await message.edit({ embeds: [embed], components: [] });
+
+      logger.info(
+        `[AIRDROP] ${airdrop.id} closed for claims; paying ${winnerCount} winner(s) (${tokenSymbol})`
+      );
+    } catch (error: unknown) {
+      // Non-critical: settlement must proceed even if the message can't be updated
+      const err = error as { code?: number; message?: string };
+      logger.warn(`Failed to update airdrop ${airdrop.id} message at settlement start:`, {
+        code: err.code,
+        message: err.message,
+      });
     }
   }
 

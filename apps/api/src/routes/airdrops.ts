@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from 'fattips-database';
+import { MIN_RENT_EXEMPTION } from 'fattips-shared';
 import {
   WalletService,
   TransactionService,
@@ -154,7 +155,7 @@ router.post('/create', async (req: AuthenticatedRequest, res: Response) => {
     // Settlement reserves FEE_BUFFERS.STANDARD (0.001 SOL) per winner for fees + priority fees,
     // plus rent exemption for the pool wallet itself.
     const winnerCount = maxWinners || 100; // Default to 100 if not specified
-    const RENT_EXEMPTION = 0.00089088; // Rent-exempt minimum for the pool wallet account
+    const RENT_EXEMPTION = MIN_RENT_EXEMPTION; // Rent-exempt minimum for the pool wallet account
     const FEE_PER_WINNER = 0.001; // Matches FEE_BUFFERS.STANDARD used by settlement
     const GAS_BUFFER = RENT_EXEMPTION + winnerCount * FEE_PER_WINNER;
 

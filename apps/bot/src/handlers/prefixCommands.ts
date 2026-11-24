@@ -21,7 +21,11 @@ import {
   BalanceService,
   JupiterSwapService,
 } from 'fattips-solana';
-import { AirdropPoolService } from 'fattips-shared';
+import {
+  AirdropPoolService,
+  MIN_RENT_EXEMPTION,
+  TOKEN_ACCOUNT_RENT_EXEMPTION,
+} from 'fattips-shared';
 import { activityService } from '../services/activity';
 import { transactionQueue, generateJobId } from '../queues/transaction.queue';
 import { networkMonitor } from '../index';
@@ -39,7 +43,8 @@ const poolService = new AirdropPoolService();
 
 export const DEFAULT_PREFIX = 'f';
 
-const MIN_RENT_EXEMPTION = 0.00089088;
+// Rent reserves (MIN_RENT_EXEMPTION, TOKEN_ACCOUNT_RENT_EXEMPTION) come from
+// fattips-shared, which tracks SIMD-0437's lowered deposits.
 const PREFIX_FEE_BUFFER = 0.001;
 const MIN_SOL_FOR_GAS = 0.001;
 
@@ -864,7 +869,9 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
 
   if (parsedAmount.type !== 'max') {
     const recipientRent =
-      tokenSymbol === 'SOL' ? recipientRentReserve : estimatedNewRecipients * 0.002; // ATA rent for SPL
+      tokenSymbol === 'SOL'
+        ? recipientRentReserve
+        : estimatedNewRecipients * TOKEN_ACCOUNT_RENT_EXEMPTION; // ATA rent for SPL
     const required =
       tokenSymbol === 'SOL'
         ? amountToken + PREFIX_FEE_BUFFER + MIN_RENT_EXEMPTION + recipientRent
@@ -968,11 +975,11 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
     return;
   } else if (
     tokenSymbol !== 'SOL' &&
-    balances.sol < MIN_SOL_FOR_GAS + estimatedNewRecipients * 0.002
+    balances.sol < MIN_SOL_FOR_GAS + estimatedNewRecipients * TOKEN_ACCOUNT_RENT_EXEMPTION
   ) {
     await message.reply(
       `❌ Insufficient SOL for gas & rent!\n` +
-        `**Required:** ${(MIN_SOL_FOR_GAS + estimatedNewRecipients * 0.002).toFixed(5)} SOL\n` +
+        `**Required:** ${(MIN_SOL_FOR_GAS + estimatedNewRecipients * TOKEN_ACCOUNT_RENT_EXEMPTION).toFixed(5)} SOL\n` +
         `**Available:** ${balances.sol.toFixed(5)} SOL\n\n` +
         `Deposit SOL to your wallet to pay for transaction fees.`
     );
@@ -2307,7 +2314,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   // When max-winners is not set (unlimited), we use a conservative default of 10
   // because the actual gas cost depends on how many users claim — not a fixed 100.
   const winnerCount = maxWinners || 10;
-  const RENT_EXEMPTION = 0.00089088; // Rent-exempt minimum for the pool wallet account
+  const RENT_EXEMPTION = MIN_RENT_EXEMPTION; // Rent-exempt minimum for the pool wallet account
   const FEE_PER_WINNER = 0.001; // Matches FEE_BUFFERS.STANDARD used by settlement
   const GAS_BUFFER = RENT_EXEMPTION + winnerCount * FEE_PER_WINNER;
 

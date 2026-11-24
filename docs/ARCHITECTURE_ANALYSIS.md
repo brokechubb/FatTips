@@ -102,7 +102,7 @@ Airdrop Command (airdrop.ts)
   ↓
 AirdropPoolService.getWallet() → Reuse pooled wallet
   ↓
-Creator funds pool wallet (0.00089 rent + gas)
+Creator funds pool wallet (0.00065 rent + gas)
   ↓
 Database: Airdrop { status: ACTIVE, expiresAt: ... }
   ↓
@@ -374,7 +374,7 @@ const balance = await connection.getBalance(publicKey, {
 ### 3.2 Airdrop Pool Wallets
 
 **Decision:** Reuse ephemeral wallets across airdrops  
-**Rationale:** Reduces rent waste (0.00089 SOL per wallet)  
+**Rationale:** Reduces rent waste (0.00065 SOL per wallet)  
 **Implementation:**
 
 - `AirdropPoolWallet` table tracks available wallets
@@ -434,7 +434,7 @@ const balance = await connection.getBalance(publicKey, {
 
 - Priority fees via `ComputeBudgetProgram`
 - Balance validation before transfers
-- Rent exemption protection (0.00089 SOL minimum)
+- Rent exemption protection (0.00065 SOL minimum)
 - Retry logic with exponential backoff
 
 ### 4.4 Discord Security

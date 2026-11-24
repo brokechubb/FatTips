@@ -1,6 +1,7 @@
 import { Worker, Job } from 'bullmq';
 import { Client, TextChannel, EmbedBuilder } from 'discord.js';
 import { prisma } from 'fattips-database';
+import { MIN_RENT_EXEMPTION } from 'fattips-shared';
 import { TransactionService, WalletService, BalanceService, TOKEN_MINTS } from 'fattips-solana';
 import IORedis from 'ioredis';
 import { REDIS_CONNECTION_OPTS, TransferJobData } from '../queues/transaction.queue';
@@ -84,7 +85,6 @@ export function initTransactionWorker(client: Client) {
         const totalAmount =
           type === 'WITHDRAWAL' ? amountPerUser : amountPerUser * (recipientWallets.length || 1);
 
-        const MIN_RENT_EXEMPTION = 0.00089088;
         const FEE_BUFFER = 0.001;
 
         if (tokenMint === TOKEN_MINTS.SOL) {

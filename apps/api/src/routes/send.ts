@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { prisma } from 'fattips-database';
+import { MIN_RENT_EXEMPTION } from 'fattips-shared';
 import {
   WalletService,
   TransactionService,
@@ -140,7 +141,7 @@ router.post('/tip', async (req: AuthenticatedRequest, res: Response) => {
 
     const balances = await balanceService.getBalances(sender.senderPubkey);
     const feeBuffer = 0.001;
-    const rentReserve = 0.00089088;
+    const rentReserve = MIN_RENT_EXEMPTION;
 
     if (token === 'SOL') {
       const required = amountToken + feeBuffer + rentReserve;
@@ -254,7 +255,7 @@ router.post('/batch-tip', async (req: AuthenticatedRequest, res: Response) => {
 
     const balances = await balanceService.getBalances(sender.senderPubkey);
     const feeBuffer = 0.001;
-    const rentReserve = 0.00089088;
+    const rentReserve = MIN_RENT_EXEMPTION;
 
     if (token === 'SOL') {
       const required = amountToken + feeBuffer + rentReserve;
@@ -351,7 +352,7 @@ router.post('/withdraw', async (req: AuthenticatedRequest, res: Response) => {
     let amountToSend = amountToken;
     if (token === 'SOL') {
       if (!amount) {
-        const maxPossible = Math.max(0, balances.sol - feeBuffer - 0.00089088);
+        const maxPossible = Math.max(0, balances.sol - feeBuffer - MIN_RENT_EXEMPTION);
         amountToSend = maxPossible;
       }
     }

@@ -275,7 +275,7 @@ User: /airdrop amount:$10 duration:1h
 │ 3. Fund Pool Wallet      │
 │    - Creator transfers   │
 │      (rent + gas)        │
-│    - 0.00089 SOL rent    │
+│    - 0.00065 SOL rent    │
 │    - ~0.001 SOL gas      │
 └─────────────┬────────────┘
               │
@@ -373,7 +373,7 @@ User: /airdrop amount:$10 duration:1h
 ┌─────────────────────────────────────────────────────────────┐
 │ 5. Cleanup (if residual)                                     │
 │    - Drain dust to treasury                                  │
-│    - Keep 0.00089 SOL (rent)                                 │
+│    - Keep 0.00065 SOL (rent)                                 │
 │    - Mark as cleaned                                         │
 └─────────────────────────────────────────────────────────────┘
 ```

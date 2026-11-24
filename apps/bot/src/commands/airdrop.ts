@@ -19,7 +19,7 @@ import {
   BalanceService,
 } from 'fattips-solana';
 import { Connection } from '@solana/web3.js';
-import { AirdropPoolService } from 'fattips-shared';
+import { AirdropPoolService, MIN_RENT_EXEMPTION } from 'fattips-shared';
 import { canCreateFeature } from '../services/guild-gate';
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);
@@ -221,7 +221,7 @@ async function handleCreate(interaction: ChatInputCommandInteraction) {
 // When max-winners is not set (unlimited), we use a conservative default of 10
 // because the actual gas cost depends on how many users claim — not a fixed 100.
 const winnerCount = maxWinners || 10;
-const RENT_EXEMPTION = 0.00089088; // Rent-exempt minimum for the pool wallet account
+const RENT_EXEMPTION = MIN_RENT_EXEMPTION; // Rent-exempt minimum for the pool wallet account
 const FEE_PER_WINNER = 0.001; // Matches FEE_BUFFERS.STANDARD used by settlement
 const GAS_BUFFER = RENT_EXEMPTION + winnerCount * FEE_PER_WINNER;
 

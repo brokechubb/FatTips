@@ -9,12 +9,12 @@ import {
   AttachmentBuilder,
 } from 'discord.js';
 import { prisma } from 'fattips-database';
+import { MIN_RENT_EXEMPTION } from 'fattips-shared';
 import { PublicKey } from '@solana/web3.js';
 import { BalanceService, PriceService, TOKEN_MINTS } from 'fattips-solana';
 import { transactionQueue } from '../queues/transaction.queue';
 import { generateDepositQR } from '../utils/qr';
 
-const MIN_RENT_EXEMPTION = 0.00089088;
 const FEE_BUFFER = 0.001;
 
 const priceService = new PriceService(process.env.JUPITER_API_URL, process.env.JUPITER_API_KEY);

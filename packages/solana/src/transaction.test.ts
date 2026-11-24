@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { Keypair, PublicKey } from '@solana/web3.js';
+import { Keypair, PublicKey, SendTransactionError, Transaction } from '@solana/web3.js';
 import { TransactionService } from './transaction';
 
-const RENT_EXEMPT_MIN = 890_880; // lamports for a zero-data account
+const RENT_EXEMPT_MIN = 650_240; // lamports for a zero-data account (SIMD-0437, 5,080/byte)
 
 type SolTransfer = { pubkey: PublicKey; lamports: number };
 
@@ -84,5 +84,145 @@ describe('TransactionService rent-exempt handling', () => {
     ]);
 
     expect(count).toBe(1);
+  });
+});
+
+type SendInternals = {
+  sendAndConfirm: (
+    transaction: Transaction,
+    signers: Keypair[],
+    maxRetries?: number,
+    cuLimit?: number,
+    onRetry?: (attempt: number) => void
+  ) => Promise<string>;
+};
+
+type SendServiceStubs = {
+  getLatestBlockhash?: (
+    commitment?: string
+  ) => Promise<{ blockhash: string; lastValidBlockHeight: number }>;
+  sendRawTransaction?: (rawTransaction: Uint8Array, options?: unknown) => Promise<string>;
+};
+
+/** Builds a TransactionService with just enough of the RPC connection stubbed to send. */
+function makeSendService(stubs: SendServiceStubs): TransactionService {
+  const service = new TransactionService('http://localhost:8899');
+
+  (service as unknown as { connection: unknown }).connection = {
+    getLatestBlockhash:
+      stubs.getLatestBlockhash ??
+      (async () => ({
+        blockhash: '11111111111111111111111111111111',
+        lastValidBlockHeight: 1_000,
+      })),
+    sendRawTransaction: stubs.sendRawTransaction,
+    confirmTransaction: async () => ({ value: { err: null } }),
+    getSignatureStatus: async () => ({ value: null }),
+    getBlockHeight: async () => 1,
+    getTransaction: async () => null,
+  };
+
+  return service;
+}
+
+function blockhashNotFoundError(): SendTransactionError {
+  return new SendTransactionError({
+    action: 'simulate',
+    signature: '',
+    transactionMessage: 'Transaction simulation failed: Blockhash not found',
+    logs: [],
+  });
+}
+
+function sendTransaction(service: TransactionService, signer: Keypair, maxRetries: number) {
+  return (service as unknown as SendInternals).sendAndConfirm(
+    new Transaction(),
+    [signer],
+    maxRetries
+  );
+}
+
+describe('TransactionService blockhash rejection handling', () => {
+  const signer = Keypair.generate();
+
+  it('retries with a fresh blockhash when preflight rejects it', async () => {
+    let blockhashCalls = 0;
+    let sendCalls = 0;
+    const commitments: (string | undefined)[] = [];
+
+    const service = makeSendService({
+      getLatestBlockhash: async (commitment) => {
+        commitments.push(commitment);
+        blockhashCalls++;
+        return {
+          blockhash: '11111111111111111111111111111111',
+          lastValidBlockHeight: 1_000 + blockhashCalls,
+        };
+      },
+      sendRawTransaction: async () => {
+        sendCalls++;
+        if (sendCalls === 1) throw blockhashNotFoundError();
+        return 'signature-after-retry';
+      },
+    });
+
+    const signature = await sendTransaction(service, signer, 2);
+
+    expect(signature).toBe('signature-after-retry');
+    expect(sendCalls).toBe(2);
+    expect(blockhashCalls).toBe(2);
+    expect(commitments).toEqual(['finalized', 'finalized']);
+  });
+
+  it('reports congestion when every attempt rejects the blockhash', async () => {
+    let sendCalls = 0;
+    const service = makeSendService({
+      sendRawTransaction: async () => {
+        sendCalls++;
+        throw blockhashNotFoundError();
+      },
+    });
+
+    await expect(sendTransaction(service, signer, 2)).rejects.toThrow(
+      /network is currently congested/
+    );
+    expect(sendCalls).toBe(2);
+  });
+
+  it('does not retry simulation failures unrelated to the blockhash', async () => {
+    let sendCalls = 0;
+    const service = makeSendService({
+      sendRawTransaction: async () => {
+        sendCalls++;
+        throw new SendTransactionError({
+          action: 'simulate',
+          signature: '',
+          transactionMessage:
+            'Transaction simulation failed: Attempt to debit an account but found no record of a prior credit.',
+          logs: [],
+        });
+      },
+    });
+
+    await expect(sendTransaction(service, signer, 3)).rejects.toThrow(/Attempt to debit/);
+    expect(sendCalls).toBe(1);
+  });
+
+  it('retries when a bare RPC error reports the rejected blockhash', async () => {
+    let sendCalls = 0;
+    const service = makeSendService({
+      sendRawTransaction: async () => {
+        sendCalls++;
+        if (sendCalls === 1) {
+          throw new Error('Transaction simulation failed: Blockhash not found');
+        }
+        return 'signature-from-bare-error-retry';
+      },
+    });
+
+    const signature = await sendTransaction(service, signer, 2);
+
+    expect(signature).toBe('signature-from-bare-error-retry');
+    expect(sendCalls).toBe(2);
   });
 });
