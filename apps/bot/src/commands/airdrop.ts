@@ -411,6 +411,7 @@ if (tokenSymbol === 'SOL' && parsedAmount.type !== 'max') {
           await prisma.airdrop.create({
             data: {
               walletPubkey: poolWallet.address,
+              poolWalletAddress: poolWallet.address,
               encryptedPrivkey: poolWallet.encryptedPrivkey,
               keySalt: poolWallet.keySalt,
               creatorId: creator.discordId,
@@ -444,6 +445,7 @@ if (tokenSymbol === 'SOL' && parsedAmount.type !== 'max') {
           await prisma.airdrop.create({
             data: {
               walletPubkey: poolWallet.address,
+              poolWalletAddress: poolWallet.address,
               encryptedPrivkey: poolWallet.encryptedPrivkey,
               keySalt: poolWallet.keySalt,
               creatorId: creator.discordId,
@@ -483,6 +485,7 @@ if (tokenSymbol === 'SOL' && parsedAmount.type !== 'max') {
   const airdrop = await prisma.airdrop.create({
     data: {
       walletPubkey: poolWallet.address,
+      poolWalletAddress: poolWallet.address,
       encryptedPrivkey: poolWallet.encryptedPrivkey,
       keySalt: poolWallet.keySalt,
       creatorId: creator.discordId,

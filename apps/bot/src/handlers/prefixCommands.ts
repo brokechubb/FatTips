@@ -2461,6 +2461,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
           await prisma.airdrop.create({
             data: {
               walletPubkey: poolWallet.address,
+              poolWalletAddress: poolWallet.address,
               encryptedPrivkey: poolWallet.encryptedPrivkey,
               keySalt: poolWallet.keySalt,
               creatorId: sender.discordId,
@@ -2493,6 +2494,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
           await prisma.airdrop.create({
             data: {
               walletPubkey: poolWallet.address,
+              poolWalletAddress: poolWallet.address,
               encryptedPrivkey: poolWallet.encryptedPrivkey,
               keySalt: poolWallet.keySalt,
               creatorId: sender.discordId,
@@ -2532,6 +2534,7 @@ async function handleAirdrop(message: Message, args: string[], client: Client, p
   const airdrop = await prisma.airdrop.create({
     data: {
       walletPubkey: poolWallet.address,
+      poolWalletAddress: poolWallet.address,
       encryptedPrivkey: poolWallet.encryptedPrivkey,
       keySalt: poolWallet.keySalt,
       creatorId: sender.discordId,

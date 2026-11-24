@@ -53,6 +53,8 @@ model Transaction {
 model Airdrop {
   id              String        @id @default(uuid())
   walletPubkey    String        @unique // Ephemeral wallet public key
+  poolWalletAddress String?     // Pool wallet escrow address; swept back to the creator on release
+  poolWallet      AirdropPoolWallet? @relation(fields: [poolWalletAddress], references: [address], onDelete: SetNull, onUpdate: Cascade)
   encryptedPrivkey String      // Ephemeral private key (encrypted)
   keySalt         String        // Encryption salt
   creatorId       String
@@ -160,6 +162,7 @@ model AirdropPoolWallet {
   keySalt String
   isBusy Boolean @default(false)
   lastUsedAt DateTime @default(now())
+  airdrops Airdrop[]
 
   @@index([isBusy, lastUsedAt])
 }
