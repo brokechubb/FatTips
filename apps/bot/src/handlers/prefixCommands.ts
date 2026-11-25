@@ -867,6 +867,10 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
       ? Math.ceil(newRecipientCount * (recipientWallets.length / checkCount))
       : 0;
 
+  // When the amount had to be adjusted, reuse that confirmation message for the
+  // processing/final result so it doesn't linger with stale buttons.
+  let adjustedConfirmation: Message | null = null;
+
   if (parsedAmount.type !== 'max') {
     const recipientRent =
       tokenSymbol === 'SOL'
@@ -897,7 +901,7 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
             .setStyle(ButtonStyle.Secondary);
           const row = new ActionRowBuilder<ButtonBuilder>().addComponents(confirmBtn, cancelBtn);
 
-          const reply = await message.reply({
+          const confirmation = await message.reply({
             content:
               `⚠️ Insufficient balance for requested amount.\n\n` +
               `**Requested:** ${formatTokenAmount(amountToken)} SOL\n` +
@@ -906,8 +910,9 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
               `Send the adjusted amount instead?`,
             components: [row],
           });
+          adjustedConfirmation = confirmation;
 
-          const collector = reply.createMessageComponentCollector({
+          const collector = confirmation.createMessageComponentCollector({
             componentType: ComponentType.Button,
             time: 60000,
           });
@@ -924,13 +929,13 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
                 resolve(false);
                 return;
               }
-              await i.deferUpdate();
+              await i.update({ content: '⏳ Processing tip...', components: [] });
               collector.stop();
               resolve(true);
             });
             collector.on('end', (_collected, reason) => {
               if (reason === 'time') {
-                reply.edit({ content: '❌ Tip timed out.', components: [] }).catch(() => {});
+                confirmation.edit({ content: '❌ Tip timed out.', components: [] }).catch(() => {});
                 resolve(false);
               }
             });
@@ -990,8 +995,8 @@ async function handleTip(message: Message, args: string[], client: Client, prefi
   const networkWarning = networkMonitor.getWarningText();
   if (networkWarning) await message.author.send(networkWarning).catch(() => {});
 
-  // Send processing message
-  const processingMsg = await message.reply('⏳ Processing transaction...');
+  // Send processing message (reuse the adjusted-amount confirmation if present)
+  const processingMsg = adjustedConfirmation ?? (await message.reply('⏳ Processing transaction...'));
 
   // Add to Queue
   try {
@@ -1717,6 +1722,10 @@ async function handleRain(message: Message, args: string[], client: Client, pref
   }
 
   // Check balance (skip for 'max' since we calculated based on actual balance)
+  // When the amount had to be adjusted, reuse that confirmation message for the
+  // processing/final result so it doesn't linger with stale buttons.
+  let adjustedConfirmation: Message | null = null;
+
   if (parsedAmount.type !== 'max') {
     const balances = await balanceService.getBalances(sender.walletPubkey);
     const required =
@@ -1741,7 +1750,7 @@ async function handleRain(message: Message, args: string[], client: Client, pref
             .setStyle(ButtonStyle.Secondary);
           const row = new ActionRowBuilder<ButtonBuilder>().addComponents(confirmBtn, cancelBtn);
 
-          const reply = await message.reply({
+          const confirmation = await message.reply({
             content:
               `⚠️ Insufficient balance for requested amount.\n\n` +
               `**Requested:** ${formatTokenAmount(totalAmountToken)} SOL\n` +
@@ -1750,8 +1759,9 @@ async function handleRain(message: Message, args: string[], client: Client, pref
               `Send the adjusted amount instead?`,
             components: [row],
           });
+          adjustedConfirmation = confirmation;
 
-          const collector = reply.createMessageComponentCollector({
+          const collector = confirmation.createMessageComponentCollector({
             componentType: ComponentType.Button,
             time: 60000,
           });
@@ -1768,13 +1778,13 @@ async function handleRain(message: Message, args: string[], client: Client, pref
                 resolve(false);
                 return;
               }
-              await i.deferUpdate();
+              await i.update({ content: '⏳ Processing rain...', components: [] });
               collector.stop();
               resolve(true);
             });
             collector.on('end', (_collected, reason) => {
               if (reason === 'time') {
-                reply.edit({ content: '❌ Rain timed out.', components: [] }).catch(() => {});
+                confirmation.edit({ content: '❌ Rain timed out.', components: [] }).catch(() => {});
                 resolve(false);
               }
             });
@@ -1807,8 +1817,8 @@ async function handleRain(message: Message, args: string[], client: Client, pref
   const networkWarning = networkMonitor.getWarningText();
   if (networkWarning) await message.author.send(networkWarning).catch(() => {});
 
-  // Send processing message
-  const processingMsg = await message.reply('⏳ Making it rain...');
+  // Send processing message (reuse the adjusted-amount confirmation if present)
+  const processingMsg = adjustedConfirmation ?? (await message.reply('⏳ Making it rain...'));
 
   // Add to Queue
   try {

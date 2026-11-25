@@ -404,7 +404,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                 resolve(false);
                 return;
               }
-              await i.deferUpdate();
+              await i.update({ content: '⏳ Sending tip...', components: [] });
               collector.stop();
               resolve(true);
             });
@@ -502,6 +502,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       await interaction.editReply({
         content: `❌ Transaction failed: ${errorMessage}`,
+        components: [],
       });
       return;
     }
@@ -570,7 +571,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     }
 
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed], components: [] });
 
     // 3. Send DMs (with fallback for users who have DMs disabled)
     const failedDMs: string[] = []; // Track users we couldn't DM
@@ -636,7 +637,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   } catch (error) {
     console.error('Error in tip command:', error);
     try {
-      await interaction.editReply({ content: '❌ An unexpected error occurred.' });
+      await interaction.editReply({ content: '❌ An unexpected error occurred.', components: [] });
     } catch {
       // Ignore edit errors
     }

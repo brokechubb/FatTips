@@ -249,7 +249,7 @@ export function initTransactionWorker(client: Client) {
                 const originalMsg = await channel.messages.fetch(messageId);
                 // If it was a "Processing..." message, edit it. Otherwise reply.
                 if (originalMsg.author.id === client.user?.id) {
-                  await originalMsg.edit({ content: '', embeds: [embed] });
+                  await originalMsg.edit({ content: '', embeds: [embed], components: [] });
                 } else {
                   await originalMsg.reply({ embeds: [embed] });
                 }
@@ -347,9 +347,10 @@ export function initTransactionWorker(client: Client) {
               try {
                 const originalMsg = await channel.messages.fetch(messageId);
                 if (originalMsg.author.id === client.user?.id) {
-                  await originalMsg.edit(
-                    `❌ Transaction failed for <@${senderDiscordId}>: ${userErrorMessage}`
-                  );
+                  await originalMsg.edit({
+                    content: `❌ Transaction failed for <@${senderDiscordId}>: ${userErrorMessage}`,
+                    components: [],
+                  });
                 } else {
                   await originalMsg.reply(`❌ Transaction failed: ${userErrorMessage}`);
                 }

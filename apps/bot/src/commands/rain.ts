@@ -547,7 +547,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                 resolve(false);
                 return;
               }
-              await i.deferUpdate();
+              await i.update({ content: '⏳ Sending rain...', components: [] });
               collector.stop();
               resolve(true);
             });
@@ -653,6 +653,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       console.error('Rain Transaction failed:', error);
       await interaction.editReply({
         content: `❌ Transaction failed: ${error.message || 'Unknown error'}`,
+        components: [],
       });
       return;
     }
@@ -739,7 +740,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       });
     }
 
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed], components: [] });
 
     // DMs (with fallback for users who have DMs disabled)
     const failedDMs: string[] = [];
@@ -806,7 +807,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   } catch (error: unknown) {
     console.error('Error in rain command:', error);
     try {
-      await interaction.editReply({ content: '❌ An unexpected error occurred.' });
+      await interaction.editReply({ content: '❌ An unexpected error occurred.', components: [] });
     } catch {
       // editReply failed
     }
